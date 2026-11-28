@@ -16,7 +16,7 @@ def _get_kwargs(
     slug: str,
     *,
     limit: int | Unset = 50,
-    before: datetime.datetime | str | Unset = UNSET,
+    before: datetime.datetime | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -24,9 +24,7 @@ def _get_kwargs(
     params["limit"] = limit
 
     json_before: str | Unset = UNSET
-    if isinstance(before, str):
-        json_before = before
-    elif not isinstance(before, Unset):
+    if not isinstance(before, Unset):
         json_before = before.isoformat()
     params["before"] = json_before
 
@@ -88,7 +86,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
-    before: datetime.datetime | str | Unset = UNSET,
+    before: datetime.datetime | Unset = UNSET,
 ) -> Response[DeploymentListResponse | Problem]:
     """List deployments for an app.
 
@@ -101,7 +99,7 @@ def sync_detailed(
     Args:
         slug (str):
         limit (int | Unset):  Default: 50.
-        before (datetime.datetime | str | Unset):
+        before (datetime.datetime | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -129,7 +127,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
-    before: datetime.datetime | str | Unset = UNSET,
+    before: datetime.datetime | Unset = UNSET,
 ) -> DeploymentListResponse | Problem | None:
     """List deployments for an app.
 
@@ -142,7 +140,7 @@ def sync(
     Args:
         slug (str):
         limit (int | Unset):  Default: 50.
-        before (datetime.datetime | str | Unset):
+        before (datetime.datetime | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -165,7 +163,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
-    before: datetime.datetime | str | Unset = UNSET,
+    before: datetime.datetime | Unset = UNSET,
 ) -> Response[DeploymentListResponse | Problem]:
     """List deployments for an app.
 
@@ -178,7 +176,7 @@ async def asyncio_detailed(
     Args:
         slug (str):
         limit (int | Unset):  Default: 50.
-        before (datetime.datetime | str | Unset):
+        before (datetime.datetime | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -204,7 +202,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     limit: int | Unset = 50,
-    before: datetime.datetime | str | Unset = UNSET,
+    before: datetime.datetime | Unset = UNSET,
 ) -> DeploymentListResponse | Problem | None:
     """List deployments for an app.
 
@@ -217,7 +215,7 @@ async def asyncio(
     Args:
         slug (str):
         limit (int | Unset):  Default: 50.
-        before (datetime.datetime | str | Unset):
+        before (datetime.datetime | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

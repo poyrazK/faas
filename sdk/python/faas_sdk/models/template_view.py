@@ -16,11 +16,11 @@ class TemplateView:
     """A starter template entry from GET /v1/templates."""
 
     name: str
-    """The template name — matches the CLI's template names verbatim."""
+    """ The template name — matches the CLI's template names verbatim. """
     category: TemplateViewCategory
-    """Customer-facing group label (templates.CategoryFor)."""
+    """ Customer-facing group label (templates.CategoryFor). """
     description: str
-    """One-line customer-facing blurb."""
+    """ One-line customer-facing blurb. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

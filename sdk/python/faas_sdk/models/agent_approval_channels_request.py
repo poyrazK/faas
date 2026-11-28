@@ -14,7 +14,7 @@ class AgentApprovalChannelsRequest:
     """The notification channels to send the account's agents' approval requests to."""
 
     channels: list[str]
-    """Names of your notification channels; an empty list leaves email only."""
+    """ Names of your notification channels; an empty list leaves email only. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

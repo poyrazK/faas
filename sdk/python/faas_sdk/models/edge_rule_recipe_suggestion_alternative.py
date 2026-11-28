@@ -20,11 +20,11 @@ class EdgeRuleRecipeSuggestionAlternative:
     """A softer recipe for the same observation, such as challenging browsers instead of rate-limiting."""
 
     recipe: str
-    """Recipe id of the alternative."""
+    """ Recipe id of the alternative. """
     title: str
-    """The alternative recipe's title."""
+    """ The alternative recipe's title. """
     params: EdgeRuleRecipeSuggestionAlternativeParams | Unset = UNSET
-    """Parameters to add the alternative with."""
+    """ Parameters to add the alternative with. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

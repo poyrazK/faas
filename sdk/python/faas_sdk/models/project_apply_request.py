@@ -29,37 +29,37 @@ class ProjectApplyRequest:
 
     source: File
     release_config: str | Unset = UNSET
-    """Planned non-secret workload variables encoded as ProjectReleaseConfigRequest JSON for atomic-config-verify
-    admission."""
+    """ Planned non-secret workload variables encoded as ProjectReleaseConfigRequest JSON for atomic-config-verify
+    admission. """
     migration: bool | Unset = False
-    """Apply the reviewed migration naming mode, preserving repository service identities and project-prefixed app
-    allocations. Automatic triggers and repository push bindings must be disabled."""
+    """ Apply the reviewed migration naming mode, preserving repository service identities and project-prefixed app
+    allocations. Automatic triggers and repository push bindings must be disabled. """
     app_slugs: ProjectApplyRequestAppSlugs | Unset = UNSET
-    """Reviewed repository service-to-app allocations for this apply. Preserve existing project app names and
-    repeat the exact selected names from review; multipart clients encode this object as JSON."""
+    """ Reviewed repository service-to-app allocations for this apply. Preserve existing project app names and
+    repeat the exact selected names from review; multipart clients encode this object as JSON. """
     project_slug: str | Unset = UNSET
     repo_full_name: str | Unset = UNSET
     production_branch: str | Unset = UNSET
     install_id: int | Unset = UNSET
     only: str | Unset = UNSET
     environment: str | Unset = UNSET
-    """Environment slug applied to deployments created by this apply"""
+    """ Environment slug applied to deployments created by this apply """
     secrets: str | Unset = UNSET
-    """JSON object of secret names to plaintext values, sealed for every selected workload in the deployment
+    """ JSON object of secret names to plaintext values, sealed for every selected workload in the deployment
     environment before any build is queued. Requires secrets:write or admin in addition to deploy permission. Uses
     the existing plan secret count/value quotas; never included in source or responses. Failed configuration queues
-    no builds; already applied configuration remains available for retry."""
+    no builds; already applied configuration remains available for retry. """
     approval_token: str | Unset = UNSET
-    """Short-lived approval credential for the exact protected-environment plan"""
+    """ Short-lived approval credential for the exact protected-environment plan """
     no_triggers: bool | Unset = False
-    """Leave trigger and async-route declarations and existing project trigger/route state unchanged for this
-    apply."""
+    """ Leave trigger and async-route declarations and existing project trigger/route state unchanged for this
+    apply. """
     platform_tenant_required: bool | Unset = UNSET
-    """Override the customer identity policy for selected workloads (Hobby and above). Must match the scan
-    override. Omitted uses Compose declarations and preserves existing app policy."""
+    """ Override the customer identity policy for selected workloads (Hobby and above). Must match the scan
+    override. Omitted uses Compose declarations and preserves existing app policy. """
     initial_secrets: ProjectInitialSecrets | Unset = UNSET
-    """Request-only mapping of exact selected workload names to initial sealed environment values. Values stay in
-    memory until sealing and never enter responses or source caches."""
+    """ Request-only mapping of exact selected workload names to initial sealed environment values. Values stay in
+    memory until sealing and never enter responses or source caches. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

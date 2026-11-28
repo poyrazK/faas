@@ -30,35 +30,37 @@ class OperationWorkflowObligationFulfillmentReview:
 
     action_kind: OperationWorkflowObligationFulfillmentReviewActionKind
     binding: OperationWorkflowObligationTargetBinding
-    """One obligation-cycle and exact-case target binding, recorded with an authenticated actor and reason.
-    Unrelated edits preserve it; a new cycle never inherits it. Current readiness is independently reassessed."""
+    """ One obligation-cycle and exact-case target binding, recorded with an authenticated actor and reason.
+    Unrelated edits preserve it; a new cycle never inherits it. Current readiness is independently reassessed. """
     fulfilled_at: datetime.datetime
     basis_at: datetime.datetime
-    """Original fulfillment or latest explicit reaffirmation time; old observations cannot overwrite a newer basis."""
+    """ Original fulfillment or latest explicit reaffirmation time; old observations cannot overwrite a newer basis.
+    """
     source_sequence: int
     owner: str
     review_required: bool
     reasons: list[str]
-    """Latched reasons requiring explicit review, retained even after current evidence recovers. Possible reasons
+    """ Latched reasons requiring explicit review, retained even after current evidence recovers. Possible reasons
     are supporting_report_unavailable, current_evidence_unavailable, contract_changed, resolution_invalidated and
-    verification_unavailable."""
+    verification_unavailable. """
     current_reasons: list[str]
-    """Current observed issues; empty does not automatically clear a latched review flag."""
+    """ Current observed issues; empty does not automatically clear a latched review flag. """
     checked_at: datetime.datetime
     fingerprint: str
-    """Semantic comparison identity; timestamps and ordinary reporting revisions do not create new notices."""
+    """ Semantic comparison identity; timestamps and ordinary reporting revisions do not create new notices. """
     current_contract_version: int
     current_state_revision: int
     escalation_owner: str | Unset = UNSET
-    """Optional escalation team, distinct from the review owner. Requires an explicit review deadline and positive
-    grace period."""
+    """ Optional escalation team, distinct from the review owner. Requires an explicit review deadline and positive
+    grace period. """
     escalate_after_seconds: int | Unset = UNSET
-    """Grace period after actual overdue-reminder delivery. Positive values require an escalation owner; zero
-    disables escalation."""
+    """ Grace period after actual overdue-reminder delivery. Positive values require an escalation owner; zero
+    disables escalation. """
     manual_owner: bool | Unset = UNSET
-    """Explicit review-cycle owner, preserved across worker observations without altering original work ownership."""
+    """ Explicit review-cycle owner, preserved across worker observations without altering original work ownership.
+    """
     due_at: datetime.datetime | Unset = UNSET
-    """Explicit review deadline, independent of the original source plan."""
+    """ Explicit review deadline, independent of the original source plan. """
     required_at: datetime.datetime | Unset = UNSET
     current_operation_id: UUID | Unset = UNSET
     current_report_id: str | Unset = UNSET

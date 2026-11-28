@@ -24,7 +24,7 @@ class ManagedPostgresActivityHint:
     message: str
     app_slug: str | Unset = UNSET
     command: str | Unset = UNSET
-    """The CLI command that acts on the hint, when there is one."""
+    """ The CLI command that acts on the hint, when there is one. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

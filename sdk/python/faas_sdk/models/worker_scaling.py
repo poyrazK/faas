@@ -17,18 +17,18 @@ class WorkerScaling:
     """Queue-driven or custom-metric autoscaling policy for execution_mode='worker'. Supports scale-to-zero when min=0."""
 
     min_: int
-    """Minimum worker instances to maintain. 0 enables scale-to-zero."""
+    """ Minimum worker instances to maintain. 0 enables scale-to-zero. """
     max_: int
-    """Maximum worker instances (bounded by plan WorkerReplicasMax and app max_concurrency)."""
+    """ Maximum worker instances (bounded by plan WorkerReplicasMax and app max_concurrency). """
     metric: WorkerScalingMetric
-    """Queue or customer-pushed metric driving autoscaling."""
+    """ Queue or customer-pushed metric driving autoscaling. """
     target: float
-    """Target backlog per worker instance. Custom metric targets use the custom gauge's units."""
+    """ Target backlog per worker instance. Custom metric targets use the custom gauge's units. """
     name: str | Unset = UNSET
-    """Required when metric is custom; the app-scoped custom gauge name."""
+    """ Required when metric is custom; the app-scoped custom gauge name. """
     observer_app_slug: str | Unset = UNSET
-    """Separate always-on worker app publishing MCP task metrics; required when mcp_tasks_outstanding scales this
-    worker to zero."""
+    """ Separate always-on worker app publishing MCP task metrics; required when mcp_tasks_outstanding scales this
+    worker to zero. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -54,7 +54,7 @@ class WorkerScaling:
                 "target": target,
             }
         )
-        if not isinstance(name, Unset):
+        if name is not UNSET:
             field_dict["name"] = name
         if observer_app_slug is not UNSET:
             field_dict["observer_app_slug"] = observer_app_slug

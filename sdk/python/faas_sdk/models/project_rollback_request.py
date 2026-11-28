@@ -19,25 +19,25 @@ class ProjectRollbackRequest:
     all_: bool | Unset = False
     acknowledge_releases: bool | Unset = False
     verify: bool | Unset = False
-    """Check configured HTTP health probes after each cutover before continuing."""
+    """ Check configured HTTP health probes after each cutover before continuing. """
     verify_before_cutover: bool | Unset = False
-    """Verify configured HTTP probes of all prepared revisions at zero traffic before the first cutover. Requires
-    verify."""
+    """ Verify configured HTTP probes of all prepared revisions at zero traffic before the first cutover. Requires
+    verify. """
     stabilize_for_seconds: int | Unset = 0
-    """Minimum healthy probe duration in seconds after each cutover. Nonzero values require verify."""
+    """ Minimum healthy probe duration in seconds after each cutover. Nonzero values require verify. """
     verify_live_traffic: bool | Unset = False
-    """Verify configured production 5xx budgets after cutover before advancing. Requires verify."""
+    """ Verify configured production 5xx budgets after cutover before advancing. Requires verify. """
     undo_on_health_failure: bool | Unset = False
-    """Automatically undo switched services on a confirmed health probe 5xx. Requires verify."""
+    """ Automatically undo switched services on a confirmed health probe 5xx. Requires verify. """
     undo_on_live_traffic_failure: bool | Unset = False
-    """Automatically undo switched services on a reconfirmed production 5xx budget breach. Requires
-    verify_live_traffic."""
+    """ Automatically undo switched services on a reconfirmed production 5xx budget breach. Requires
+    verify_live_traffic. """
     request_id: UUID | Unset = UNSET
-    """Stable start request UUID. Repeat with the same options to read the accepted operation."""
+    """ Stable start request UUID. Repeat with the same options to read the accepted operation. """
     expected_plan_hash: str | Unset = UNSET
-    """Plan hash from a runnable preview with the same rollback options."""
+    """ Plan hash from a runnable preview with the same rollback options. """
     to_deploy: UUID | Unset = UNSET
-    """Recorded production deploy group to restore. Omit all when selecting a deploy group."""
+    """ Recorded production deploy group to restore. Omit all when selecting a deploy group. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

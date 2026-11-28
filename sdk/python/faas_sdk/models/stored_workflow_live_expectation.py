@@ -23,7 +23,7 @@ class StoredWorkflowLiveExpectation:
     item_index: int | Unset = UNSET
     state: StoredWorkflowLiveExpectationState | Unset = UNSET
     output: Any | Unset = UNSET
-    """Optional expected JSON result; an explicit null is asserted."""
+    """ Optional expected JSON result; an explicit null is asserted. """
     attempt_count: int | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:

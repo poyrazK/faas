@@ -25,23 +25,23 @@ class KafkaTriggerConfig:
     """
 
     brokers: list[str]
-    """Bootstrap broker list (host:port per entry)."""
+    """ Bootstrap broker list (host:port per entry). """
     topic: str
     group: str
     tls: KafkaTLSConfig | Unset = UNSET
-    """Kafka TLS material. MinVersion is forced to TLS 1.2 at
+    """ Kafka TLS material. MinVersion is forced to TLS 1.2 at
     decoder time regardless of what the wire sends. When
     ClientCert + ClientKey are both set the decoder performs
     a half-wired guard — if only one is set, decode returns
     an error rather than the poller falling through silently
     to PLAINTEXT over an apparent mTLS endpoint.
-    """
+     """
     sasl: KafkaSASLConfig | Unset = UNSET
-    """Kafka SASL credentials. Required Username + Password for
+    """ Kafka SASL credentials. Required Username + Password for
     every supported mechanism. xdg-go/scram library derives
     SCRAM client keypairs from Username + Password at dial
     time.
-    """
+     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

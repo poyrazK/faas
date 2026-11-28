@@ -15,9 +15,9 @@ class ManagedPostgresQueryRequest:
     """One read-only SQL statement."""
 
     sql: str
-    """One statement; several are refused."""
+    """ One statement; several are refused. """
     max_rows: int | Unset = UNSET
-    """Rows to return; default 100."""
+    """ Rows to return; default 100. """
 
     def to_dict(self) -> dict[str, Any]:
         sql = self.sql

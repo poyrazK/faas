@@ -27,11 +27,11 @@ class OperationWorkflowObligationTargetRequest:
 
     obligation_id: str
     case: OperationWorkflowNextActionCase
-    """Exact workflow case affected by a current source action."""
+    """ Exact workflow case affected by a current source action. """
     reason: str
     transition: OperationWorkflowObligationTransitionTarget | Unset = UNSET
-    """Exact declared transition identity and pinned workflow contract version; it is an advisory target, not
-    execution authorization."""
+    """ Exact declared transition identity and pinned workflow contract version; it is an advisory target, not
+    execution authorization. """
     clear: bool | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:

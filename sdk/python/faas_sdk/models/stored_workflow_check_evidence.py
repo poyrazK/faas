@@ -30,11 +30,11 @@ class StoredWorkflowCheckEvidence:
     scenarios: list[StoredWorkflowCheckScenario]
     coverage_required: bool
     coverage_passed: bool
-    """True when coverage_remaining is zero; required coverage must pass before publishing."""
+    """ True when coverage_remaining is zero; required coverage must pass before publishing. """
     coverage_remaining: int
     exclusions: list[StoredWorkflowCheckExclusion]
     server_verified: bool | Unset = UNSET
-    """True only when publication used a stored server-issued receipt. Clients cannot attest to this flag."""
+    """ True only when publication used a stored server-issued receipt. Clients cannot attest to this flag. """
 
     def to_dict(self) -> dict[str, Any]:
         definition_hash = self.definition_hash

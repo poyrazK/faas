@@ -20,18 +20,18 @@ class FinancialBudgetPreviewResponse:
     """Known spending, evidence gaps, workload consequences and explicit readiness."""
 
     spec: FinancialBudgetSpec
-    """Customer budget intent; activation and enforcement are separately acknowledged."""
+    """ Customer budget intent; activation and enforcement are separately acknowledged. """
     period_start: datetime.datetime
     period_end: datetime.datetime
     as_of: datetime.datetime
     known_millicents: int
     known_limit_reached: bool
-    """Known subtotal is at or above the limit; inspect coverage before inferring complete spending."""
+    """ Known subtotal is at or above the limit; inspect coverage before inferring complete spending. """
     coverage_complete: bool
     fresh: bool
     reasons: list[str]
     enforcement_ready: bool
-    """False while durable decisions and owner integrations lack acceptance; preview never activates a policy."""
+    """ False while durable decisions and owner integrations lack acceptance; preview never activates a policy. """
     guarantee: str
     targets: list[FinancialBudgetTarget]
     continuing_targets: list[FinancialBudgetTarget]

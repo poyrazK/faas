@@ -32,7 +32,7 @@ class StoredWorkflowCheckExpectation:
     reason: str | Unset = UNSET
     when_matched: bool | Unset = UNSET
     output: Any | Unset = UNSET
-    """Exact JSON assertion; explicit null differs from omitted."""
+    """ Exact JSON assertion; explicit null differs from omitted. """
     attempt_count: int | Unset = UNSET
     attempts: list[StoredWorkflowCheckAttempt] | Unset = UNSET
 

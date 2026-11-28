@@ -20,13 +20,13 @@ class UpdateNotificationChannelRequest:
     """Renames a channel or replaces its destination; set name, the channel's own destination, or both."""
 
     name: str | Unset = UNSET
-    """New name, unique per account."""
+    """ New name, unique per account. """
     slack_webhook_url: str | Unset = UNSET
-    """New Slack incoming webhook (kind slack)."""
+    """ New Slack incoming webhook (kind slack). """
     pagerduty_routing_key: str | Unset = UNSET
-    """New Events API v2 integration key (kind pagerduty)."""
+    """ New Events API v2 integration key (kind pagerduty). """
     pagerduty_region: UpdateNotificationChannelRequestPagerdutyRegion | Unset = UNSET
-    """PagerDuty service region of the new key (kind pagerduty); default us."""
+    """ PagerDuty service region of the new key (kind pagerduty); default us. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

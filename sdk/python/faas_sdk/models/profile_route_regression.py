@@ -29,20 +29,20 @@ class ProfileRouteRegression:
     status: ProfileRouteRegressionStatus
     reason: str
     code_reason: str | Unset = UNSET
-    """Availability and limitations of route-filtered code attribution."""
+    """ Availability and limitations of route-filtered code attribution. """
     code_evidence: list[ProfileRegressionEvidence] | Unset = UNSET
-    """Bounded route-filtered function self CPU and inclusive call-path increases ranked by CPU/request delta.
-    Source URLs are derived at read time."""
+    """ Bounded route-filtered function self CPU and inclusive call-path increases ranked by CPU/request delta.
+    Source URLs are derived at read time. """
     label_coverage: ProfileRouteLabelComparison | Unset = UNSET
-    """Advisory route CPU/request requires reconciled labeling shares of at least 80 percent in both windows and a
+    """ Advisory route CPU/request requires reconciled labeling shares of at least 80 percent in both windows and a
     change below 20 percentage points in either direction. Missing reports or failed reconciliation produces
-    insufficient data."""
+    insufficient data. """
     baseline_requests: int | Unset = UNSET
     candidate_requests: int | Unset = UNSET
     metric: ProfileRegressionCPUPerRequestMetric | Unset = UNSET
-    """Qualified route CPU/request measurements and regression threshold results."""
+    """ Qualified route CPU/request measurements and regression threshold results. """
     comparison_url: str | Unset = UNSET
-    """Request-time dashboard link to the route differential flamegraph for the frozen comparison windows."""
+    """ Request-time dashboard link to the route differential flamegraph for the frozen comparison windows. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

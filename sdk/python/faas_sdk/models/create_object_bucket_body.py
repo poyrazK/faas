@@ -15,14 +15,14 @@ class CreateObjectBucketBody:
     name: str
     scope: str | Unset = "default"
     region: str | Unset = UNSET
-    """Gregale region, not upstream signing region. Omit to use the configured default."""
+    """ Gregale region, not upstream signing region. Omit to use the configured default. """
     public: bool | Unset = False
-    """Serve objects anonymously on the app hostname."""
+    """ Serve objects anonymously on the app hostname. """
     serve_at: str | Unset = UNSET
-    """Immutable app path mounted when public is true."""
+    """ Immutable app path mounted when public is true. """
     object_lock: bool | Unset = False
-    """Create the bucket with Object Lock. Permanent; the bucket keeps every object version. Some storage accepts
-    Object Lock only when the bucket is created, so choose it here."""
+    """ Create the bucket with Object Lock. Permanent; the bucket keeps every object version. Some storage accepts
+    Object Lock only when the bucket is created, so choose it here. """
 
     def to_dict(self) -> dict[str, Any]:
         name = self.name

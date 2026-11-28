@@ -30,47 +30,47 @@ class AuditLogEntry:
     """
 
     id: UUID
-    """Audit-log row id (uuid canonical form)."""
+    """ Audit-log row id (uuid canonical form). """
     kind: str
-    """Namespaced audit-log kind. The surface currently
+    """ Namespaced audit-log kind. The surface currently
     emits only `account.deleted` from inside
     `(*PgStore).DeleteAccount` / `(*MemStore).DeleteAccount`
     so the regulator can replay post-deletion state. The
     closed vocabulary will widen in a follow-up PR if a
     future audit emitter reuses the table for a new
     evidence surface.
-    """
+     """
     received_at: datetime.datetime
-    """When the audit-log row was recorded (RFC 3339, UTC)."""
+    """ When the audit-log row was recorded (RFC 3339, UTC). """
     account_id: UUID | Unset = UNSET
-    """Account id (uuid canonical form) the row was recorded
+    """ Account id (uuid canonical form) the row was recorded
     against. Nullable in the schema (anonymous /
     background activity can emit rows); omitted on the
     wire when the column is NULL.
-    """
+     """
     account_email: str | Unset = UNSET
-    """Email captured at copy-time inside
+    """ Email captured at copy-time inside
     `DeleteAccount`. The audit row is self-contained: a
     regulator reading a row for a UUID that no longer
     exists in `accounts` still sees the human identifier
     without joining back to a deleted accounts row.
     Omitted when the row was emitted by anonymous
     activity.
-    """
+     """
     actor: str | Unset = UNSET
-    """Which daemon wrote the row. It emits `grace-sweep`
+    """ Which daemon wrote the row. It emits `grace-sweep`
     from inside the DeleteAccount store method. Future
     emitters (follow-up PRs) will widen the vocabulary.
-    """
+     """
     data: AuditLogEntryData | Unset = UNSET
-    """Kind-specific payload. Always a JSON object; the
+    """ Kind-specific payload. Always a JSON object; the
     inner shape depends on `kind`. For
     `account.deleted`, the payload carries `source`
     (`grace-sweep` today), `email` (the verbatim
     captured email), and `actor` (`grace-sweep` today)
     so the dashboard can render the row without joining
     back to a deleted `accounts` row.
-    """
+     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -18,18 +18,18 @@ class WorkflowResumePreview:
     """A continuation plan based on the current run generation and recovery admission checks."""
 
     eligible: bool
-    """Advisory eligibility at observation. Actual resume rechecks state and quotas."""
+    """ Advisory eligibility at observation. Actual resume rechecks state and quotas. """
     expected_resume_count: int
-    """Observed generation for a subsequent resume request; stale generations are rejected."""
+    """ Observed generation for a subsequent resume request; stale generations are rejected. """
     reopened_steps: list[str]
-    """Structurally eligible steps that would reopen even if a temporary admission blocker prevents continuation.
-    Empty when recovery planning is unsafe."""
+    """ Structurally eligible steps that would reopen even if a temporary admission blocker prevents continuation.
+    Empty when recovery planning is unsafe. """
     preserved_steps: list[str]
-    """Persisted steps whose current state is retained including completed actions and untaken branches. Sorted by
-    name as are reopened_steps and diagnostic steps."""
+    """ Persisted steps whose current state is retained including completed actions and untaken branches. Sorted by
+    name as are reopened_steps and diagnostic steps. """
     blockers: list[WorkflowDiagnosticBlocker]
-    """First deterministic planner blocker plus independent admission blockers. Empty only when eligible. Codes
-    omit private values."""
+    """ First deterministic planner blocker plus independent admission blockers. Empty only when eligible. Codes
+    omit private values. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -23,14 +23,14 @@ class PlanDetectionWarning:
 
     detector: PlanDetectionWarningDetector
     marker: str
-    """Concrete source marker associated with the detector decision."""
+    """ Concrete source marker associated with the detector decision. """
     priority: int
-    """Detector priority used by the merge tiebreak."""
+    """ Detector priority used by the merge tiebreak. """
     outcome: PlanDetectionWarningOutcome
     reason: str
-    """Stable human-readable reason for the detector decision."""
+    """ Stable human-readable reason for the detector decision. """
     workload: str | Unset = UNSET
-    """Workload affected by the decision; omitted for source-wide warnings."""
+    """ Workload affected by the decision; omitted for source-wide warnings. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

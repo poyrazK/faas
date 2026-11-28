@@ -33,7 +33,7 @@ class OutboundAIModeration:
     kind: OutboundAIModerationKind | Unset = UNSET
     integration_id: UUID | Unset = UNSET
     model: str | Unset = UNSET
-    """Required for classifier."""
+    """ Required for classifier. """
     categories: list[OutboundAIModerationCategoriesItem] | Unset = UNSET
     on_error: OutboundAIModerationOnError | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

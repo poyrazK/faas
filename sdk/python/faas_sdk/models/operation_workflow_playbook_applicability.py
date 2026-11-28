@@ -24,41 +24,41 @@ class OperationWorkflowPlaybookApplicability:
     """
 
     status: OperationWorkflowPlaybookApplicabilityStatus
-    """OperationWorkflowPlaybookApplicability.status. Current advisory disposition; absent triggers and terminal
-    reports are not business success."""
+    """ OperationWorkflowPlaybookApplicability.status. Current advisory disposition; absent triggers and terminal
+    reports are not business success. """
     summary: str
-    """OperationWorkflowPlaybookApplicability.summary. Evidence interpretation, including uncertainty and authority
-    boundaries."""
+    """ OperationWorkflowPlaybookApplicability.summary. Evidence interpretation, including uncertainty and authority
+    boundaries. """
     suggested_action: str
-    """OperationWorkflowPlaybookApplicability.suggested_action. Human review suggestion; never execution permission
-    or an automatic checklist closure."""
+    """ OperationWorkflowPlaybookApplicability.suggested_action. Human review suggestion; never execution permission
+    or an automatic checklist closure. """
     checked_at: datetime.datetime
-    """OperationWorkflowPlaybookApplicability.checked_at. Shared server observation clock for the current case
-    checklists; sources are independently read."""
+    """ OperationWorkflowPlaybookApplicability.checked_at. Shared server observation clock for the current case
+    checklists; sources are independently read. """
     definition_changed: bool
-    """OperationWorkflowPlaybookApplicability.definition_changed. An observed reporting definition differs from the
-    pinned original. False does not establish availability; inspect definition_id and status."""
+    """ OperationWorkflowPlaybookApplicability.definition_changed. An observed reporting definition differs from the
+    pinned original. False does not establish availability; inspect definition_id and status. """
     trigger_matched: bool
-    """OperationWorkflowPlaybookApplicability.trigger_matched. The unchanged pinned rule positively matches current
-    retained evidence. False may mean unevaluated or incomplete evidence; inspect status."""
+    """ OperationWorkflowPlaybookApplicability.trigger_matched. The unchanged pinned rule positively matches current
+    retained evidence. False may mean unevaluated or incomplete evidence; inspect status. """
     evidence_complete: bool
-    """OperationWorkflowPlaybookApplicability.evidence_complete. Relevant trigger coverage is complete for this
-    retained evaluation. Does not validate existing checklist attachments or infer business correctness."""
+    """ OperationWorkflowPlaybookApplicability.evidence_complete. Relevant trigger coverage is complete for this
+    retained evaluation. Does not validate existing checklist attachments or infer business correctness. """
     remaining_item_count: int
-    """OperationWorkflowPlaybookApplicability.remaining_item_count. Count of frozen checklist items not human-
-    reviewed as completed; independent of current trigger or business outcome."""
+    """ OperationWorkflowPlaybookApplicability.remaining_item_count. Count of frozen checklist items not human-
+    reviewed as completed; independent of current trigger or business outcome. """
     current_contract_version: int | Unset = UNSET
-    """OperationWorkflowPlaybookApplicability.current_contract_version. Current projected workflow contract
-    version, if a report exists; status determines comparability."""
+    """ OperationWorkflowPlaybookApplicability.current_contract_version. Current projected workflow contract
+    version, if a report exists; status determines comparability. """
     state_revision: int | Unset = UNSET
-    """OperationWorkflowPlaybookApplicability.state_revision. Observed application state revision, when available;
-    stale reports remain explicitly unavailable."""
+    """ OperationWorkflowPlaybookApplicability.state_revision. Observed application state revision, when available;
+    stale reports remain explicitly unavailable. """
     reporting_operation_id: UUID | Unset = UNSET
-    """OperationWorkflowPlaybookApplicability.reporting_operation_id. Current state-report operation, when
-    available; distinct from the frozen original reporting operation."""
+    """ OperationWorkflowPlaybookApplicability.reporting_operation_id. Current state-report operation, when
+    available; distinct from the frozen original reporting operation. """
     definition_id: UUID | Unset = UNSET
-    """OperationWorkflowPlaybookApplicability.definition_id. Exact current reporting definition validated under
-    account, application, customer, environment and subject fences, if available."""
+    """ OperationWorkflowPlaybookApplicability.definition_id. Exact current reporting definition validated under
+    account, application, customer, environment and subject fences, if available. """
 
     def to_dict(self) -> dict[str, Any]:
         status: str = self.status

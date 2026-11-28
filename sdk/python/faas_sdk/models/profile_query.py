@@ -22,7 +22,7 @@ class ProfileQuery:
     start: datetime.datetime
     end: datetime.datetime
     route: str | Unset = UNSET
-    """Optional static METHOD /pattern or [unattributed]; empty selects all sampled CPU."""
+    """ Optional static METHOD /pattern or [unattributed]; empty selects all sampled CPU. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

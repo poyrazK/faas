@@ -14,9 +14,9 @@ T = TypeVar("T", bound="WorkloadUsesQueuesItem")
 @_attrs_define
 class WorkloadUsesQueuesItem:
     app: str
-    """Project service name, app slug, or self."""
+    """ Project service name, app slug, or self. """
     queue: str | Unset = UNSET
-    """Queue name, or "*" for any."""
+    """ Queue name, or "*" for any. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -20,13 +20,13 @@ class Preview:
     label: str
     description: str
     joined: bool
-    """Whether you (or, under /v1/orgs/{slug}, the organization) opted in."""
+    """ Whether you (or, under /v1/orgs/{slug}, the organization) opted in. """
     eligible: bool
-    """Whether the preview is open to self-serve and your plan may join it."""
+    """ Whether the preview is open to self-serve and your plan may join it. """
     enabled: bool
-    """Whether the preview is on for you now, for any reason."""
+    """ Whether the preview is on for you now, for any reason. """
     retire_by: datetime.date | Unset = UNSET
-    """Planned end of the preview, by general availability or removal."""
+    """ Planned end of the preview, by general availability or removal. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

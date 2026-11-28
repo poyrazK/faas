@@ -26,11 +26,11 @@ class WorkflowRecoveryPolicyDecision:
     action: str
     outcome: str
     failure_status: str | Unset = UNSET
-    """Exact run status observed at candidate evaluation when available."""
+    """ Exact run status observed at candidate evaluation when available. """
     preflight_outcome: str | Unset = UNSET
-    """Eligibility result before policy preparation limits."""
+    """ Eligibility result before policy preparation limits. """
     preflight_blockers: list[str] | Unset = UNSET
-    """Frozen preflight blocker codes."""
+    """ Frozen preflight blocker codes. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

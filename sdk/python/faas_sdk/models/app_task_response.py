@@ -39,7 +39,7 @@ class AppTaskResponse:
     timeout_seconds: int
     max_output_bytes: int
     attempt_count: int
-    """Number of command executions started for this logical task."""
+    """ Number of command executions started for this logical task. """
     output_truncated: bool
     created_at: datetime.datetime
     updated_at: datetime.datetime
@@ -48,7 +48,7 @@ class AppTaskResponse:
     retry_max: int | Unset = UNSET
     retry_backoff_seconds: int | Unset = UNSET
     retry_at: datetime.datetime | None | Unset = UNSET
-    """When a failed command task will be eligible for its next attempt; omitted otherwise."""
+    """ When a failed command task will be eligible for its next attempt; omitted otherwise. """
     stdout_tail: str | Unset = UNSET
     stderr_tail: str | Unset = UNSET
     exit_code: int | None | Unset = UNSET
@@ -57,9 +57,9 @@ class AppTaskResponse:
     started_at: datetime.datetime | None | Unset = UNSET
     finished_at: datetime.datetime | None | Unset = UNSET
     interactive: bool | Unset = UNSET
-    """Present on the create response of an interactive session."""
+    """ Present on the create response of an interactive session. """
     attach: AppTaskAttachInfo | Unset = UNSET
-    """One-time attach credential for an interactive app task. Returned only in the create response."""
+    """ One-time attach credential for an interactive app task. Returned only in the create response. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

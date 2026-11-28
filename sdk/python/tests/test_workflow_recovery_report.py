@@ -1,5 +1,4 @@
 import httpx
-
 from faas_sdk.preview.api.events import get_workflow_recovery_report
 from faas_sdk.preview.models.workflow_recovery_report import WorkflowRecoveryReport
 

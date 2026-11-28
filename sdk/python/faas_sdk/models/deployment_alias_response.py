@@ -23,17 +23,17 @@ class DeploymentAliasResponse:
     name: str
     deployment_id: UUID
     revision: int
-    """Per-app revision number; rendered in CLI output as vN."""
+    """ Per-app revision number; rendered in CLI output as vN. """
     created_at: datetime.datetime
     updated_at: datetime.datetime
     deployment_status: str | Unset = UNSET
-    """Lifecycle status of the target deployment. An alias whose deployment is not live (superseded by a rollback
-    or redeploy, or failed) no longer serves traffic and answers 409."""
+    """ Lifecycle status of the target deployment. An alias whose deployment is not live (superseded by a rollback
+    or redeploy, or failed) no longer serves traffic and answers 409. """
     host: str | Unset = UNSET
-    """Stable one-label hostname for this alias. It is keyed by an immutable app identifier and remains stable if
-    the app slug is renamed."""
+    """ Stable one-label hostname for this alias. It is keyed by an immutable app identifier and remains stable if
+    the app slug is renamed. """
     url: str | Unset = UNSET
-    """HTTPS URL for the alias host; omitted when the platform apps domain is not configured."""
+    """ HTTPS URL for the alias host; omitted when the platform apps domain is not configured. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

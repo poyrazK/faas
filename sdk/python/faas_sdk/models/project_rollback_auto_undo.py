@@ -27,17 +27,17 @@ class ProjectRollbackAutoUndo:
 
     status: ProjectRollbackAutoUndoStatus
     trigger_app_id: UUID
-    """Service with the confirmed 5xx failure."""
+    """ Service with the confirmed 5xx failure. """
     trigger: str | Unset = UNSET
-    """Identifies a live_traffic breach. Omitted for a health probe failure."""
+    """ Identifies a live_traffic breach. Omitted for a health probe failure. """
     route_generation: int | Unset = UNSET
-    """Applied route generation for the production breach."""
+    """ Applied route generation for the production breach. """
     window_start: datetime.datetime | Unset = UNSET
-    """Start of the original live-traffic breach window."""
+    """ Start of the original live-traffic breach window. """
     window_end: datetime.datetime | Unset = UNSET
-    """End of the original live-traffic breach window."""
+    """ End of the original live-traffic breach window. """
     problem: Problem | Unset = UNSET
-    """RFC 9457 problem+json envelope. The `code` field is the stable
+    """ RFC 9457 problem+json envelope. The `code` field is the stable
     machine-readable identifier; clients branch on it. `limit` and
     `observed` are populated on quota errors. `docs_url` points the
     user at the next action. Common customer-facing codes and recovery
@@ -55,7 +55,7 @@ class ProjectRollbackAutoUndo:
     rejection renders as a form-field list the dashboard can
     iterate without parsing prose. Optional + omitempty so every
     other problem+json site keeps its existing flat shape unchanged.
-    """
+     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

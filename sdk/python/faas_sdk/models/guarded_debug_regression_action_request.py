@@ -31,7 +31,7 @@ class GuardedDebugRegressionActionRequest:
     expected_version: UUID
     reason: str
     dismissed_until: datetime.datetime | Unset = UNSET
-    """Absolute checked-action dismissal expiry, frozen by MCP review and capped at 30 days."""
+    """ Absolute checked-action dismissal expiry, frozen by MCP review and capped at 30 days. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

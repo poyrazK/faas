@@ -25,12 +25,12 @@ class AppHealthHistoryPage:
     scope: AppHealthHistoryPageScope
     entries: list[AppHealthHistoryEntry]
     collector_fresh: bool
-    """Latest background assessment exists and has not expired. This is collection freshness, not app health."""
+    """ Latest background assessment exists and has not expired. This is collection freshness, not app health. """
     interval_seconds: int
-    """Minimum target spacing per app; fleet load and failures can delay observations."""
+    """ Minimum target spacing per app; fleet load and failures can delay observations. """
     next_cursor: UUID | Unset = UNSET
     latest: AppHealthResponse | Unset = UNSET
-    """Read-only observed health of selected-scope HTTP serving workloads."""
+    """ Read-only observed health of selected-scope HTTP serving workloads. """
 
     def to_dict(self) -> dict[str, Any]:
         app_id = self.app_id

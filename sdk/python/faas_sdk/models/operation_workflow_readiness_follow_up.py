@@ -28,77 +28,78 @@ class OperationWorkflowReadinessFollowUp:
     """Compact pending follow-up with original inbox references; no application readiness is inferred."""
 
     subscription_id: UUID
-    """OperationWorkflowReadinessFollowUp.subscription_id. Retained notification or subscription identity; tenant
-    fields are account-only."""
+    """ OperationWorkflowReadinessFollowUp.subscription_id. Retained notification or subscription identity; tenant
+    fields are account-only. """
     subscription_name: str
-    """OperationWorkflowReadinessFollowUp.subscription_name. Retained notification or subscription identity; tenant
-    fields are account-only."""
+    """ OperationWorkflowReadinessFollowUp.subscription_name. Retained notification or subscription identity; tenant
+    fields are account-only. """
     scope: str
-    """OperationWorkflowReadinessFollowUp.scope. Retained notification or subscription identity; tenant fields are
-    account-only."""
+    """ OperationWorkflowReadinessFollowUp.scope. Retained notification or subscription identity; tenant fields are
+    account-only. """
     notification_id: UUID
-    """OperationWorkflowReadinessFollowUp.notification_id. Retained notification or subscription identity; tenant
-    fields are account-only."""
+    """ OperationWorkflowReadinessFollowUp.notification_id. Retained notification or subscription identity; tenant
+    fields are account-only. """
     kind: str
-    """OperationWorkflowReadinessFollowUp.kind. Retained notification or subscription identity; tenant fields are
-    account-only."""
+    """ OperationWorkflowReadinessFollowUp.kind. Retained notification or subscription identity; tenant fields are
+    account-only. """
     sequence: int
-    """OperationWorkflowReadinessFollowUp.sequence. Subscription-local notification sequence used for edits and
-    evidence checks."""
+    """ OperationWorkflowReadinessFollowUp.sequence. Subscription-local notification sequence used for edits and
+    evidence checks. """
     created_at: datetime.datetime
-    """OperationWorkflowReadinessFollowUp.created_at. Original notification creation time."""
+    """ OperationWorkflowReadinessFollowUp.created_at. Original notification creation time. """
     coordination: OperationWorkflowReadinessCoordination
-    """OperationWorkflowReadinessCoordination. Shared inbox coordination with optimistic revision checks; omission
-    of a follow-up time clears it."""
+    """ OperationWorkflowReadinessCoordination. Shared inbox coordination with optimistic revision checks; omission
+    of a follow-up time clears it. """
     overdue: bool
-    """OperationWorkflowReadinessFollowUp.overdue. Follow-up time is at or before this response evaluation clock."""
+    """ OperationWorkflowReadinessFollowUp.overdue. Follow-up time is at or before this response evaluation clock.
+    """
     attention_due_at: datetime.datetime | Unset = UNSET
-    """OperationWorkflowReadinessFollowUp.attention_due_at. Earlier of human check-in and active decision
-    revalidation deadline, used for queue ordering and overdue filters; coordination remains unchanged."""
+    """ OperationWorkflowReadinessFollowUp.attention_due_at. Earlier of human check-in and active decision
+    revalidation deadline, used for queue ordering and overdue filters; coordination remains unchanged. """
     review_response: OperationWorkflowReviewResponse | Unset = UNSET
-    """OperationWorkflowReviewResponse. Human accountability record under the notification coordination revision
-    fence, independent of business workflow success."""
+    """ OperationWorkflowReviewResponse. Human accountability record under the notification coordination revision
+    fence, independent of business workflow success. """
     business_impact: OperationWorkflowReadinessImpactEvent | Unset = UNSET
-    """OperationWorkflowReadinessImpactEvent. Protected business result monitoring of retained unresolved human
-    reviews in a scoped application environment; advisory confidence only."""
+    """ OperationWorkflowReadinessImpactEvent. Protected business result monitoring of retained unresolved human
+    reviews in a scoped application environment; advisory confidence only. """
     playbook_step: OperationWorkflowPlaybookStepAssignment | Unset = UNSET
-    """OperationWorkflowPlaybookStepAssignment. Assigned step attention in the existing inbox and follow-up queue.
-    Polling preserves manual coordination and bounded ownership history."""
+    """ OperationWorkflowPlaybookStepAssignment. Assigned step attention in the existing inbox and follow-up queue.
+    Polling preserves manual coordination and bounded ownership history. """
     playbook_escalation: OperationWorkflowPlaybookOutcomeEscalation | Unset = UNSET
-    """OperationWorkflowPlaybookOutcomeEscalation. Retained assigned deadline follow-up evidence. Polling refreshes
+    """ OperationWorkflowPlaybookOutcomeEscalation. Retained assigned deadline follow-up evidence. Polling refreshes
     current observations and the first observed success only; acknowledgment, owner, notes, due times, reminders and
-    completion remain human coordination."""
+    completion remain human coordination. """
     outcome_escalation: OperationWorkflowReadinessOutcomeEscalation | Unset = UNSET
-    """Live evidence for an assigned outcome escalation, separate from immutable deadline delivery evidence and
+    """ Live evidence for an assigned outcome escalation, separate from immutable deadline delivery evidence and
     human coordination. First observed application success is retained as a flag; it never automatically
-    acknowledges or completes work. Monitoring ends with source retention."""
+    acknowledges or completes work. Monitoring ends with source retention. """
     subscription_tenant_id: UUID | Unset = UNSET
-    """OperationWorkflowReadinessFollowUp.subscription_tenant_id. Retained notification or subscription identity;
-    tenant fields are account-only."""
+    """ OperationWorkflowReadinessFollowUp.subscription_tenant_id. Retained notification or subscription identity;
+    tenant fields are account-only. """
     platform_tenant_id: UUID | Unset = UNSET
-    """OperationWorkflowReadinessFollowUp.platform_tenant_id. Retained notification or subscription identity;
-    tenant fields are account-only."""
+    """ OperationWorkflowReadinessFollowUp.platform_tenant_id. Retained notification or subscription identity;
+    tenant fields are account-only. """
     workflow: str | Unset = UNSET
-    """OperationWorkflowReadinessFollowUp.workflow. Retained notification or subscription identity; tenant fields
-    are account-only."""
+    """ OperationWorkflowReadinessFollowUp.workflow. Retained notification or subscription identity; tenant fields
+    are account-only. """
     instance_id: str | Unset = UNSET
-    """OperationWorkflowReadinessFollowUp.instance_id. Retained notification or subscription identity; tenant
-    fields are account-only."""
+    """ OperationWorkflowReadinessFollowUp.instance_id. Retained notification or subscription identity; tenant
+    fields are account-only. """
     operation: str | Unset = UNSET
-    """OperationWorkflowReadinessFollowUp.operation. Retained notification or subscription identity; tenant fields
-    are account-only."""
+    """ OperationWorkflowReadinessFollowUp.operation. Retained notification or subscription identity; tenant fields
+    are account-only. """
     from_state: str | Unset = UNSET
-    """OperationWorkflowReadinessFollowUp.from_state. Retained notification or subscription identity; tenant fields
-    are account-only."""
+    """ OperationWorkflowReadinessFollowUp.from_state. Retained notification or subscription identity; tenant fields
+    are account-only. """
     to_state: str | Unset = UNSET
-    """OperationWorkflowReadinessFollowUp.to_state. Retained notification or subscription identity; tenant fields
-    are account-only."""
+    """ OperationWorkflowReadinessFollowUp.to_state. Retained notification or subscription identity; tenant fields
+    are account-only. """
     subject: OperationSubject | Unset = UNSET
-    """Immutable public business correlation metadata. Captured at admission and preserved through recovery and
-    redeploy. Never an ownership or authorization claim."""
+    """ Immutable public business correlation metadata. Captured at admission and preserved through recovery and
+    redeploy. Never an ownership or authorization claim. """
     reminder: OperationWorkflowReadinessDueReminder | Unset = UNSET
-    """One durable in-app reminder marker for the original notification and follow-up deadline; rescheduling or
-    clearing retires it. Does not authorize execution."""
+    """ One durable in-app reminder marker for the original notification and follow-up deadline; rescheduling or
+    clearing retires it. Does not authorize execution. """
 
     def to_dict(self) -> dict[str, Any]:
         subscription_id = str(self.subscription_id)

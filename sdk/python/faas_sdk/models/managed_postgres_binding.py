@@ -26,7 +26,7 @@ class ManagedPostgresBinding:
     access: ManagedPostgresBindingAccess
     credential_generation: int
     rotation_pending: bool
-    """The previous provider credential remains valid until the rolling app runtime refresh completes."""
+    """ The previous provider credential remains valid until the rolling app runtime refresh completes. """
     state: ManagedPostgresBindingState
     created_at: datetime.datetime
     updated_at: datetime.datetime

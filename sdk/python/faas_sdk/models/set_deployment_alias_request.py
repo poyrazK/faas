@@ -14,7 +14,7 @@ class SetDeploymentAliasRequest:
     """Request to point one named alias at an exact immutable deployment row."""
 
     deployment_id: UUID
-    """Exact immutable deployment row to associate with this alias."""
+    """ Exact immutable deployment row to associate with this alias. """
 
     def to_dict(self) -> dict[str, Any]:
         deployment_id = str(self.deployment_id)

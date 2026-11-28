@@ -17,19 +17,19 @@ class OrgAgentPolicyResponse:
     """An organization's agent policy."""
 
     agents_allowed: bool
-    """Whether agents may act in the organization."""
+    """ Whether agents may act in the organization. """
     allowed_scopes: list[str]
-    """The capabilities agents may carry beyond inspection."""
+    """ The capabilities agents may carry beyond inspection. """
     approval_categories: list[str] | Unset = UNSET
-    """Kinds of action every agent acting in the organization must have a person approve."""
+    """ Kinds of action every agent acting in the organization must have a person approve. """
     approval_channels: list[str] | Unset = UNSET
-    """Your notification channels that get this organization's agents' approval requests."""
+    """ Your notification channels that get this organization's agents' approval requests. """
     max_agent_budget_cents: int | Unset = UNSET
-    """The ceiling on every agent's monthly budget in cents, when the organization set one."""
+    """ The ceiling on every agent's monthly budget in cents, when the organization set one. """
     updated_at: datetime.datetime | Unset = UNSET
-    """When the policy last changed; absent for an organization that never set one."""
+    """ When the policy last changed; absent for an organization that never set one. """
     revoked: int | Unset = UNSET
-    """Agent connections a change revoked because the new policy no longer allows them."""
+    """ Agent connections a change revoked because the new policy no longer allows them. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

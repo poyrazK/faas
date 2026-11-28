@@ -2,12 +2,12 @@ import json
 import unittest
 
 import httpx
-
 from faas_sdk.preview.api.apps import set_object_storage_binding_release_policy
-from faas_sdk.client import AuthenticatedClient
 from faas_sdk.preview.models.set_object_storage_binding_release_policy_request import (
     SetObjectStorageBindingReleasePolicyRequest,
 )
+
+from faas_sdk.client import AuthenticatedClient
 
 
 class StorageReleasePolicyContracts(unittest.TestCase):

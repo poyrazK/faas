@@ -51,51 +51,51 @@ class AppSecretResponse:
     key: str
     scope: str
     secret_class: AppSecretResponseSecretClass
-    """Storage policy for this row: ephemeral values prevent future VM snapshots in the row's scope."""
+    """ Storage policy for this row: ephemeral values prevent future VM snapshots in the row's scope. """
     created_at: datetime.datetime
     updated_at: datetime.datetime
     delivery_version: int
-    """Opaque monotonic version of the runtime value. Advances on value mutation, not host-key reseal."""
+    """ Opaque monotonic version of the runtime value. Advances on value mutation, not host-key reseal. """
     delivery_status: AppSecretResponseDeliveryStatus
-    """Delivery state for the current delivery_version. A concurrent rotation remains pending until that exact
-    version starts successfully."""
+    """ Delivery state for the current delivery_version. A concurrent rotation remains pending until that exact
+    version starts successfully. """
     config_change: ConfigChangeReceipt | Unset = UNSET
-    """The config revision an env or secret write recorded and the guard watching it."""
+    """ The config revision an env or secret write recorded and the guard watching it. """
     kid: str | Unset = UNSET
-    """age-1.. recipient string of the host identity that sealed this row. Empty for rows sealed before migration
-    00166."""
+    """ age-1.. recipient string of the host identity that sealed this row. Empty for rows sealed before migration
+    00166. """
     value_hash: str | Unset = UNSET
-    """16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key. Empty for older rows. Same value across
-    scopes = byte-identical plaintext."""
+    """ 16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key. Empty for older rows. Same value across
+    scopes = byte-identical plaintext. """
     delivered_version: int | Unset = UNSET
-    """Newest version confirmed in a successfully started runtime. Omitted until the first successful delivery."""
+    """ Newest version confirmed in a successfully started runtime. Omitted until the first successful delivery. """
     last_delivery_attempt_at: datetime.datetime | Unset = UNSET
     last_delivered_at: datetime.datetime | Unset = UNSET
     last_delivery_error_code: AppSecretResponseLastDeliveryErrorCode | Unset = UNSET
-    """Non-sensitive closed failure reason for the current version; omitted unless delivery_status is failed."""
+    """ Non-sensitive closed failure reason for the current version; omitted unless delivery_status is failed. """
     last_delivered_wake_id: str | Unset = UNSET
-    """Wake correlation id of the most recent successful delivery."""
+    """ Wake correlation id of the most recent successful delivery. """
     last_delivered_instance_id: str | Unset = UNSET
-    """Runtime instance that most recently received a secret version."""
+    """ Runtime instance that most recently received a secret version. """
     last_runtime_reload_version: int | Unset = UNSET
-    """Secret version associated with the latest guest-init projection/signal observation. Compare with
-    delivery_version; a mismatch means the observation is stale. This is not application acknowledgement."""
+    """ Secret version associated with the latest guest-init projection/signal observation. Compare with
+    delivery_version; a mismatch means the observation is stale. This is not application acknowledgement. """
     last_runtime_reload_projection: AppSecretResponseLastRuntimeReloadProjection | Unset = UNSET
-    """Whether guest-init updated the local projection, found it already current, or failed to write it."""
+    """ Whether guest-init updated the local projection, found it already current, or failed to write it. """
     last_runtime_reload_signal: AppSecretResponseLastRuntimeReloadSignal | Unset = UNSET
-    """Whether guest-init sent or queued its configured signal. This does not mean the application applied the new
-    credentials."""
+    """ Whether guest-init sent or queued its configured signal. This does not mean the application applied the new
+    credentials. """
     last_runtime_reload_at: datetime.datetime | Unset = UNSET
     last_runtime_reload_error_code: AppSecretResponseLastRuntimeReloadErrorCode | Unset = UNSET
-    """Closed, non-sensitive guest-init outcome code."""
+    """ Closed, non-sensitive guest-init outcome code. """
     last_runtime_reload_instance_id: str | Unset = UNSET
-    """Runtime instance that reported this projection/signal outcome."""
+    """ Runtime instance that reported this projection/signal outcome. """
     runtime_reload_observations: list[SecretRuntimeReloadObservation] | Unset = UNSET
-    """Complete current roster of active runtimes authorized for this secret by the deployment scope and
-    env_secrets allowlist. Missing guest reports are represented explicitly."""
+    """ Complete current roster of active runtimes authorized for this secret by the deployment scope and
+    env_secrets allowlist. Missing guest reports are represented explicitly. """
     runtime_reload_targets_complete: bool | Unset = UNSET
-    """True when this response includes the complete active, secret-authorized runtime roster. The field is absent
-    from older control-plane responses; callers must fail closed when waiting for acknowledgements."""
+    """ True when this response includes the complete active, secret-authorized runtime roster. The field is absent
+    from older control-plane responses; callers must fail closed when waiting for acknowledgements. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

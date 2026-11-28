@@ -25,10 +25,10 @@ class AuthCapabilities:
     """
 
     providers: AuthProviders
-    """Per-provider capability map. Closed set (google, github) —
+    """ Per-provider capability map. Closed set (google, github) —
     handlers MUST add a new field here when adding a new
     provider, not relax this to a free-form map.
-    """
+     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

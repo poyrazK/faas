@@ -25,19 +25,19 @@ class ScalingTarget:
     """
 
     metric: ScalingTargetMetric | Unset = UNSET
-    """rps = per-instance requests/second. cpu = max per-instance CPU percent. concurrent_requests = max per-
-    instance in-flight requests. queue_depth = fleet backlog budget per worker."""
+    """ rps = per-instance requests/second. cpu = max per-instance CPU percent. concurrent_requests = max per-
+    instance in-flight requests. queue_depth = fleet backlog budget per worker. """
     name: str | Unset = UNSET
-    """Which custom metric this target watches. Required when metric is `custom`, and REJECTED otherwise — a name
+    """ Which custom metric this target watches. Required when metric is `custom`, and REJECTED otherwise — a name
     on a platform-measured metric would be silently ignored, which is the accepted-but-inert shape this API keeps
-    having to remove."""
+    having to remove. """
     labels: ScalingTargetLabels | Unset = UNSET
-    """custom targets only: watch the one labelled gauge series of the metric with exactly these labels instead of
-    its aggregate. Keys match ^[a-z_][a-z0-9_]{0,62}$."""
+    """ custom targets only: watch the one labelled gauge series of the metric with exactly these labels instead of
+    its aggregate. Keys match ^[a-z_][a-z0-9_]{0,62}$. """
     value: float | Unset = UNSET
-    """Target value (units depend on Metric). Must be >= 0 in the singular `target` field for compatibility; inside
+    """ Target value (units depend on Metric). Must be >= 0 in the singular `target` field for compatibility; inside
     `targets` it must be > 0. queue_depth requires a positive per-worker backlog budget, and cpu is capped at 100.
-   """
+    """
 
     def to_dict(self) -> dict[str, Any]:
         metric: str | Unset = UNSET

@@ -22,7 +22,7 @@ class OperationBusinessConditionResult:
 
     id: str
     description: str
-    """Exact public description from the pinned milestone declaration; UTF-8 byte bound."""
+    """ Exact public description from the pinned milestone declaration; UTF-8 byte bound. """
     result: OperationBusinessConditionResultResult
 
     def to_dict(self) -> dict[str, Any]:

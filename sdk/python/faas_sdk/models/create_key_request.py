@@ -25,15 +25,15 @@ class CreateKeyRequest:
 
     label: str | Unset = UNSET
     scopes: list[CreateKeyRequestScopesItem] | Unset = UNSET
-    """Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub
+    """ Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub
     connection stored workflow. Object-storage read/write scopes do not expose data until a storage manager grants
-    the key access to a logical bucket."""
+    the key access to a logical bucket. """
     projects: list[str] | Unset = UNSET
-    """Project slugs the key is limited to. Only an agent key (scope agent) can be limited; it then reaches only
-    apps in these projects and cannot carry Postgres scopes. Omit for every project."""
+    """ Project slugs the key is limited to. Only an agent key (scope agent) can be limited; it then reaches only
+    apps in these projects and cannot carry Postgres scopes. Omit for every project. """
     approval_categories: list[CreateKeyRequestApprovalCategoriesItem] | Unset = UNSET
-    """Kinds of action an agent key must have a person approve before Gregale carries out the request. Omit for
-    every kind; send an empty list for none. Only agent keys take this field."""
+    """ Kinds of action an agent key must have a person approve before Gregale carries out the request. Omit for
+    every kind; send an empty list for none. Only agent keys take this field. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

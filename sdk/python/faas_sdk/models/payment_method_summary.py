@@ -21,13 +21,13 @@ class PaymentMethodSummary:
     """
 
     brand: str
-    """Card network (lowercase)."""
+    """ Card network (lowercase). """
     last4: str
-    """Last 4 digits of the PAN."""
+    """ Last 4 digits of the PAN. """
     exp_month: int
-    """Card expiry month (1-12)."""
+    """ Card expiry month (1-12). """
     exp_year: int
-    """Card expiry year."""
+    """ Card expiry year. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

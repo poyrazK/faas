@@ -34,7 +34,8 @@ make e2e-journeys TIER=full RUN=TestTemplateDeploys
   of the internal Free or Hobby fixture account on the control plane with
   `gregalectl journey-fixture mint-token --plan free --yes
   --reason=journey_fixture` and revokes it afterwards with `revoke-token`.
-  The `free-plan-journeys` workflow does this daily for
+  The Hobby fixture is complimentary (spend cap $0), so it is never billed
+  and stops at Hobby's included amounts. The `free-plan-journeys` workflow does this daily for
   `TestJSFrameworkSourceDeploys` and also requires
   `nextjs_standalone=true`.
 - **Session** (optional): steps only a person may take, such as approving an

@@ -20,13 +20,14 @@ class ProgrammaticAPIKey:
     """
 
     plaintext: str
-    """`fp_live_<48-hex>`. Returned ONCE."""
+    """ `fp_live_<48-hex>`. Returned ONCE.
+     """
     prefix: str
-    """`fp_live_<8-hex>` — the prefix used in the auth
+    """ `fp_live_<8-hex>` — the prefix used in the auth
     header for greppable identification.
-    """
+     """
     id: str
-    """API key row UUID."""
+    """ API key row UUID. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

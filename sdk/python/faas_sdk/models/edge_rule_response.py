@@ -61,15 +61,15 @@ class EdgeRuleResponse:
     account_id: str
     app_id: str
     match_host: str
-    """Host glob. `*` matches any; `*.example.com` matches any subdomain; `@app` covers every hostname the rule's
-    app serves, including custom domains added later."""
+    """ Host glob. `*` matches any; `*.example.com` matches any subdomain; `@app` covers every hostname the rule's
+    app serves, including custom domains added later. """
     match_path: str
-    """Path glob. Trailing `*` matches anything beneath."""
+    """ Path glob. Trailing `*` matches anything beneath. """
     match_methods: list[str]
-    """Empty array = match any method."""
+    """ Empty array = match any method. """
     match_headers: EdgeRuleResponseMatchHeaders
-    """Request headers required to match this rule. Names are case-insensitive; every configured name must have an
-    exact value present, and any repeated request-header value may satisfy it."""
+    """ Request headers required to match this rule. Names are case-insensitive; every configured name must have an
+    exact value present, and any repeated request-header value may satisfy it. """
     kind: EdgeRuleResponseKind
     action: (
         EdgeRuleAsyncAction
@@ -93,26 +93,26 @@ class EdgeRuleResponse:
         | EdgeRuleValidateAction
         | EdgeRuleWAFAction
     )
-    """Kind-tagged union — shape varies by `kind`."""
+    """ Kind-tagged union — shape varies by `kind`. """
     created_at: datetime.datetime
     updated_at: datetime.datetime
     priority: int = 100
     enabled: bool = True
     validate_mode: EdgeRuleResponseValidateMode | Unset = "block"
-    """Top-level source of truth for kind=validate.
+    """ Top-level source of truth for kind=validate.
     Resolved mode; always present on read. Empty on read
     would be a database invariant violation.
-    """
+     """
     name: str | Unset = UNSET
-    """Operator-facing rule name."""
+    """ Operator-facing rule name. """
     description: str | Unset = UNSET
-    """Operator-facing description."""
+    """ Operator-facing description. """
     expires_at: datetime.datetime | Unset = UNSET
-    """When the gateway stops applying the rule."""
+    """ When the gateway stops applying the rule. """
     expired: bool | Unset = UNSET
-    """True once expires_at has passed and the rule no longer applies."""
+    """ True once expires_at has passed and the rule no longer applies. """
     match: EdgeRuleMatchExpr | Unset = UNSET
-    """Match condition, ANDed with the rule's fixed selectors. A node
+    """ Match condition, ANDed with the rule's fixed selectors. A node
     is exactly one of all, any, not, or a field/op leaf. Fields: method,
     path, host, client_ip, country, asn (the client IP's
     autonomous system, e.g. 13335 or AS13335), ua_family (the
@@ -132,14 +132,14 @@ class EdgeRuleResponse:
     field). Depth at most 4,
     at most 32 nodes, 64 values per leaf, values and regexes at most 256
     bytes. An untrusted client IP, or its unknown country or ASN, is absent.
-    """
+     """
     mode: EdgeRuleResponseMode | Unset = UNSET
-    """enforce (default) or log; a log-mode rule is matched and counted but never acts."""
+    """ enforce (default) or log; a log-mode rule is matched and counted but never acts. """
     managed_by: EdgeRuleResponseManagedBy | Unset = UNSET
-    """Set on the app's attack-mode rule, which changes only through /v1/apps/{slug}/edge-protection/attack-mode;
-    PATCH refuses it. Absent on every other rule."""
+    """ Set on the app's attack-mode rule, which changes only through /v1/apps/{slug}/edge-protection/attack-mode;
+    PATCH refuses it. Absent on every other rule. """
     penalty: EdgeRulePenalty | Unset = UNSET
-    """A rule's penalty box. Once the rule has refused
+    """ A rule's penalty box. Once the rule has refused
     the same client `after` times within `within_seconds`, every request
     from that client to the app is refused with 403 `penalty_box` and
     Retry-After for `seconds`, whichever rule or path it targets. The
@@ -147,15 +147,15 @@ class EdgeRuleResponse:
     in each gateway node's memory. Allowed on ip, geo, throttle and waf
     (block mode) rules; editing the rule's penalty away, disabling it or
     putting it in log mode releases its clients.
-    """
+     """
     unreleased_features: list[EdgeRuleResponseUnreleasedFeaturesItem] | Unset = UNSET
-    """Gated features this rule uses that are not yet released to the
+    """ Gated features this rule uses that are not yet released to the
     account. The gateway does not enforce them:
     a challenge rule is inert, a warn or block WAF rule only
     observes, a penalty boxes nobody, an AI crawler condition never
     matches, and attack mode challenges nobody. Absent when every
     feature the rule uses is released.
-    """
+     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -52,48 +52,48 @@ class ManagedPostgresUsageResponse:
     storage_byte_seconds_limit: int
     storage_byte_seconds_remaining: int
     history_byte_seconds: int
-    """Point-in-time restore history held this month, in byte-seconds."""
+    """ Point-in-time restore history held this month, in byte-seconds. """
     egress_bytes: int
     observed_at: datetime.datetime | None | Unset = UNSET
     snapshot_byte_seconds: int | Unset = UNSET
-    """Snapshot storage held this month, in byte-seconds."""
+    """ Snapshot storage held this month, in byte-seconds. """
     included_history_bytes: int | Unset = UNSET
-    """Restore history and snapshot storage the plan includes, held for the whole month. Restore history uses it
-    first. With overage on, history past it is billed per GB-month."""
+    """ Restore history and snapshot storage the plan includes, held for the whole month. Restore history uses it
+    first. With overage on, history past it is billed per GB-month. """
     history_state: ManagedPostgresUsageResponseHistoryState | Unset = UNSET
-    """limited while restore history and snapshots passed twice the included history this month with overage off:
+    """ limited while restore history and snapshots passed twice the included history this month with overage off:
     the databases keep a 24-hour restore window until the 1st of next month, or until overage is turned on. Absent
-    while the history limit is not enforced."""
+    while the history limit is not enforced. """
     compute_allowance_unit_seconds: int | Unset = UNSET
-    """The plan's monthly compute allowance in compute-unit seconds, pooled across the account's databases."""
+    """ The plan's monthly compute allowance in compute-unit seconds, pooled across the account's databases. """
     compute_ceiling_unit_seconds: int | Unset = UNSET
-    """Compute-unit seconds this month at which running databases are suspended. Absent while the usage ledger is
-    off."""
+    """ Compute-unit seconds this month at which running databases are suspended. Absent while the usage ledger is
+    off. """
     compute_cap_state: ManagedPostgresUsageResponseComputeCapState | Unset = UNSET
-    """healthy; warning at 80% of the allowance; overage past the allowance while the account allows overage;
+    """ healthy; warning at 80% of the allowance; overage past the allowance while the account allows overage;
     suspended once the ceiling is reached and the platform enforces caps. Suspended databases keep their data and
-    resume next month or after an upgrade."""
+    resume next month or after an upgrade. """
     overage_enabled: bool | Unset = UNSET
-    """True while the account runs its databases past the allowance, up to the ceiling."""
+    """ True while the account runs its databases past the allowance, up to the ceiling. """
     compute_suspended_at: datetime.datetime | Unset = UNSET
-    """When the compute cap suspended the account's databases this month; present while compute_cap_state is
-    suspended."""
+    """ When the compute cap suspended the account's databases this month; present while compute_cap_state is
+    suspended. """
     egress_allowance_bytes: int | Unset = UNSET
-    """Each database's own monthly egress allowance, 500 GB (10^9 bytes) as Neon includes per project. Database
-    egress does not count toward the plan's app egress allowance. Absent on a plan without databases."""
+    """ Each database's own monthly egress allowance, 500 GB (10^9 bytes) as Neon includes per project. Database
+    egress does not count toward the plan's app egress allowance. Absent on a plan without databases. """
     app_egress_bytes: int | Unset = UNSET
-    """Deprecated and always omitted. Apps no longer share the databases' egress allowance."""
+    """ Deprecated and always omitted. Apps no longer share the databases' egress allowance. """
     egress_state: ManagedPostgresUsageResponseEgressState | Unset = UNSET
-    """The state of the database that sent the most egress this month: healthy; warning at 80% of its hold; overage
+    """ The state of the database that sent the most egress this month: healthy; warning at 80% of its hold; overage
     past its allowance while the account's egress overage election bills database egress (at Neon's price plus 5%,
     up to twice the allowance); held once it reaches its allowance (twice it with overage billed) and the platform
-    enforces caps, until the month ends. Only that database is held."""
+    enforces caps, until the month ends. Only that database is held. """
     hold: ManagedPostgresUsageResponseHold | Unset = UNSET
-    """Set while every database of the account is held, with the same reason each database reports. Egress holds
-    one database at a time, so it is reported on that database, not here."""
+    """ Set while every database of the account is held, with the same reason each database reports. Egress holds
+    one database at a time, so it is reported on that database, not here. """
     databases: list[ManagedPostgresDatabaseUsage] | Unset = UNSET
-    """The month's compute by database, most first, with each one's recorded starts and awake time; omitted when it
-    could not be read."""
+    """ The month's compute by database, most first, with each one's recorded starts and awake time; omitted when it
+    could not be read. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

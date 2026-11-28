@@ -19,15 +19,15 @@ class PublishStoredWorkflowRequest:
     """Saved draft revision to publish, with explicit YAML takeover when needed."""
 
     expected_version: int
-    """Current saved draft revision to validate and publish."""
+    """ Current saved draft revision to validate and publish. """
     check_receipt: str | Unset = UNSET
-    """Server-issued receipt required by scenarios or coverage policy; stale, expired, cross-identity and reused
-    receipts are rejected."""
+    """ Server-issued receipt required by scenarios or coverage policy; stale, expired, cross-identity and reused
+    receipts are rejected. """
     check_evidence: StoredWorkflowCheckEvidence | Unset = UNSET
-    """Simulation check metadata. server_verified is set only for server-issued publishing receipts; legacy or
+    """ Simulation check metadata. server_verified is set only for server-issued publishing receipts; legacy or
     plain client evidence is unverified. Bound to the saved draft hash and version. Contains metadata only; no
     sample inputs, outputs, or failure text. Checked time must be within the past day (five minutes of future clock
-    skew allowed)."""
+    skew allowed). """
     take_over_manifest: bool | Unset = False
 
     def to_dict(self) -> dict[str, Any]:

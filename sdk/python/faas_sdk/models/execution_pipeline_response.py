@@ -26,14 +26,14 @@ class ExecutionPipelineResponse:
     deadline_at: datetime.datetime
     steps: list[ExecutionPipelineStepResponse]
     progress: ExecutionPipelineProgress | Unset = UNSET
-    """Current pipeline sequence and observed progress for each step."""
+    """ Current pipeline sequence and observed progress for each step. """
     rerun: ExecutionPipelineRerun | Unset = UNSET
-    """Rerun receipt linking the replacement pipeline to its original job and reused outputs."""
+    """ Rerun receipt linking the replacement pipeline to its original job and reused outputs. """
     completion: ExecutionPipelineCompletion | Unset = UNSET
-    """Immutable v1 terminal manifest. Metadata and scoped references only; result and artifact bytes retain their
+    """ Immutable v1 terminal manifest. Metadata and scoped references only; result and artifact bytes retain their
     ordinary Run receipt permissions and expiry. Completion identity is stable across delivery retries and redrive.
     Aggregate wall/CPU time sums every attempt; peak memory is the maximum attempt peak, not simultaneous residency
-    or an invoice."""
+    or an invoice. """
     cancel_requested: bool | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

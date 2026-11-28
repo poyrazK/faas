@@ -18,7 +18,7 @@ class ProjectReleaseProbeEvidence:
     """Attributed candidate and retained baseline samples for a critical probe round."""
 
     probe: ProjectReleaseProbe
-    """Concrete read-only critical endpoint bound to one project workload."""
+    """ Concrete read-only critical endpoint bound to one project workload. """
     candidate_requests: int
     candidate_errors: int
     stable_requests: int

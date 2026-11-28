@@ -28,48 +28,48 @@ class DatabaseSwitch:
     id: UUID
     app_id: UUID
     scope: str
-    """The deployment scope the rollback restores."""
+    """ The deployment scope the rollback restores. """
     phase: DatabaseSwitchPhase
-    """From fencing until completed the app does not serve. aborting unwinds everything done before the bindings
-    switched."""
+    """ From fencing until completed the app does not serve. aborting unwinds everything done before the bindings
+    switched. """
     target_deployment_id: UUID
-    """The rollback target."""
+    """ The rollback target. """
     undone_deployment_ids: list[UUID]
-    """Deployments whose release commands the restore undoes; rolling back to them is refused afterwards."""
+    """ Deployments whose release commands the restore undoes; rolling back to them is refused afterwards. """
     source_database_id: UUID
-    """The database the app leaves. It keeps every write."""
+    """ The database the app leaves. It keeps every write. """
     target_name: str
-    """Name of the restored copy."""
+    """ Name of the restored copy. """
     restore_point: datetime.datetime
-    """Writes after this moment stay only in the source database."""
+    """ Writes after this moment stay only in the source database. """
     drain: DatabaseSwitchDrain
-    """A fenced app's instances by outcome: retired with a native receipt, parked (no process; snapshot
-    invalidated), still pending, or blocking the switch."""
+    """ A fenced app's instances by outcome: retired with a native receipt, parked (no process; snapshot
+    invalidated), still pending, or blocking the switch. """
     phase_started_at: datetime.datetime
     created_at: datetime.datetime
     updated_at: datetime.datetime
     from_deployment_id: UUID | Unset = UNSET
-    """The release serving when the switch was requested; the switch aborts if another one serves before it
-    switches."""
+    """ The release serving when the switch was requested; the switch aborts if another one serves before it
+    switches. """
     from_revision: int | Unset = UNSET
     target_revision: int | Unset = UNSET
     keeps_release: bool | Unset = UNSET
-    """True for a restore that moves the app to the copy without changing its code; the target deployment is the
-    release that served when it was requested."""
+    """ True for a restore that moves the app to the copy without changing its code; the target deployment is the
+    release that served when it was requested. """
     source_database_name: str | Unset = UNSET
     target_database_id: UUID | Unset = UNSET
-    """The restored copy, once its restore has started."""
+    """ The restored copy, once its restore has started. """
     failure_code: str | Unset = UNSET
-    """Why a switch failed or was cancelled, or why it is aborting."""
+    """ Why a switch failed or was cancelled, or why it is aborting. """
     failure_detail: str | Unset = UNSET
     last_error_code: str | Unset = UNSET
-    """The latest transient error the switch is retrying."""
+    """ The latest transient error the switch is retrying. """
     requested_by: str | Unset = UNSET
     cancel_requested_at: datetime.datetime | Unset = UNSET
     fenced_at: datetime.datetime | Unset = UNSET
     release_switched_at: datetime.datetime | Unset = UNSET
     activated_at: datetime.datetime | Unset = UNSET
-    """When the bindings moved to the copy; there is no way back after it."""
+    """ When the bindings moved to the copy; there is no way back after it. """
     finished_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

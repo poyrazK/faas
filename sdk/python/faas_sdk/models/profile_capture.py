@@ -38,28 +38,28 @@ class ProfileCapture:
     expires_at: datetime.datetime
     requested_instance_id: UUID | Unset = UNSET
     trigger: ProfileCaptureTrigger | Unset = UNSET
-    """Who started the capture; memory_pressure captures are queued automatically when an instance runs low on
+    """ Who started the capture; memory_pressure captures are queued automatically when an instance runs low on
     memory, slow_request captures (stacks and CPU) when a request stays in flight for 10 seconds, cpu_saturation
-    captures (CPU) when an instance uses 90% of its CPU limit for 30 seconds."""
+    captures (CPU) when an instance uses 90% of its CPU limit for 30 seconds. """
     request_id: str | Unset = UNSET
-    """The x-faas-request-id of the in-flight request that started a slow_request capture."""
+    """ The x-faas-request-id of the in-flight request that started a slow_request capture. """
     request_trace_id: str | Unset = UNSET
-    """The trace id that request's telemetry is stored under."""
+    """ The trace id that request's telemetry is stored under. """
     trigger_detail: str | Unset = UNSET
     instance_id: UUID | Unset = UNSET
     deployment_id: UUID | Unset = UNSET
     dropped: int | Unset = UNSET
-    """Profiles discarded by the reply bounds."""
+    """ Profiles discarded by the reply bounds. """
     reason: str | Unset = UNSET
     partial: bool | Unset = UNSET
-    """The capture ended early, normally because the workload was OOM-killed; heap profiles are the last
-    checkpoints before the kill."""
+    """ The capture ended early, normally because the workload was OOM-killed; heap profiles are the last
+    checkpoints before the kill. """
     oom_killed_at: datetime.datetime | Unset = UNSET
-    """Set when the captured instance was OOM-killed within 15 minutes of the capture."""
+    """ Set when the captured instance was OOM-killed within 15 minutes of the capture. """
     oom_peak_mb: int | Unset = UNSET
-    """Memory in use when the instance was OOM-killed."""
+    """ Memory in use when the instance was OOM-killed. """
     oom_plan_mb: int | Unset = UNSET
-    """The instance's plan memory limit."""
+    """ The instance's plan memory limit. """
     completed_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

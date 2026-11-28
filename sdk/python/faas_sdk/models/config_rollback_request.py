@@ -18,15 +18,15 @@ class ConfigRollbackRequest:
 
     revision: int
     expected_revision: int | Unset = UNSET
-    """Current configuration revision reviewed before rollback."""
+    """ Current configuration revision reviewed before rollback. """
     expected_app_id: UUID | Unset = UNSET
-    """Immutable reviewed app identity."""
+    """ Immutable reviewed app identity. """
     expected_environment_id: UUID | Unset = UNSET
-    """Immutable reviewed named environment identity."""
+    """ Immutable reviewed named environment identity. """
     request_id: UUID | Unset = UNSET
-    """Original reviewed rollback request identity."""
+    """ Original reviewed rollback request identity. """
     receipt_proof: str | Unset = UNSET
-    """Private proof required for receipt recovery."""
+    """ Private proof required for receipt recovery. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -19,9 +19,9 @@ class AgentUndoResult:
 
     items: list[AgentUndoItem]
     undone: int
-    """Changes undone."""
+    """ Changes undone. """
     failed: int
-    """Changes whose undo was refused."""
+    """ Changes whose undo was refused. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

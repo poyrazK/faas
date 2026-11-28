@@ -21,7 +21,7 @@ class ListJobsResponse:
     limit: int
     offset: int
     next_offset: int
-    """-1 = last page"""
+    """ -1 = last page """
     total: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

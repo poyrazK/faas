@@ -322,8 +322,8 @@ The rule's `mode` decides what happens to a detection:
 | Mode | Headers and URL | Request body |
 |---|---|---|
 | `observe` (default) | sampled and reported | sampled and reported |
-| `warn` | checked on every request; a detection adds `X-WAF-Warning: <rule id>` to the response | sampled and reported; with in-path body checks, the first 2 KiB is checked like headers |
-| `block` | checked on every request; a detection is answered with `403` before your app wakes | sampled and reported; with in-path body checks, an attack in the first 2 KiB is answered with `403` |
+| `warn` | checked on every request; a detection adds `X-WAF-Warning: <rule id>` to the response | sampled and reported; with in-path body checks, the first 6 fields are checked like headers |
+| `block` | checked on every request; a detection is answered with `403` before your app wakes | sampled and reported; with in-path body checks, an attack in the first 6 fields is answered with `403` |
 
 Checks include cookies. Apps on a `gregale.app` host share that domain with
 every other customer's app, and any of their pages can set a cookie your
@@ -355,16 +355,17 @@ refused: `block` answers
 a penalty box. If your app legitimately receives larger headers (very large
 cookies or tokens), keep the rule in `observe` for those paths.
 
-**`block` protects at most the first 2 KiB of a request body.** In-path
+**`block` protects at most the first 6 fields of a request body.** In-path
 body checks reach accounts one by one, after strict inspection. Until they
 reach yours, an attack sent in a JSON or form body (how most API injection
 arrives) reaches your app even under `block`: bodies are inspected off the
 request path, after the request is served, and only a sample of them under
 load, and body detections are reported, never blocked. Once they reach
-yours, `warn` and `block` also check the first 2 KiB of the body before your
-app wakes; your app still receives the whole body. A check costs about
-0.1 ms per JSON or form field, so 2 KiB keeps a typical API body to a few
-milliseconds. Content past 2 KiB, compressed bodies (`Content-Encoding`),
+yours, `warn` and `block` also check the body before your app wakes: its
+first 6 JSON values or form fields, within its first 2 KiB. Your app still
+receives the whole body. Each checked field costs about 0.1 ms, so the
+bound keeps the check within about 2 ms. Fields past the sixth, content past
+2 KiB, compressed bodies (`Content-Encoding`),
 gRPC streams to gRPC apps and WebSocket upgrades are still only sampled and
 reported. Either way, protect body fields
 in your app (parameterized queries, output encoding) and declare their shape

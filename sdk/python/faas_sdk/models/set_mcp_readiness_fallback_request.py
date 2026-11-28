@@ -27,22 +27,22 @@ class SetMCPReadinessFallbackRequest:
     """
 
     expected_version: int
-    """Current fallback policy version; zero is valid for an unconfigured rule."""
+    """ Current fallback policy version; zero is valid for an unconfigured rule. """
     enabled: bool
-    """Whether unclaimed incidents should acquire a fallback destination."""
+    """ Whether unclaimed incidents should acquire a fallback destination. """
     provider: SetMCPReadinessFallbackRequestProvider | Unset = UNSET
-    """Destination provider; omitted means webhook. Omit when disabling."""
+    """ Destination provider; omitted means webhook. Omit when disabling. """
     region: SetMCPReadinessFallbackRequestRegion | Unset = UNSET
-    """PagerDuty region; defaults to US. Omit for webhook or disabled policies."""
+    """ PagerDuty region; defaults to US. Omit for webhook or disabled policies. """
     integration_key: str | Unset = UNSET
-    """PagerDuty fallback Events API key; omit webhook fields when selecting this provider."""
+    """ PagerDuty fallback Events API key; omit webhook fields when selecting this provider. """
     webhook_url: str | Unset = UNSET
-    """Public webhook fallback receiver URL; required for webhook only and must differ from the primary webhook
-    address."""
+    """ Public webhook fallback receiver URL; required for webhook only and must differ from the primary webhook
+    address. """
     webhook_secret: str | Unset = UNSET
-    """Fallback HMAC signing material; required only when enabling or replacing a webhook policy."""
+    """ Fallback HMAC signing material; required only when enabling or replacing a webhook policy. """
     after_failures: int | Unset = UNSET
-    """Completed unsuccessful primary dispatch claims before switching this incident to fallback."""
+    """ Completed unsuccessful primary dispatch claims before switching this incident to fallback. """
 
     def to_dict(self) -> dict[str, Any]:
         expected_version = self.expected_version

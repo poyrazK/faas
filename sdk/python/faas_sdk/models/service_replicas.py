@@ -18,11 +18,12 @@ class ServiceReplicas:
     """
 
     min_: int
-    """Minimum desired replicas the Engine keeps alive. 0 = no minimum."""
+    """ Minimum desired replicas the Engine keeps alive. 0 = no minimum. """
     max_: int
-    """Maximum desired replicas (engine-side cap; service autoscale bounds)."""
+    """ Maximum desired replicas (engine-side cap; service autoscale bounds). """
     desired: int
-    """Desired replica count. Engine wakes replacement instances to maintain this when one fails or is destroyed."""
+    """ Desired replica count. Engine wakes replacement instances to maintain this when one fails or is destroyed.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -31,10 +31,10 @@ class OperationWorkflowRuleComparison:
     """
 
     single_version_status: OperationWorkflowRuleComparisonSingleVersionStatus
-    """At least two returned versions need eligible single-version workflows to compare this subset."""
+    """ At least two returned versions need eligible single-version workflows to compare this subset. """
     multi_version_workflow_count: int
-    """Distinct sampled workflows reporting multiple versions for this comparison identity, including incomplete
-    histories and versions omitted by limits."""
+    """ Distinct sampled workflows reporting multiple versions for this comparison identity, including incomplete
+    histories and versions omitted by limits. """
     eligible_multi_version_workflow_count: int
     examples_truncated: bool
     multi_version_examples: list[OperationWorkflowRuleVersionOverlap]

@@ -32,26 +32,26 @@ class OperationWorkflowReadinessImpactEvent:
     """
 
     workflow: str
-    """OperationWorkflowReadinessImpactEvent.workflow. Exact workflow identity."""
+    """ OperationWorkflowReadinessImpactEvent.workflow. Exact workflow identity. """
     kind: OperationWorkflowReadinessImpactEventKind
-    """OperationWorkflowReadinessImpactEvent.kind. Protected result category."""
+    """ OperationWorkflowReadinessImpactEvent.kind. Protected result category. """
     code: str
-    """OperationWorkflowReadinessImpactEvent.code. Exact protected result slug."""
+    """ OperationWorkflowReadinessImpactEvent.code. Exact protected result slug. """
     checked_at: datetime.datetime
-    """OperationWorkflowReadinessImpactEvent.checked_at. Advisory sample time."""
+    """ OperationWorkflowReadinessImpactEvent.checked_at. Advisory sample time. """
     reasons: list[OperationWorkflowReadinessImpactEventReasonsItem]
-    """OperationWorkflowReadinessImpactEvent.reasons. First critical or overdue review transition, or source-
-    confirmed clearance of tracked obligations; stable observations remain silent."""
+    """ OperationWorkflowReadinessImpactEvent.reasons. First critical or overdue review transition, or source-
+    confirmed clearance of tracked obligations; stable observations remain silent. """
     response: OperationWorkflowReadinessEscalationResponse | Unset = UNSET
-    """Optional acknowledgment response target on a retained assigned escalation. Human acknowledgment fulfills it;
+    """ Optional acknowledgment response target on a retained assigned escalation. Human acknowledgment fulfills it;
     completion or follow-up clearing stops it. A missed target emits one notice and optional guarded fallback.
-    Assignment history retains the latest 16 changes."""
+    Assignment history retains the latest 16 changes. """
     previous: OperationWorkflowReadinessImpactSummary | Unset = UNSET
-    """OperationWorkflowReadinessImpactSummary. Retained unresolved review confidence by workflow and protected
-    business result, separate from reported business outcome."""
+    """ OperationWorkflowReadinessImpactSummary. Retained unresolved review confidence by workflow and protected
+    business result, separate from reported business outcome. """
     current: OperationWorkflowReadinessImpactSummary | Unset = UNSET
-    """OperationWorkflowReadinessImpactSummary. Retained unresolved review confidence by workflow and protected
-    business result, separate from reported business outcome."""
+    """ OperationWorkflowReadinessImpactSummary. Retained unresolved review confidence by workflow and protected
+    business result, separate from reported business outcome. """
 
     def to_dict(self) -> dict[str, Any]:
         workflow = self.workflow

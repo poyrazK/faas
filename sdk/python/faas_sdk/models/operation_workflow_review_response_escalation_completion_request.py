@@ -26,14 +26,14 @@ class OperationWorkflowReviewResponseEscalationCompletionRequest:
     escalated_at: datetime.datetime
     acknowledged_at: datetime.datetime
     summary: str
-    """Nonblank UTF-8 summary of performed coordination work, limited to 1024 bytes; line breaks and tabs are
-    allowed."""
+    """ Nonblank UTF-8 summary of performed coordination work, limited to 1024 bytes; line breaks and tabs are
+    allowed. """
     review_indices: list[int]
-    """Zero-based indices into the current parent response reviews. References are copied into immutable evidence;
-    they are not fresh application verification or a claim that blockers cleared."""
+    """ Zero-based indices into the current parent response reviews. References are copied into immutable evidence;
+    they are not fresh application verification or a claim that blockers cleared. """
     review_after_seconds: int | Unset = UNSET
-    """Optional one-shot evidence check delay from server completion time, 60 seconds to seven days. Omission
-    leaves the completion unscheduled."""
+    """ Optional one-shot evidence check delay from server completion time, 60 seconds to seven days. Omission
+    leaves the completion unscheduled. """
 
     def to_dict(self) -> dict[str, Any]:
         decision_at = self.decision_at.isoformat()

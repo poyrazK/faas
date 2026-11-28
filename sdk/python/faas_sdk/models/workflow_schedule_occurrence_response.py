@@ -30,9 +30,9 @@ class WorkflowScheduleOccurrenceResponse:
     status: WorkflowScheduleOccurrenceResponseStatus
     platform_tenant_id: UUID | Unset = UNSET
     run_id: UUID | Unset = UNSET
-    """Present for started outcomes; retained after run expiry."""
+    """ Present for started outcomes; retained after run expiry. """
     replay_run_id: UUID | Unset = UNSET
-    """Present after a skipped occurrence has been replayed."""
+    """ Present after a skipped occurrence has been replayed. """
     replayed_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

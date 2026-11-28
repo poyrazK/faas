@@ -32,30 +32,31 @@ class OperationWorkflowReadinessBusinessOutcomeEvent:
     """
 
     watch_id: UUID
-    """OperationWorkflowReadinessBusinessOutcomeEvent.watch_id. Retained advisory business outcome watch metadata;
-    does not modify application reports or coordination revisions."""
+    """ OperationWorkflowReadinessBusinessOutcomeEvent.watch_id. Retained advisory business outcome watch metadata;
+    does not modify application reports or coordination revisions. """
     source_notification_id: UUID
-    """OperationWorkflowReadinessBusinessOutcomeEvent.source_notification_id. Retained advisory business outcome
-    watch metadata; does not modify application reports or coordination revisions."""
+    """ OperationWorkflowReadinessBusinessOutcomeEvent.source_notification_id. Retained advisory business outcome
+    watch metadata; does not modify application reports or coordination revisions. """
     source_sequence: int
-    """OperationWorkflowReadinessBusinessOutcomeEvent.source_sequence. Retained advisory business outcome watch
-    metadata; does not modify application reports or coordination revisions."""
+    """ OperationWorkflowReadinessBusinessOutcomeEvent.source_sequence. Retained advisory business outcome watch
+    metadata; does not modify application reports or coordination revisions. """
     source: OperationWorkflowReadinessSnapshotEntry
-    """One saved transition identity and stable evidence summaries for comparison within the same ownership scope."""
+    """ One saved transition identity and stable evidence summaries for comparison within the same ownership scope.
+    """
     previous_status: OperationWorkflowReadinessBusinessOutcomeEventPreviousStatus
-    """OperationWorkflowReadinessBusinessOutcomeEvent.previous_status. Retained advisory business outcome watch
-    metadata; does not modify application reports or coordination revisions."""
+    """ OperationWorkflowReadinessBusinessOutcomeEvent.previous_status. Retained advisory business outcome watch
+    metadata; does not modify application reports or coordination revisions. """
     current: OperationWorkflowReadinessBusinessOutcome
-    """Advisory comparison of the expected terminal outcome with a scoped retained application report. Missing
+    """ Advisory comparison of the expected terminal outcome with a scoped retained application report. Missing
     state, stale reports, contract changes, older revisions and terminal reports without outcome codes remain
     unknown. Explicit outcome codes do not imply causation or authorize execution. Completion snapshots are
-    immutable; current checks are live reads."""
+    immutable; current checks are live reads. """
     escalation: OperationWorkflowReadinessOutcomeEscalationReference | Unset = UNSET
-    """Reference to the single retained escalation notification in the same subscription. Pruning does not recreate
-    escalations; links may expire."""
+    """ Reference to the single retained escalation notification in the same subscription. Pruning does not recreate
+    escalations; links may expire. """
     deadline_at: datetime.datetime | Unset = UNSET
-    """OperationWorkflowReadinessBusinessOutcomeEvent.deadline_at. Retained advisory business outcome watch
-    metadata; does not modify application reports or coordination revisions."""
+    """ OperationWorkflowReadinessBusinessOutcomeEvent.deadline_at. Retained advisory business outcome watch
+    metadata; does not modify application reports or coordination revisions. """
 
     def to_dict(self) -> dict[str, Any]:
         watch_id = str(self.watch_id)

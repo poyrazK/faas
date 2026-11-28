@@ -21,7 +21,7 @@ class OperationWorkflowBlockerEscalation:
     owner: str
     after_seconds: int
     escalated_at: datetime.datetime
-    """Time when the reported blocker first reached its declared threshold."""
+    """ Time when the reported blocker first reached its declared threshold. """
 
     def to_dict(self) -> dict[str, Any]:
         code = self.code

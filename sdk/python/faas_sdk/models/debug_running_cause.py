@@ -36,15 +36,15 @@ class DebugRunningCause:
     last_activity_at: datetime.datetime | Unset = UNSET
     idle_deadline: datetime.datetime | Unset = UNSET
     request: DebugRunningRequestAttribution | Unset = UNSET
-    """The nearest retained request-telemetry representative linked to a
+    """ The nearest retained request-telemetry representative linked to a
     request-activity cause. A representative may contain several
     collapsed requests; match_delta_ms and count make that limitation
     explicit.
-    """
+     """
     flow_topology: list[DebugRunningFlowSummary] | Unset = UNSET
-    """Bounded endpoint-level flow summaries observed for the cause."""
+    """ Bounded endpoint-level flow summaries observed for the cause. """
     flow_topology_degraded: bool | Unset = UNSET
-    """True when optional flow detail was unavailable or stale."""
+    """ True when optional flow detail was unavailable or stale. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

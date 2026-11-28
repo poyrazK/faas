@@ -18,14 +18,14 @@ class OperationWorkflowPlaybookStepReadiness:
     """OperationWorkflowPlaybookStepReadiness. Human review dependency status, not business state or execution authority."""
 
     status: OperationWorkflowPlaybookStepReadinessStatus
-    """OperationWorkflowPlaybookStepReadiness.status. Whether all declared prerequisite reviews are complete and
-    their dependency chains satisfied."""
+    """ OperationWorkflowPlaybookStepReadiness.status. Whether all declared prerequisite reviews are complete and
+    their dependency chains satisfied. """
     waiting_for: list[str]
-    """OperationWorkflowPlaybookStepReadiness.waiting_for. Direct prerequisites currently missing complete and
-    ready reviews; empty for ready steps."""
+    """ OperationWorkflowPlaybookStepReadiness.waiting_for. Direct prerequisites currently missing complete and
+    ready reviews; empty for ready steps. """
     review_suggested: bool
-    """OperationWorkflowPlaybookStepReadiness.review_suggested. A previously completed dependent step now has
-    unsatisfied prerequisites; original review is preserved."""
+    """ OperationWorkflowPlaybookStepReadiness.review_suggested. A previously completed dependent step now has
+    unsatisfied prerequisites; original review is preserved. """
 
     def to_dict(self) -> dict[str, Any]:
         status: str = self.status

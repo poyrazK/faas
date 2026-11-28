@@ -30,13 +30,13 @@ class ObjectBucketList:
     max_upload_bytes: int
     max_buckets_per_app: int
     max_single_put_bytes: int | Unset = UNSET
-    """Largest single PUT accepted by the configured upload profile."""
+    """ Largest single PUT accepted by the configured upload profile. """
     max_part_bytes: int | Unset = UNSET
-    """Largest multipart part accepted by the configured upload profile."""
+    """ Largest multipart part accepted by the configured upload profile. """
     transfer_timeout_seconds: int | Unset = UNSET
-    """Combined request staging and forwarding deadline in seconds."""
+    """ Combined request staging and forwarding deadline in seconds. """
     upload_profile: ObjectBucketListUploadProfile | Unset = UNSET
-    """Configured body size contract for the branded storage origin."""
+    """ Configured body size contract for the branded storage origin. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -23,20 +23,20 @@ class OrgAgentPolicyRequest:
     """Whether agents may act in the organization, and the capabilities they may get."""
 
     agents_allowed: bool
-    """Whether hosted MCP connections and agent keys may act in the organization."""
+    """ Whether hosted MCP connections and agent keys may act in the organization. """
     allowed_scopes: list[OrgAgentPolicyRequestAllowedScopesItem]
-    """Capabilities agents may get beyond inspection; empty for read-only."""
+    """ Capabilities agents may get beyond inspection; empty for read-only. """
     approval_categories: list[OrgAgentPolicyRequestApprovalCategoriesItem] | Unset = UNSET
-    """Kinds of action every agent acting in the organization must have a person approve; omit to keep the current
-    ones."""
+    """ Kinds of action every agent acting in the organization must have a person approve; omit to keep the current
+    ones. """
     approval_channels: list[str] | Unset = UNSET
-    """Names of your own notification channels that get approval requests of agents acting in the organization;
-    omit to keep them, send an empty list to remove them."""
+    """ Names of your own notification channels that get approval requests of agents acting in the organization;
+    omit to keep them, send an empty list to remove them. """
     max_agent_budget_cents: int | Unset = UNSET
-    """Ceiling, in cents a month, on the budget of every agent acting in the organization; omit to keep the current
-    ceiling."""
+    """ Ceiling, in cents a month, on the budget of every agent acting in the organization; omit to keep the current
+    ceiling. """
     clear_max_agent_budget: bool | Unset = UNSET
-    """Remove the ceiling on agents' budgets."""
+    """ Remove the ceiling on agents' budgets. """
 
     def to_dict(self) -> dict[str, Any]:
         agents_allowed = self.agents_allowed

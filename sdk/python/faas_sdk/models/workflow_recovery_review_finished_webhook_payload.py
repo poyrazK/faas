@@ -31,8 +31,8 @@ class WorkflowRecoveryReviewFinishedWebhookPayload:
     policy_version: int
     captured_at: datetime.datetime
     result: WorkflowRecoveryReviewStatus
-    """Application status and aggregate execution outcome. Complete requires final proof for every action; retained
-    completion snapshots take precedence over later generations and pruned execution rows."""
+    """ Application status and aggregate execution outcome. Complete requires final proof for every action; retained
+    completion snapshots take precedence over later generations and pruned execution rows. """
     review_url: str
     status_url: str
     status_command: str

@@ -18,13 +18,13 @@ class CheckStoredWorkflowPublicationResponse:
     """Expiring server receipt with safe verified scenario and coverage metadata."""
 
     receipt: str
-    """Opaque 30-minute receipt bound to app, name, draft, actor and policy version. Do not log or expose it."""
+    """ Opaque 30-minute receipt bound to app, name, draft, actor and policy version. Do not log or expose it. """
     expires_at: datetime.datetime
     evidence: StoredWorkflowCheckEvidence
-    """Simulation check metadata. server_verified is set only for server-issued publishing receipts; legacy or
+    """ Simulation check metadata. server_verified is set only for server-issued publishing receipts; legacy or
     plain client evidence is unverified. Bound to the saved draft hash and version. Contains metadata only; no
     sample inputs, outputs, or failure text. Checked time must be within the past day (five minutes of future clock
-    skew allowed)."""
+    skew allowed). """
 
     def to_dict(self) -> dict[str, Any]:
         receipt = self.receipt

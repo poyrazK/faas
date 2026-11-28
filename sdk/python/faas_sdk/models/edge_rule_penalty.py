@@ -25,11 +25,11 @@ class EdgeRulePenalty:
     """
 
     seconds: int
-    """How long a boxed client is refused."""
+    """ How long a boxed client is refused. """
     after: int | Unset = 1
-    """Refusals by this rule that box the client."""
+    """ Refusals by this rule that box the client. """
     within_seconds: int | Unset = 60
-    """Window the refusals count in."""
+    """ Window the refusals count in. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

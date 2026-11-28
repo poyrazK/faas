@@ -25,16 +25,16 @@ class OperationWorkflowPlaybookReviewImpact:
     """
 
     kind: OperationWorkflowPlaybookReviewImpactKind
-    """OperationWorkflowPlaybookReviewImpact.kind. Result category in this workflow case."""
+    """ OperationWorkflowPlaybookReviewImpact.kind. Result category in this workflow case. """
     code: str
-    """OperationWorkflowPlaybookReviewImpact.code. Milestone slug or expected or explicitly acceptable outcome code
-    from this pinned playbook. A milestone name is declared guidance, not verified existence or completion."""
+    """ OperationWorkflowPlaybookReviewImpact.code. Milestone slug or expected or explicitly acceptable outcome code
+    from this pinned playbook. A milestone name is declared guidance, not verified existence or completion. """
     description: str
-    """OperationWorkflowPlaybookReviewImpact.description. Application-authored explanation of the business risk;
-    trimmed control-free UTF-8 text limited to 1024 bytes."""
+    """ OperationWorkflowPlaybookReviewImpact.description. Application-authored explanation of the business risk;
+    trimmed control-free UTF-8 text limited to 1024 bytes. """
     priority: OperationWorkflowPlaybookReviewImpactPriority
-    """OperationWorkflowPlaybookReviewImpact.priority. Declared priority for operator triage, independent of
-    deadline and observed business success."""
+    """ OperationWorkflowPlaybookReviewImpact.priority. Declared priority for operator triage, independent of
+    deadline and observed business success. """
 
     def to_dict(self) -> dict[str, Any]:
         kind: str = self.kind

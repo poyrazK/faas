@@ -19,9 +19,9 @@ class InvocationDestinations:
     """
 
     on_success: UUID | Unset = UNSET
-    """Webhook subscription receiving a job.finished event after completion."""
+    """ Webhook subscription receiving a job.finished event after completion. """
     on_failure: UUID | Unset = UNSET
-    """Webhook subscription receiving a job.finished event after permanent failure or DLQ routing."""
+    """ Webhook subscription receiving a job.finished event after permanent failure or DLQ routing. """
 
     def to_dict(self) -> dict[str, Any]:
         on_success: str | Unset = UNSET

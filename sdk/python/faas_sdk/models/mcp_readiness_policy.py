@@ -26,9 +26,9 @@ class MCPReadinessPolicy:
     roles: list[MCPReadinessRole]
     updated_at: datetime.datetime
     restored_from: str | Unset = UNSET
-    """Historical source revision for a restore; audit metadata is always newly recorded."""
+    """ Historical source revision for a restore; audit metadata is always newly recorded. """
     scope: str | Unset = UNSET
-    """Environment to which this saved readiness policy applies. Omitted means default."""
+    """ Environment to which this saved readiness policy applies. Omitted means default. """
     reason: str | Unset = UNSET
     updated_by: str | Unset = UNSET
 

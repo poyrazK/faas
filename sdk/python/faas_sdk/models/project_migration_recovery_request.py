@@ -22,9 +22,9 @@ class ProjectMigrationRecoveryRequest:
     expected_generation: int
     replacement_attempt_id: str
     database_state_checked: bool
-    """Operator must attest that database state was inspected and repaired."""
+    """ Operator must attest that database state was inspected and repaired. """
     execution_quiescent: bool
-    """Operator must confirm the original cleanup execution has stopped."""
+    """ Operator must confirm the original cleanup execution has stopped. """
     evidence_hash: str
 
     def to_dict(self) -> dict[str, Any]:

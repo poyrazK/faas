@@ -24,7 +24,7 @@ class OperationWorkflowDependencyImpact:
     workflow_count: int
     impacted_workflow_count: int
     has_more: bool
-    """True when the full retained relationship count exceeds the displayed 100 items."""
+    """ True when the full retained relationship count exceeds the displayed 100 items. """
 
     def to_dict(self) -> dict[str, Any]:
         items = []

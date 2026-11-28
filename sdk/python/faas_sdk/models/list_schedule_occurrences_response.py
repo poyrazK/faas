@@ -24,7 +24,7 @@ class ListScheduleOccurrencesResponse:
     limit: int
     before: UUID | Unset = UNSET
     next_before: UUID | Unset = UNSET
-    """Pass this id as before to read an older page; omitted when the page is complete."""
+    """ Pass this id as before to read an older page; omitted when the page is complete. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

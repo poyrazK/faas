@@ -21,10 +21,10 @@ class ObjectBucketRetry:
 
     reason: ObjectBucketRetryReason
     detail: str
-    """Customer-facing explanation of the reason."""
+    """ Customer-facing explanation of the reason. """
     attempts: int
     retry_at: datetime.datetime
-    """When Gregale next tries the operation."""
+    """ When Gregale next tries the operation. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

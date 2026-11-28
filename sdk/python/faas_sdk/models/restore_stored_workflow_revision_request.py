@@ -13,7 +13,7 @@ class RestoreStoredWorkflowRevisionRequest:
     """Restores a selected immutable publication into the draft without publishing it."""
 
     expected_version: int
-    """Current draft revision for optimistic concurrency; zero creates a draft after deletion."""
+    """ Current draft revision for optimistic concurrency; zero creates a draft after deletion. """
 
     def to_dict(self) -> dict[str, Any]:
         expected_version = self.expected_version

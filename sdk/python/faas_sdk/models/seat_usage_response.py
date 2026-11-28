@@ -23,12 +23,12 @@ class SeatUsageResponse:
     """
 
     used: int
-    """Active member count."""
+    """ Active member count. """
     limit: int
-    """Plan cap on active members (`Plan.OrgMembersMax()`).
+    """ Plan cap on active members (`Plan.OrgMembersMax()`).
     Returns `0` for the `free` plan — the fail-closed
     accessor shape.
-    """
+     """
     plan: SeatUsageResponsePlan
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

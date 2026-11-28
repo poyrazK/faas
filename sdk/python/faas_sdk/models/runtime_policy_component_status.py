@@ -33,8 +33,8 @@ class RuntimePolicyComponentStatus:
     pending_gateways: int
     stale_gateways: int
     legacy_fleet_revision: int | Unset = UNSET
-    """Unknown historical ownership requires replay through this fleet-wide position; later known unrelated
-    mutations do not raise it."""
+    """ Unknown historical ownership requires replay through this fleet-wide position; later known unrelated
+    mutations do not raise it. """
     scope: RuntimePolicyComponentStatusScope | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

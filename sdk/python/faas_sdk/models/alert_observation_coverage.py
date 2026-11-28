@@ -21,13 +21,13 @@ class AlertObservationCoverage:
     """Recorded live Observe only checks during the 24 hours before this response."""
 
     attempted: int
-    """Recorded checks including skipped checks."""
+    """ Recorded checks including skipped checks. """
     completed: int
-    """Checks that evaluated the condition."""
+    """ Checks that evaluated the condition. """
     skipped: list[AlertObservationSkipCount] | Unset = UNSET
-    """Recorded skips grouped by reason."""
+    """ Recorded skips grouped by reason. """
     last_checked_at: datetime.datetime | Unset = UNSET
-    """Most recent recorded check for this observation even if older than 24 hours."""
+    """ Most recent recorded check for this observation even if older than 24 hours. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -24,11 +24,11 @@ class OperationWorkflowRuleVersionCohort:
 
     eligible_workflow_count: int
     completion_time: OperationWorkflowDurationDistribution
-    """One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
-    zero."""
+    """ One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
+    zero. """
     blocked_time: OperationWorkflowDurationDistribution
-    """One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
-    zero."""
+    """ One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
+    zero. """
     outcomes_truncated: bool
     outcomes: list[OperationWorkflowRuleVersionOutcome]
 

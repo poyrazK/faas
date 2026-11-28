@@ -26,11 +26,11 @@ class ConnectionBudgetDemand:
     migration_headroom: int
     modeled_peak_connections: int
     session_connection_ceiling: int | Unset = UNSET
-    """The session role connection limit per session binding; two roles while a binding rotates."""
+    """ The session role connection limit per session binding; two roles while a binding rotates. """
     runtime_observations: ConnectionBudgetRuntimeObservations | Unset = UNSET
-    """Authenticated workload reports of configured resident Data API pools, including the refresh reader. Not live
+    """ Authenticated workload reports of configured resident Data API pools, including the refresh reader. Not live
     SQL sessions or independent guest attestation. Parked runtimes and future wakes remain estimates; this does not
-    verify Auth or external consumers."""
+    verify Auth or external consumers. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

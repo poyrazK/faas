@@ -20,9 +20,9 @@ class APISandboxOutboundWebhook:
     """Check a managed async job completion callback to a sandbox-owned receiver."""
 
     retry_once: bool | Unset = UNSET
-    """Return HTTP 503 on the first verified delivery and HTTP 204 on the retry."""
+    """ Return HTTP 503 on the first verified delivery and HTTP 204 on the retry. """
     assertions: list[APISandboxJSONAssertion] | Unset = UNSET
-    """Assertions on the job result carried by the callback."""
+    """ Assertions on the job result carried by the callback. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

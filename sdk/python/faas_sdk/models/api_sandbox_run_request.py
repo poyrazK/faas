@@ -20,7 +20,7 @@ class APISandboxRunRequest:
     scenario_revision: UUID
     mode: APISandboxRunRequestMode | Unset = "automated"
     partner_webhook: bool | Unset = UNSET
-    """Use the receiver registered for this outbound run."""
+    """ Use the receiver registered for this outbound run. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

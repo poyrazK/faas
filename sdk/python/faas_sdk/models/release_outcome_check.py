@@ -25,13 +25,13 @@ class ReleaseOutcomeCheck:
 
     deployment_id: UUID
     task_id: UUID
-    """The release command's task."""
+    """ The release command's task. """
     task_status: ReleaseOutcomeCheckTaskStatus
-    """How the release command ended, without an exit code."""
+    """ How the release command ended, without an exit code. """
     checked_by: str
-    """The person or API key that recorded the check."""
+    """ The person or API key that recorded the check. """
     note: str
-    """What the person recorded about the database."""
+    """ What the person recorded about the database. """
     checked_at: datetime.datetime
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

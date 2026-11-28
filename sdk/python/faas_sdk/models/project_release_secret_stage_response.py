@@ -18,8 +18,8 @@ class ProjectReleaseSecretStageResponse:
 
     request_id: str
     versions: ProjectReleaseSecretVersionMap
-    """Workload names mapped to complete secret name and immutable version ID snapshots; empty maps remove secrets
-    from that candidate."""
+    """ Workload names mapped to complete secret name and immutable version ID snapshots; empty maps remove secrets
+    from that candidate. """
 
     def to_dict(self) -> dict[str, Any]:
         request_id = self.request_id

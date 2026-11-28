@@ -12,12 +12,17 @@ def test_standard_mutations_preserve_empty_false_and_revocation_over_transport()
         revoke_application_standard_exception,
         set_application_standard_local_intent,
     )
-    from faas_sdk.client import AuthenticatedClient
     from faas_sdk.preview.models.approve_application_standard_exception_request import (
         ApproveApplicationStandardExceptionRequest,
     )
-    from faas_sdk.preview.models.revoke_application_standard_exception_request import RevokeApplicationStandardExceptionRequest
-    from faas_sdk.preview.models.set_application_standard_local_intent_request import SetApplicationStandardLocalIntentRequest
+    from faas_sdk.preview.models.revoke_application_standard_exception_request import (
+        RevokeApplicationStandardExceptionRequest,
+    )
+    from faas_sdk.preview.models.set_application_standard_local_intent_request import (
+        SetApplicationStandardLocalIntentRequest,
+    )
+
+    from faas_sdk.client import AuthenticatedClient
 
     resource = "00000000-0000-4000-8000-000000000001"
     stamp = "2026-10-05T12:00:00+00:00"
@@ -114,9 +119,10 @@ def test_standard_mutations_preserve_empty_false_and_revocation_over_transport()
 
 
 from faas_sdk.preview.api.orgs import get_application_standard_version, publish_application_standard_version
-from faas_sdk.client import Client
 from faas_sdk.preview.models.application_standard_version import ApplicationStandardVersion
 from faas_sdk.preview.models.create_application_standard_version_request import CreateApplicationStandardVersionRequest
+
+from faas_sdk.client import Client
 
 
 def test_standard_sdk_retains_all_requirement_types_and_parses_success():
@@ -327,11 +333,14 @@ def test_review_approval_and_operator_controls_preserve_microsecond_tokens():
         pause_application_standard_operation,
         resume_application_standard_operation,
     )
-    from faas_sdk.client import AuthenticatedClient
-    from faas_sdk.preview.models.approve_application_standard_review_request import ApproveApplicationStandardReviewRequest
+    from faas_sdk.preview.models.approve_application_standard_review_request import (
+        ApproveApplicationStandardReviewRequest,
+    )
     from faas_sdk.preview.models.control_application_standard_operation_request import (
         ControlApplicationStandardOperationRequest,
     )
+
+    from faas_sdk.client import AuthenticatedClient
 
     resource = "00000000-0000-4000-8000-000000000001"
     stamp = "2026-10-04T12:00:00.123456+00:00"
@@ -393,6 +402,7 @@ def test_assignment_inventory_preserves_inactive_revision_and_cursor():
     from uuid import UUID
 
     from faas_sdk.preview.api.orgs import get_application_standard_assignment, list_application_standard_assignments
+
     from faas_sdk.client import AuthenticatedClient
 
     resource = "00000000-0000-4000-8000-000000000001"

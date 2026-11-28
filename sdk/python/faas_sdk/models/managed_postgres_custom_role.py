@@ -32,14 +32,14 @@ class ManagedPostgresCustomRole:
     name: str
     bypass_rls: bool
     granted_to: list[ManagedPostgresCustomRoleGrantedToItem]
-    """Access modes whose logins may SET ROLE to it (migration, read_write, read_only); read_write includes session
-    logins."""
+    """ Access modes whose logins may SET ROLE to it (migration, read_write, read_only); read_write includes session
+    logins. """
     member_of: list[str]
-    """Other custom roles of the database it is a member of."""
+    """ Other custom roles of the database it is a member of. """
     default_for: list[ManagedPostgresCustomRoleDefaultForItem]
-    """Access modes whose logins start every session as this role."""
+    """ Access modes whose logins start every session as this role. """
     state: ManagedPostgresCustomRoleState
-    """pending until applied to the database, ready after, deleting until a deleted role is dropped."""
+    """ pending until applied to the database, ready after, deleting until a deleted role is dropped. """
     created_at: datetime.datetime
     updated_at: datetime.datetime
     last_error_code: str | Unset = UNSET

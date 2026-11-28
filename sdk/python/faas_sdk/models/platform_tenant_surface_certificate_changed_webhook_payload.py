@@ -24,13 +24,13 @@ class PlatformTenantSurfaceCertificateChangedWebhookPayload:
 
     platform_tenant_id: UUID
     external_ref: str
-    """The platform's durable identifier for this customer record."""
+    """ The platform's durable identifier for this customer record. """
     surface_id: UUID
     surface_name: str
     app_id: UUID
     cert_state: PlatformTenantSurfaceCertificateChangedWebhookPayloadCertState
     cert_not_after: datetime.datetime | None
-    """Null unless a certificate expiry is recorded."""
+    """ Null unless a certificate expiry is recorded. """
     changed_at: datetime.datetime
 
     def to_dict(self) -> dict[str, Any]:

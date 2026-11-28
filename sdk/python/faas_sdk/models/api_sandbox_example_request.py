@@ -26,10 +26,10 @@ class APISandboxExampleRequest:
     title: str
     method: APISandboxExampleRequestMethod
     path: str
-    """Same-host path and optional query."""
+    """ Same-host path and optional query. """
     expected_status: int
     body: Any | Unset = UNSET
-    """Optional JSON value for a request body. Limit of 2 KiB."""
+    """ Optional JSON value for a request body. Limit of 2 KiB. """
     assertions: list[APISandboxJSONAssertion] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

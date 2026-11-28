@@ -27,7 +27,7 @@ class WorkflowQueuedRunCancelOutcome:
 
     run_id: UUID
     outcome: WorkflowQueuedRunCancelOutcomeOutcome
-    """Preview classification or the final result after the atomic cancellation recheck."""
+    """ Preview classification or the final result after the atomic cancellation recheck. """
     workflow_name: str | Unset = UNSET
     status: WorkflowQueuedRunCancelOutcomeStatus | Unset = UNSET
     started_at: datetime.datetime | Unset = UNSET

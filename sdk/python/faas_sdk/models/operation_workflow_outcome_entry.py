@@ -23,14 +23,15 @@ class OperationWorkflowOutcomeEntry:
     app_id: UUID
     scope: str
     subject: OperationSubject
-    """Immutable public business correlation metadata. Captured at admission and preserved through recovery and
-    redeploy. Never an ownership or authorization claim."""
+    """ Immutable public business correlation metadata. Captured at admission and preserved through recovery and
+    redeploy. Never an ownership or authorization claim. """
     operation_id: UUID
-    """Operation that published the current state report."""
+    """ Operation that published the current state report. """
     state: OperationWorkflowState
-    """Latest app-reported state for one declared workflow instance, including terminal and staleness indicators."""
+    """ Latest app-reported state for one declared workflow instance, including terminal and staleness indicators.
+    """
     platform_tenant_id: UUID | Unset = UNSET
-    """Present only in account-operator responses."""
+    """ Present only in account-operator responses. """
 
     def to_dict(self) -> dict[str, Any]:
         app_id = str(self.app_id)

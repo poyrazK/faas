@@ -26,9 +26,9 @@ class EnvBatchResponse:
     updated_keys: list[str]
     deleted_keys: list[str]
     config_change: ConfigChangeReceipt
-    """The config revision an env or secret write recorded and the guard watching it."""
+    """ The config revision an env or secret write recorded and the guard watching it. """
     environment_id: UUID | Unset = UNSET
-    """Immutable environment identity when the original named batch was pinned."""
+    """ Immutable environment identity when the original named batch was pinned. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

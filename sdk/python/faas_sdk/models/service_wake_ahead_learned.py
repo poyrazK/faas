@@ -27,9 +27,9 @@ class ServiceWakeAheadLearned:
 
     source: ServiceWakeAheadLearnedSource
     window: str
-    """Window of the outcome counts, for example 24h."""
+    """ Window of the outcome counts, for example 24h. """
     caller_wakes: int
-    """Cold wakes of this app the evidence covers (older wakes decay)."""
+    """ Cold wakes of this app the evidence covers (older wakes decay). """
     targets: list[ServiceWakeAheadTarget]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

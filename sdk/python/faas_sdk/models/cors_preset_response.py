@@ -40,12 +40,12 @@ class CorsPresetResponse:
     updated_at: datetime.datetime
     allow_credentials: bool = False
     app_id: None | Unset | UUID = UNSET
-    """Optional app scoping. Null on the
+    """ Optional app scoping. Null on the
     wire = account-wide preset (visible to every app on
     the account). A UUID = app-scoped preset (visible
     only to that one app; cross-tenant IDOR collapses to
     404).
-    """
+     """
     description: str | Unset = UNSET
     allow_headers: list[str] | Unset = UNSET
     expose_headers: list[str] | Unset = UNSET

@@ -25,24 +25,24 @@ class DeploymentAuditResponse:
     """
 
     at: datetime.datetime
-    """RFC3339Nano UTC timestamp at which the row was emitted. Sequence-pointed — sorting by (at DESC) gives the
-    canonical timeline order."""
+    """ RFC3339Nano UTC timestamp at which the row was emitted. Sequence-pointed — sorting by (at DESC) gives the
+    canonical timeline order. """
     kind: DeploymentAuditResponseKind
-    """Deployment audit event kind. Includes the current deployment_audit CHECK values and retained legacy SDK
-    spellings."""
+    """ Deployment audit event kind. Includes the current deployment_audit CHECK values and retained legacy SDK
+    spellings. """
     actor: str
-    """Service-account UUID or operator CLI sentinel (`operator:cli:recover_rollout`, `meterd:safedeploy`,
-    `meterd:canary_progression`). Operators identify who did what from this column."""
+    """ Service-account UUID or operator CLI sentinel (`operator:cli:recover_rollout`, `meterd:safedeploy`,
+    `meterd:canary_progression`). Operators identify who did what from this column. """
     data: Any | Unset = UNSET
-    """Verbatim jsonb payload at emit time. For deploy.mcp_admission, mcp_admission contains MCPAdmissionEvidence:
+    """ Verbatim jsonb payload at emit time. For deploy.mcp_admission, mcp_admission contains MCPAdmissionEvidence:
     a committed or rejected traffic decision with policy digests and gateway replay metadata. No private JWT actions
-    or credentials are retained."""
+    or credentials are retained. """
     account_id: str | Unset = UNSET
-    """Owning account UUID (cross-tenant IDOR posture)."""
+    """ Owning account UUID (cross-tenant IDOR posture). """
     alert_rule_id: UUID | Unset = UNSET
-    """When the audit row was stamped by an alert-rule-fired action (e.g. auto-rollback via the metering service
+    """ When the audit row was stamped by an alert-rule-fired action (e.g. auto-rollback via the metering service
     ActionDispatcher), this carries the alert_rules.id UUID. nil for non-rule-triggered rows. Wire-additive — null
-    for all older rows."""
+    for all older rows. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

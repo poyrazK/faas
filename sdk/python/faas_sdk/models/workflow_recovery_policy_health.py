@@ -34,14 +34,14 @@ class WorkflowRecoveryPolicyHealth:
     reason: str
     stall_after_seconds: int
     queue: WorkflowRecoveryAutomaticQueue
-    """Informational automatic retry queue snapshot. Outstanding means a child has been created but final proof has
+    """ Informational automatic retry queue snapshot. Outstanding means a child has been created but final proof has
     not been recorded; it does not assert the child is currently running. Pending counts current policy intents
     only. Charges survive review pruning and policy replacement. Paused policies retain their queue and committed
-    children continue. Missing evidence is unresolved, never success or failure."""
+    children continue. Missing evidence is unresolved, never success or failure. """
     overview: WorkflowRecoveryOverview | Unset = UNSET
-    """Read-only retained recovery observations from one snapshot. Covers manual initial reviews, manual retry
+    """ Read-only retained recovery observations from one snapshot. Covers manual initial reviews, manual retry
     disposition/completion observations and the automatic queue, not all workflow outcomes or scheduler liveness.
-    Counts are exact; issues are bounded. Delivery covers the last retained polling alert only."""
+    Counts are exact; issues are bounded. Delivery covers the last retained polling alert only. """
     sample_last_progress_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

@@ -26,13 +26,13 @@ class OperationWorkflowFulfillmentReviewCoordinationRequest:
     owner: str
     reason: str
     escalation_owner: str | Unset = UNSET
-    """Omission preserves existing policy when the review owner is unchanged and a deadline remains. Empty string
+    """ Omission preserves existing policy when the review owner is unchanged and a deadline remains. Empty string
     clears escalation. Nonempty team must differ from the review owner and requires an explicit deadline and
-    positive grace period."""
+    positive grace period. """
     escalate_after_seconds: int | Unset = UNSET
-    """Optional grace period after actual overdue-reminder delivery. Omission preserves the existing value; zero
+    """ Optional grace period after actual overdue-reminder delivery. Omission preserves the existing value; zero
     clears escalation. Owner reassignment or removing the deadline clears policy when both policy fields are
-    omitted."""
+    omitted. """
     due_at: datetime.datetime | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:

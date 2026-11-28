@@ -28,31 +28,31 @@ class DebugRegressionItem:
     p95_ms: int
     p95_base_ms: int
     affected_count: int
-    """Requests slower than the latency threshold; for an errors-only observation, the failed requests."""
+    """ Requests slower than the latency threshold; for an errors-only observation, the failed requests. """
     regression_factor: str
-    """Decimal string with up to 2 places, NUMERIC(5,2). Latency inflation; 1.00 for an errors-only observation
-    whose p95 did not rise."""
+    """ Decimal string with up to 2 places, NUMERIC(5,2). Latency inflation; 1.00 for an errors-only observation
+    whose p95 did not rise. """
     first_detected_at: datetime.datetime
     last_detected_at: datetime.datetime
     state: DebugRegressionItemState
     kind: DebugRegressionItemKind | Unset = UNSET
-    """Which signal regressed (absent from servers before error-rate detection, meaning latency): latency (p95 at
+    """ Which signal regressed (absent from servers before error-rate detection, meaning latency): latency (p95 at
     least 1.2x baseline across at least 100 slower requests), errors (the share of HTTP 5xx responses rose at least
-    5 percentage points and 2x, with at least 10 failed and 50 total requests on each side), or both."""
+    5 percentage points and 2x, with at least 10 failed and 50 total requests on each side), or both. """
     error_rate_pct: float | Unset = UNSET
-    """Share of HTTP 5xx responses on the regressed deployment's route."""
+    """ Share of HTTP 5xx responses on the regressed deployment's route. """
     error_rate_base_pct: float | Unset = UNSET
-    """Share of HTTP 5xx responses on the previous deployment's route."""
+    """ Share of HTTP 5xx responses on the previous deployment's route. """
     error_count: int | Unset = UNSET
-    """HTTP 5xx responses on the regressed deployment's route in the detection window."""
+    """ HTTP 5xx responses on the regressed deployment's route in the detection window. """
     acknowledged_at: datetime.datetime | Unset = UNSET
     dismissed_until: datetime.datetime | Unset = UNSET
     resolved_at: datetime.datetime | Unset = UNSET
     suspected_dependency: DebugSuspectedDependency | Unset = UNSET
-    """The classified dependency most likely behind this route regression: for a latency regression the one whose
+    """ The classified dependency most likely behind this route regression: for a latency regression the one whose
     p95 regressed most between the previous and the regressed deployment, else one that started failing more often;
     an errors-only regression checks failing dependencies first. Bounded and redacted; also sent in
-    debug.regression.* webhooks."""
+    debug.regression.* webhooks. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

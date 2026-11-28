@@ -26,17 +26,17 @@ class ProfileCallPathFrame:
     file: str | Unset = UNSET
     line: int | Unset = UNSET
     baseline_path: str | Unset = UNSET
-    """Safe repository-relative baseline path retained for automatic canary evidence."""
+    """ Safe repository-relative baseline path retained for automatic canary evidence. """
     baseline_line: int | Unset = UNSET
     candidate_path: str | Unset = UNSET
-    """Safe repository-relative candidate path retained for automatic canary evidence."""
+    """ Safe repository-relative candidate path retained for automatic canary evidence. """
     candidate_line: int | Unset = UNSET
     baseline_source: ProfileSourceLocation | Unset = UNSET
-    """Safely mapped sampled source line at the deployment's recorded commit. Omitted for missing symbols, unknown
-    paths, generated adapters, or exhausted link bounds. Private repository access is enforced by GitHub."""
+    """ Safely mapped sampled source line at the deployment's recorded commit. Omitted for missing symbols, unknown
+    paths, generated adapters, or exhausted link bounds. Private repository access is enforced by GitHub. """
     candidate_source: ProfileSourceLocation | Unset = UNSET
-    """Safely mapped sampled source line at the deployment's recorded commit. Omitted for missing symbols, unknown
-    paths, generated adapters, or exhausted link bounds. Private repository access is enforced by GitHub."""
+    """ Safely mapped sampled source line at the deployment's recorded commit. Omitted for missing symbols, unknown
+    paths, generated adapters, or exhausted link bounds. Private repository access is enforced by GitHub. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

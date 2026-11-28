@@ -325,6 +325,11 @@ Gregale stores who started the session, the command and the exit code, never
 the terminal output.
 
 Interactive sessions are in preview and may not be enabled for your account.
+They are listed separately from app tasks as `interactive-app-sessions`, and
+`gregale feature list` shows whether they are available. `app exec -i`/`-t`,
+`app cp`, `app port-forward` and `postgres connect` need them; plain
+`app exec -- <command>` needs only `app-tasks`, so while sessions are
+unavailable `app exec -it` is refused with a pointer to the plain form.
 A deployment whose guest predates interactive sessions reports
 `interactive_unsupported`;
 redeploy it and retry. Attaching to an already-running serving instance is not
@@ -348,3 +353,29 @@ into a VM is not offered because the VM is discarded when the session ends.
 app's network, with its egress policy, private networks and service names, so
 you can reach internal services and managed databases from your laptop. All
 local connections share one session; stop it with Ctrl-C.
+
+### Task history
+
+Every `app exec`, release command and command cron leaves a task record with
+its status, exit code and the tail of its output. Read them back, for example
+after `app exec --detach`:
+
+```sh
+gregale app tasks my-api                         # newest first
+gregale app tasks my-api --offset 20             # older page
+gregale app tasks show my-api <task-id>          # status, exit code, output tail
+gregale app tasks cancel my-api <task-id>        # stop a queued or running task
+```
+
+The app's dashboard page links to the same history under **View task
+history**. Only the tail of the output is kept, up to the task's
+`--max-output-bytes`; interactive sessions record the command and exit code,
+never the terminal output.
+
+Each task runs in its own VM of the app's size, so an account can have only
+so many queued or running at once: 2 on Free, 4 on Hobby, 10 on Pro and 25 on
+Scale, counted across all its apps. `app exec`, interactive sessions,
+`app cp` and `app port-forward` count; release commands, command crons and
+`bindings verify` probes do not. A task over the cap is refused with
+`429 plan_limit_app_tasks`, which names the limit and how many are active;
+wait for one to finish or cancel one with `gregale app tasks cancel`.

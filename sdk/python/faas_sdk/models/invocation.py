@@ -33,9 +33,9 @@ class Invocation:
     state: InvocationState
     created_at: datetime.datetime
     platform_tenant_id: UUID | Unset = UNSET
-    """Immutable verified downstream customer identity for async HTTP work."""
+    """ Immutable verified downstream customer identity for async HTTP work. """
     queue_name: str | Unset = UNSET
-    """Logical queue name for queue-source invocations; empty retains the legacy app-scoped queue."""
+    """ Logical queue name for queue-source invocations; empty retains the legacy app-scoped queue. """
     method: str | Unset = UNSET
     path: str | Unset = UNSET
     payload: InvocationPayload | Unset = UNSET
@@ -47,34 +47,35 @@ class Invocation:
     result: InvocationResultType0 | None | Unset = UNSET
     last_error: None | str | Unset = UNSET
     ack_url: None | str | Unset = UNSET
-    """Optional ack URL for queueReceive consumers; populated on queue-sourced rows."""
+    """ Optional ack URL for queueReceive consumers; populated on queue-sourced rows. """
     attempts: int | Unset = UNSET
-    """Number of dispatch attempts so far; 0 on the first try."""
+    """ Number of dispatch attempts so far; 0 on the first try. """
     work_policy_name: str | Unset = UNSET
-    """Named policy under which this invocation was admitted."""
+    """ Named policy under which this invocation was admitted. """
     work_policy_revision: int | Unset = UNSET
-    """Policy revision captured at admission."""
+    """ Policy revision captured at admission. """
     work_expires_at: datetime.datetime | None | Unset = UNSET
-    """Pending work expiry; running work is never expired by this policy."""
+    """ Pending work expiry; running work is never expired by this policy. """
     lease_expires_at: datetime.datetime | None | Unset = UNSET
-    """When the in-flight dispatch lease expires; null when no lease is held."""
+    """ When the in-flight dispatch lease expires; null when no lease is held. """
     received_at: datetime.datetime | None | Unset = UNSET
-    """When the drain first claimed the row; null until claimed."""
+    """ When the drain first claimed the row; null until claimed. """
     deadline_at: datetime.datetime | None | Unset = UNSET
-    """Optional hard-stop. Drain transitions the row to dead_letter when this time passes while still
-    pending|dispatching."""
+    """ Optional hard-stop. Drain transitions the row to dead_letter when this time passes while still
+    pending|dispatching. """
     retry_policy: InvocationRetryPolicyType0 | None | Unset = UNSET
-    """Optional per-row retry curve override; decodes into dispatch.RetryPolicy (max_attempts, base_seconds,
-    max_seconds, jitter_seconds)."""
+    """ Optional per-row retry curve override; decodes into dispatch.RetryPolicy (max_attempts, base_seconds,
+    max_seconds, jitter_seconds). """
     result_retention_until: datetime.datetime | None | Unset = UNSET
-    """Optional explicit retention horizon. NULL means 'use plan default' (Limits.MaxAsyncResultRetentionSeconds)."""
+    """ Optional explicit retention horizon. NULL means 'use plan default' (Limits.MaxAsyncResultRetentionSeconds).
+    """
     last_replayed_at: datetime.datetime | None | Unset = UNSET
-    """When this row was most recently replayed from dead_letter via POST
-    /v1/apps/{slug}/queues/dead_letter/{id}/replay. NULL until first replay."""
+    """ When this row was most recently replayed from dead_letter via POST
+    /v1/apps/{slug}/queues/dead_letter/{id}/replay. NULL until first replay. """
     on_success_destination_id: None | Unset | UUID = UNSET
-    """EPIC #1278. App webhook subscription selected for a completed invocation."""
+    """ EPIC #1278. App webhook subscription selected for a completed invocation. """
     on_failure_destination_id: None | Unset | UUID = UNSET
-    """EPIC #1278. App webhook subscription selected for a terminal failure or dead-lettered invocation."""
+    """ EPIC #1278. App webhook subscription selected for a terminal failure or dead-lettered invocation. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

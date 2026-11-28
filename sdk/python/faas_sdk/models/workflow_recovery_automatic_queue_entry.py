@@ -40,21 +40,21 @@ class WorkflowRecoveryAutomaticQueueEntry:
     queued_at: datetime.datetime
     queued_age_seconds: int
     action: WorkflowRecoveryAutomaticAction
-    """Durable automatic retry intent and application receipt. Applied identifies child creation; its final result
-    requires retained generation proof. Suppressed actions never run automatically."""
+    """ Durable automatic retry intent and application receipt. Applied identifies child creation; its final result
+    requires retained generation proof. Suppressed actions never run automatically. """
     initial_evidence: WorkflowRecoveryInitialQueueEvidence | Unset = UNSET
-    """Read-only initial recovery evidence. Prepared identifies a planned generation with no submitted recovery job
+    """ Read-only initial recovery evidence. Prepared identifies a planned generation with no submitted recovery job
     and is never repairable; submitted uses exact-generation proof from the initial evidence endpoint. Neither stage
-    grants execution authority."""
+    grants execution authority. """
     evidence: WorkflowRecoveryQueueEvidence | Unset = UNSET
-    """Read-only exact-generation diagnosis for a returned retry queue entry; never a worker evaluation or
+    """ Read-only exact-generation diagnosis for a returned retry queue entry; never a worker evaluation or
     admission grant. Parent repairability also requires the exact live generation to remain retained. Omitted for
-    initial recoveries, which use their separate evidence endpoints."""
+    initial recoveries, which use their separate evidence endpoints. """
     evidence_unavailable_reason: WorkflowRecoveryAutomaticQueueEntryEvidenceUnavailableReason | Unset = UNSET
     wait_category: WorkflowRecoveryAutomaticQueueEntryWaitCategory | Unset = UNSET
     wait_reason: str | Unset = UNSET
-    """Current pending policy pause/disable reason or the last saved worker reason; evidence diagnosis has its own
-    observation time."""
+    """ Current pending policy pause/disable reason or the last saved worker reason; evidence diagnosis has its own
+    observation time. """
     waiting_age_seconds: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

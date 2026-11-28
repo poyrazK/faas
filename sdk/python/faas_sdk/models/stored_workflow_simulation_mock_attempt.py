@@ -23,11 +23,11 @@ class StoredWorkflowSimulationMockAttempt:
 
     outcome: StoredWorkflowSimulationMockAttemptOutcome
     output: Any | Unset = UNSET
-    """Successful action result or received event/callback payload; any JSON value, including null."""
+    """ Successful action result or received event/callback payload; any JSON value, including null. """
     error: str | Unset = UNSET
-    """Mocked transport or action error message used as failure.message."""
+    """ Mocked transport or action error message used as failure.message. """
     http_status: int | Unset = UNSET
-    """Mocked non-2xx response status."""
+    """ Mocked non-2xx response status. """
 
     def to_dict(self) -> dict[str, Any]:
         outcome: str = self.outcome

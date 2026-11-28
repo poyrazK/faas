@@ -15,7 +15,7 @@ class AppScalingSettings:
 
     ram_mb: int
     cpu_millicores: int
-    """Stored CPU allowance; zero uses the plan default."""
+    """ Stored CPU allowance; zero uses the plan default. """
     max_concurrency: int
     min_instances: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

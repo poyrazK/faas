@@ -27,10 +27,10 @@ class FinancialBudgetRevisionResponse:
     policy_id: UUID
     revision: int
     actor: str
-    """Authenticated account or API key identity; never a supplied actor value."""
+    """ Authenticated account or API key identity; never a supplied actor value. """
     mutation: FinancialBudgetRevisionResponseMutation
     spec: FinancialBudgetSpec
-    """Customer budget intent; activation and enforcement are separately acknowledged."""
+    """ Customer budget intent; activation and enforcement are separately acknowledged. """
     recorded_at: datetime.datetime
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

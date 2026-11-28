@@ -23,7 +23,7 @@ class ReviewBindingVerificationRequest:
     """Application deployment and binding selection to review without admitting work."""
 
     deployment_id: UUID | Unset = UNSET
-    """Exact deployment; omission selects the current live deployment once."""
+    """ Exact deployment; omission selects the current live deployment once. """
     service_targets: ReviewBindingVerificationRequestServiceTargets | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

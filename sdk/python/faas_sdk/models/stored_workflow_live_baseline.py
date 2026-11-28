@@ -29,9 +29,9 @@ class StoredWorkflowLiveBaseline:
     actor_account_id: UUID
     promoted_at: datetime.datetime
     suite: StoredWorkflowLiveSuiteSummary
-    """Retained suite identity and linked-run counts. Listing is not an assertion verdict."""
+    """ Retained suite identity and linked-run counts. Listing is not an assertion verdict. """
     policy: StoredWorkflowLiveBaselinePolicy
-    """Version 2 required-case coverage and evidence-age policy reviewed during baseline promotion."""
+    """ Version 2 required-case coverage and evidence-age policy reviewed during baseline promotion. """
     policy_hash: str
     cases_passed: int
     oldest_run_created_at: datetime.datetime

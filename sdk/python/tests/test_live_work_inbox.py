@@ -5,7 +5,6 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
-
 from faas_sdk.preview import (
     LiveWorkInboxError,
     parse_live_work_inbox_snapshot,

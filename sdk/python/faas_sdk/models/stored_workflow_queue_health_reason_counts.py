@@ -11,17 +11,17 @@ T = TypeVar("T", bound="StoredWorkflowQueueHealthReasonCounts")
 @_attrs_define
 class StoredWorkflowQueueHealthReasonCounts:
     ready: int
-    """Due and passes observed run admission checks; does not guarantee immediate handler execution."""
+    """ Due and passes observed run admission checks; does not guarantee immediate handler execution. """
     scheduled: int
-    """Future scheduling deadline that is not a pending step retry."""
+    """ Future scheduling deadline that is not a pending step retry. """
     retry_backoff: int
-    """A pending step retry deadline equals the future persisted run wake."""
+    """ A pending step retry deadline equals the future persisted run wake. """
     parked_wait: int
-    """Intentional future wait or timeout; inspect steps for timer, condition, event or callback details."""
+    """ Intentional future wait or timeout; inspect steps for timer, condition, event or callback details. """
     app_capacity: int
     tenant_capacity: int
     workflow_capacity: int
-    """The captured workflow definition run budget is full."""
+    """ The captured workflow definition run budget is full. """
 
     def to_dict(self) -> dict[str, Any]:
         ready = self.ready

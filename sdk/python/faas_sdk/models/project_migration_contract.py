@@ -35,8 +35,8 @@ class ProjectMigrationContract:
     exit_code: int | Unset = UNSET
     failure_code: str | Unset = UNSET
     recovery: ProjectMigrationRecovery | Unset = UNSET
-    """Durable operator resolution and verified roll-forward identity. The cleanup outcome remains unchanged;
-    database and execution checks are operator attestations."""
+    """ Durable operator resolution and verified roll-forward identity. The cleanup outcome remains unchanged;
+    database and execution checks are operator attestations. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

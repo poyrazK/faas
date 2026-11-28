@@ -35,20 +35,20 @@ class EdgeRuleJWTAction:
     audience: list[str] | Unset = UNSET
     required_claims: EdgeRuleJWTActionRequiredClaims | Unset = UNSET
     mcp: MCPResourcePolicy | Unset = UNSET
-    """Opt-in MCP resource-server policy on a JWT edge rule. Requires a
+    """ Opt-in MCP resource-server policy on a JWT edge rule. Requires a
     canonical HTTPS resource, matching JWT audience, match_path=/**,
     and no method or header selectors. The gateway serves OAuth resource
     metadata, rejects expired credentials, and enforces JSON-RPC execution
     scopes. Catalog filtering and task ownership remain application duties.
-    """
+     """
     platform_tenant_external_ref_claim: str | Unset = UNSET
-    """Optional verified custom JWT claim name whose exact value resolves to a platform tenant external_ref in the
+    """ Optional verified custom JWT claim name whose exact value resolves to a platform tenant external_ref in the
     app owner's account. Supports namespaced claims. When set, unknown, suspended, or unavailable tenants are
-    rejected before the request reaches the guest."""
+    rejected before the request reaches the guest. """
     require_exp: bool | Unset = UNSET
-    """Reject tokens that carry no `exp` claim. Defaults to true when omitted, because a token minted without `exp`
+    """ Reject tokens that carry no `exp` claim. Defaults to true when omitted, because a token minted without `exp`
     never expires; set false to accept such tokens (`exp` is then validated only when present). Rules saved before
-    this default keep their saved value, and responses show the field only when it is true."""
+    this default keep their saved value, and responses show the field only when it is true. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

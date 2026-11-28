@@ -264,6 +264,7 @@ const RequestAnalyticsRouteMaxLength = requestAnalyticsRouteMaxLength
 const RouteCostByRequestTime = routeCostByRequestTime
 const RouteCostByRequests = routeCostByRequests
 const RuntimeConfigAppNameBlocklist = runtimeConfigAppNameBlocklist
+const RuntimeConfigAppTaskConcurrency = runtimeConfigAppTaskConcurrency
 const RuntimeConfigDataPlacement = runtimeConfigDataPlacement
 const RuntimeConfigDomainDoctor = runtimeConfigDomainDoctor
 const RuntimeConfigDomainDoctorTTL = runtimeConfigDomainDoctorTTL
@@ -2463,6 +2464,33 @@ func CapabilitiesWithInstallationGates(crashSnapshots, forks, profiling bool) *h
 func CapabilitiesWithRuntimeGates(appTasks, tcp, udp bool) *httptest.ResponseRecorder {
 	recorder := httptest.NewRecorder()
 	(&server{}).WithAppTaskAPIEnabled(appTasks).WithListenersEnabled(tcp, udp).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanPro})
+	return recorder
+}
+
+// CapabilitiesWithAIAccessTokenHost runs GET /v1/capabilities for an
+// account on plan with the AI gateway's public host on or off.
+func CapabilitiesWithAIAccessTokenHost(enabled bool, plan api.Plan) *httptest.ResponseRecorder {
+	recorder := httptest.NewRecorder()
+	(&server{}).WithAIAccessTokenHostEnabled(enabled).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: plan})
+	return recorder
+}
+
+// CreateAIAccessTokenWithHost runs the token-creation host gate with the AI
+// gateway's public host on or off and reports whether it let the request
+// through to the handler.
+func CreateAIAccessTokenWithHost(enabled bool) (*httptest.ResponseRecorder, bool) {
+	recorder := httptest.NewRecorder()
+	reached := false
+	gate := (&server{}).WithAIAccessTokenHostEnabled(enabled).aiAccessTokenHost(func(http.ResponseWriter, *http.Request, state.Account) { reached = true })
+	gate(recorder, httptest.NewRequest(http.MethodPost, "/v1/apps/a/ai-access-tokens", nil), state.Account{Plan: api.PlanScale})
+	return recorder, reached
+}
+
+// CapabilitiesWithAppTaskGates runs GET /v1/capabilities for a Pro account
+// with the app-task API and interactive-session gates set.
+func CapabilitiesWithAppTaskGates(appTasks, interactive bool) *httptest.ResponseRecorder {
+	recorder := httptest.NewRecorder()
+	(&server{}).WithAppTaskAPIEnabled(appTasks).WithInteractiveAppTasksEnabled(interactive).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanPro})
 	return recorder
 }
 

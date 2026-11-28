@@ -40,82 +40,84 @@ class OperationWorkflowPlaybookEvidenceWatch:
     """
 
     id: UUID
-    """OperationWorkflowPlaybookEvidenceWatch.id. Pinned case identity or retained watch metadata."""
+    """ OperationWorkflowPlaybookEvidenceWatch.id. Pinned case identity or retained watch metadata. """
     progress_id: UUID
-    """OperationWorkflowPlaybookEvidenceWatch.progress_id. Pinned case identity or retained watch metadata."""
+    """ OperationWorkflowPlaybookEvidenceWatch.progress_id. Pinned case identity or retained watch metadata. """
     subscription_id: UUID
-    """OperationWorkflowPlaybookEvidenceWatch.subscription_id. Existing inbox destination in the same application,
-    environment, and caller access boundary."""
+    """ OperationWorkflowPlaybookEvidenceWatch.subscription_id. Existing inbox destination in the same application,
+    environment, and caller access boundary. """
     revision: int
-    """OperationWorkflowPlaybookEvidenceWatch.revision. Watch configuration revision. Zero creates; polling leaves
-    it unchanged."""
+    """ OperationWorkflowPlaybookEvidenceWatch.revision. Watch configuration revision. Zero creates; polling leaves
+    it unchanged. """
     status: OperationWorkflowPlaybookEvidenceWatchStatus
-    """OperationWorkflowPlaybookEvidenceWatch.status. Active monitoring or stopped monitoring."""
+    """ OperationWorkflowPlaybookEvidenceWatch.status. Active monitoring or stopped monitoring. """
     owner: str
-    """OperationWorkflowPlaybookEvidenceWatch.owner. Responsible team label assigned to new inbox deliveries; no
-    external destination."""
+    """ OperationWorkflowPlaybookEvidenceWatch.owner. Responsible team label assigned to new inbox deliveries; no
+    external destination. """
     subject: OperationSubject
-    """Immutable public business correlation metadata. Captured at admission and preserved through recovery and
-    redeploy. Never an ownership or authorization claim."""
+    """ Immutable public business correlation metadata. Captured at admission and preserved through recovery and
+    redeploy. Never an ownership or authorization claim. """
     workflow: str
-    """OperationWorkflowPlaybookEvidenceWatch.workflow. Pinned case identity or retained watch metadata."""
+    """ OperationWorkflowPlaybookEvidenceWatch.workflow. Pinned case identity or retained watch metadata. """
     instance_id: str
-    """OperationWorkflowPlaybookEvidenceWatch.instance_id. Pinned case identity or retained watch metadata."""
+    """ OperationWorkflowPlaybookEvidenceWatch.instance_id. Pinned case identity or retained watch metadata. """
     contract_version: int
-    """OperationWorkflowPlaybookEvidenceWatch.contract_version. Pinned case identity or retained watch metadata."""
+    """ OperationWorkflowPlaybookEvidenceWatch.contract_version. Pinned case identity or retained watch metadata.
+    """
     playbook_id: str
-    """OperationWorkflowPlaybookEvidenceWatch.playbook_id. Pinned case identity or retained watch metadata."""
+    """ OperationWorkflowPlaybookEvidenceWatch.playbook_id. Pinned case identity or retained watch metadata. """
     playbook_version: int
-    """OperationWorkflowPlaybookEvidenceWatch.playbook_version. Pinned case identity or retained watch metadata."""
+    """ OperationWorkflowPlaybookEvidenceWatch.playbook_version. Pinned case identity or retained watch metadata.
+    """
     created_at: datetime.datetime
-    """OperationWorkflowPlaybookEvidenceWatch.created_at. Pinned case identity or retained watch metadata."""
+    """ OperationWorkflowPlaybookEvidenceWatch.created_at. Pinned case identity or retained watch metadata. """
     updated_at: datetime.datetime
-    """OperationWorkflowPlaybookEvidenceWatch.updated_at. Pinned case identity or retained watch metadata."""
+    """ OperationWorkflowPlaybookEvidenceWatch.updated_at. Pinned case identity or retained watch metadata. """
     updated_by: str
-    """OperationWorkflowPlaybookEvidenceWatch.updated_by. Authenticated configuration actor, or system actor for
-    automatic monitoring stop."""
+    """ OperationWorkflowPlaybookEvidenceWatch.updated_by. Authenticated configuration actor, or system actor for
+    automatic monitoring stop. """
     evaluated_at: datetime.datetime
-    """OperationWorkflowPlaybookEvidenceWatch.evaluated_at. Last successful case evidence observation clock."""
+    """ OperationWorkflowPlaybookEvidenceWatch.evaluated_at. Last successful case evidence observation clock. """
     items: list[OperationWorkflowPlaybookEvidenceCheck]
-    """OperationWorkflowPlaybookEvidenceWatch.items. Latest retained requirement observations, separate from
-    checklist reviews."""
+    """ OperationWorkflowPlaybookEvidenceWatch.items. Latest retained requirement observations, separate from
+    checklist reviews. """
     review_assignments: list[OperationWorkflowPlaybookStepAssignmentReference] | Unset = UNSET
-    """OperationWorkflowPlaybookEvidenceWatch.review_assignments. Durable delivery references for dependency review
+    """ OperationWorkflowPlaybookEvidenceWatch.review_assignments. Durable delivery references for dependency review
     episodes, bounded per watch and retained across disable and re-enable. Further episodes require a new watch
-    after this limit."""
+    after this limit. """
     dependency_states: list[OperationWorkflowPlaybookDependencyState] | Unset = UNSET
-    """OperationWorkflowPlaybookEvidenceWatch.dependency_states. Last successful human step dependency
-    observations; enrollment and re-enrollment establish a silent baseline."""
+    """ OperationWorkflowPlaybookEvidenceWatch.dependency_states. Last successful human step dependency
+    observations; enrollment and re-enrollment establish a silent baseline. """
     step_assignments: list[OperationWorkflowPlaybookStepAssignmentReference] | Unset = UNSET
-    """OperationWorkflowPlaybookEvidenceWatch.step_assignments. Durable per-watch delivery references; disable and
-    re-enable preserve deduplication even after inbox retention."""
+    """ OperationWorkflowPlaybookEvidenceWatch.step_assignments. Durable per-watch delivery references; disable and
+    re-enable preserve deduplication even after inbox retention. """
     outcome_deadline: OperationWorkflowPlaybookOutcomeDeadlinePolicy | Unset = UNSET
-    """OperationWorkflowPlaybookOutcomeDeadlinePolicy. Application-defined business attention policy. Requires an
+    """ OperationWorkflowPlaybookOutcomeDeadlinePolicy. Application-defined business attention policy. Requires an
     expected terminal outcome; all durations are whole seconds and the owner is a coordination label, not an
-    external destination."""
+    external destination. """
     deadline_at: datetime.datetime | Unset = UNSET
-    """OperationWorkflowPlaybookEvidenceWatch.deadline_at. Exact pinned checklist outcome deadline."""
+    """ OperationWorkflowPlaybookEvidenceWatch.deadline_at. Exact pinned checklist outcome deadline. """
     deadline_checked_at: datetime.datetime | Unset = UNSET
-    """OperationWorkflowPlaybookEvidenceWatch.deadline_checked_at. First successful due observation, or achieved
+    """ OperationWorkflowPlaybookEvidenceWatch.deadline_checked_at. First successful due observation, or achieved
     due enrollment observation; retained across configuration edits. Prevents retrospective deadline notices after
-    observed fulfillment."""
+    observed fulfillment. """
     escalation: OperationWorkflowReadinessOutcomeEscalationReference | Unset = UNSET
-    """Reference to the single retained escalation notification in the same subscription. Pruning does not recreate
-    escalations; links may expire."""
+    """ Reference to the single retained escalation notification in the same subscription. Pruning does not recreate
+    escalations; links may expire. """
     outcome_state_revision: int | Unset = UNSET
-    """OperationWorkflowPlaybookEvidenceWatch.outcome_state_revision. Highest comparable case report observed for
+    """ OperationWorkflowPlaybookEvidenceWatch.outcome_state_revision. Highest comparable case report observed for
     the pinned expectation; retained report regressions cannot establish a new result. Preserved across
-    configuration edits and unavailable observations."""
+    configuration edits and unavailable observations. """
     business_outcome: OperationWorkflowPlaybookBusinessOutcome | Unset = UNSET
-    """OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen
+    """ OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen
     playbook expectation. Independent of human completion and evidence satisfaction; changed guidance never silently
-    changes the expected outcome."""
+    changes the expected outcome. """
     stop_reason: str | Unset = UNSET
-    """OperationWorkflowPlaybookEvidenceWatch.stop_reason. Disabled or stopped because the exact checklist was
-    closed or unavailable."""
+    """ OperationWorkflowPlaybookEvidenceWatch.stop_reason. Disabled or stopped because the exact checklist was
+    closed or unavailable. """
     platform_tenant_id: UUID | Unset = UNSET
-    """OperationWorkflowPlaybookEvidenceWatch.platform_tenant_id. Exact evidence customer, included only for
-    operator watches and deliveries."""
+    """ OperationWorkflowPlaybookEvidenceWatch.platform_tenant_id. Exact evidence customer, included only for
+    operator watches and deliveries. """
 
     def to_dict(self) -> dict[str, Any]:
         id = str(self.id)

@@ -29,23 +29,23 @@ class PreAuthRouteLimit:
 
     method: PreAuthRouteLimitMethod
     path: str
-    """Canonical absolute public URL path with no query, fragment, or percent encoding. Matching is exact after
-    normalizing the decoded request path."""
+    """ Canonical absolute public URL path with no query, fragment, or percent encoding. Matching is exact after
+    normalizing the decoded request path. """
     requests_per_second: int
     burst: int
     coordination: PreAuthRouteLimitCoordination | Unset = "local"
-    """Optional shared request budget across gateway replicas. Defaults to local. Central mode uses 1,024 opaque
+    """ Optional shared request budget across gateway replicas. Defaults to local. Central mode uses 1,024 opaque
     source shards per exact route; collisions share allowance. On database errors it falls back to the replica-local
-    bucket. Failed-response coordination is configured separately."""
+    bucket. Failed-response coordination is configured separately. """
     failed_responses: PreAuthFailedResponseLimit | Unset = UNSET
-    """Optional per-source budget spent only by selected proxied application 4xx responses. When statuses is
+    """ Optional per-source budget spent only by selected proxied application 4xx responses. When statuses is
     omitted, 401 and 403 are counted. In enforce mode, subsequent requests are rejected before authentication and
-    wake after this budget is exhausted."""
+    wake after this budget is exhausted. """
     observe_targets: bool | Unset = False
-    """Observe repeated application login failures for the same app-declared target across source IPs. Requires
+    """ Observe repeated application login failures for the same app-declared target across source IPs. Requires
     POST, failed_responses, and central coordination. The application supplies X-Gregale-Abuse-Target as lowercase
     hex HMAC-SHA256 of the normalized submitted login identifier on selected failed responses; the gateway strips it
-    before sending the response. This signal never rejects requests."""
+    before sending the response. This signal never rejects requests. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -42,10 +42,10 @@ class MCPReadinessDestinationQueue:
     can_retry: bool
     can_abandon: bool
     provider: MCPReadinessDestinationQueueProvider | Unset = UNSET
-    """Native transport of this queue head; omitted for an idle receiver or legacy inspection."""
+    """ Native transport of this queue head; omitted for an idle receiver or legacy inspection. """
     failure_kind: MCPReadinessDestinationQueueFailureKind | Unset = UNSET
     head: MCPReadinessIncidentEvent | Unset = UNSET
-    """Readiness incident transition or continuation with current notification status."""
+    """ Readiness incident transition or continuation with current notification status. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

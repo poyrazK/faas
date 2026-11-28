@@ -22,11 +22,11 @@ class StoredWorkflowPublishCheckScenario:
 
     name: str
     simulation: SimulateStoredWorkflowRequest
-    """Sample workflow data and mocked action, event/callback payload or timeout outcomes for a stateless
-    simulation."""
+    """ Sample workflow data and mocked action, event/callback payload or timeout outcomes for a stateless
+    simulation. """
     expectations: list[StoredWorkflowCheckExpectation]
     live: None | StoredWorkflowLiveTest | Unset = UNSET
-    """Live test configuration carried by the case editor; mock publishing checks do not evaluate it."""
+    """ Live test configuration carried by the case editor; mock publishing checks do not evaluate it. """
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.stored_workflow_live_test import StoredWorkflowLiveTest

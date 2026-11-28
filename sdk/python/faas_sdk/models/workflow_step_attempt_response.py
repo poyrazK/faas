@@ -32,7 +32,7 @@ class WorkflowStepAttemptResponse:
     next_attempt_at: datetime.datetime | None | Unset = UNSET
     error: None | str | Unset = UNSET
     effects: list[OperationEffectRecord] | Unset = UNSET
-    """Accepted operation webhook effects and their delivery status."""
+    """ Accepted operation webhook effects and their delivery status. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

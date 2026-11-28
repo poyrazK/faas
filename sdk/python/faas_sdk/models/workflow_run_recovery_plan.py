@@ -27,10 +27,10 @@ class WorkflowRunRecoveryPlan:
     name: str
     runs: list[WorkflowRunRecoveryTarget]
     execution_deadline_seconds: int | Unset = UNSET
-    """Advisory deadline from each admission. Zero disables it; nonzero values must be at least 60 seconds."""
+    """ Advisory deadline from each admission. Zero disables it; nonzero values must be at least 60 seconds. """
     execution_stall_seconds: int | Unset = UNSET
-    """No observable progress threshold. Zero uses 900 seconds; nonzero values must be at least 60 seconds.
-    Scheduled and capacity waits do not trigger stalled alerts."""
+    """ No observable progress threshold. Zero uses 900 seconds; nonzero values must be at least 60 seconds.
+    Scheduled and capacity waits do not trigger stalled alerts. """
 
     def to_dict(self) -> dict[str, Any]:
         name = self.name

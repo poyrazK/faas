@@ -21,11 +21,11 @@ class StoredWorkflowLiveSuiteObservation:
     """Safe original run identity, creation time and recorded result only."""
 
     result: StoredWorkflowLiveSuiteObservationResult
-    """Result of the original run independently of target drift. Unavailable includes missing runs and terminal
-    runs without a current assertion report."""
+    """ Result of the original run independently of target drift. Unavailable includes missing runs and terminal
+    runs without a current assertion report. """
     run_id: UUID | Unset = UNSET
     created_at: datetime.datetime | Unset = UNSET
-    """Original linked verification creation time, when retained. Never refreshed by grouping or checking runs."""
+    """ Original linked verification creation time, when retained. Never refreshed by grouping or checking runs. """
 
     def to_dict(self) -> dict[str, Any]:
         result: str = self.result

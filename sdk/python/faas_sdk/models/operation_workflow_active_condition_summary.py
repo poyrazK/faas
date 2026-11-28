@@ -25,14 +25,15 @@ class OperationWorkflowActiveConditionSummary:
     """
 
     overdue_workflow_count: int
-    """Eligible sampled workflows with at least one overdue selected condition report; counted once before owner
-    display limits."""
+    """ Eligible sampled workflows with at least one overdue selected condition report; counted once before owner
+    display limits. """
     overdue_condition_count: int
-    """Exact selected overdue condition identities across eligible sampled workflows before owner display limits."""
+    """ Exact selected overdue condition identities across eligible sampled workflows before owner display limits.
+    """
     refresh_owners_truncated: bool
     refresh_owners: list[OperationWorkflowConditionRefreshOwnerGroup]
-    """First 64 owner strings in lexical order; unassigned sorts first. Counts for returned owners are exact.
-    Workflows may overlap across owners."""
+    """ First 64 owner strings in lexical order; unassigned sorts first. Counts for returned owners are exact.
+    Workflows may overlap across owners. """
     matching_workflow_count: int
     sampled_workflow_count: int
     linked_workflow_count: int
@@ -43,8 +44,8 @@ class OperationWorkflowActiveConditionSummary:
     cohort_truncated: bool
     groups_truncated: bool
     groups: list[OperationWorkflowActiveConditionGroup]
-    """First 64 contract/decision/rule/version/condition ID/description/result identities in lexical order with
-    exact counts for returned groups."""
+    """ First 64 contract/decision/rule/version/condition ID/description/result identities in lexical order with
+    exact counts for returned groups. """
 
     def to_dict(self) -> dict[str, Any]:
         overdue_workflow_count = self.overdue_workflow_count

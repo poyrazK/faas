@@ -22,7 +22,7 @@ class FinancialAppMeterCosts:
 
     meter: str
     coverage: FinancialMeterCoverage
-    """Completeness and freshness of authoritative retained meter evidence."""
+    """ Completeness and freshness of authoritative retained meter evidence. """
     quantity: int
     net_millicents: int
     allocations: list[FinancialAppCostAllocation]

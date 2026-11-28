@@ -12,7 +12,7 @@ T = TypeVar("T", bound="ConfirmEmailVerificationBody")
 @_attrs_define
 class ConfirmEmailVerificationBody:
     token: str
-    """The verification token from the confirmation page's form."""
+    """ The verification token from the confirmation page's form. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

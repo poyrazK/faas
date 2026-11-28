@@ -19,19 +19,19 @@ class DeploymentCompanion:
     """
 
     name: str
-    """Companion name."""
+    """ Companion name. """
     image: str | Unset = UNSET
-    """Digest-pinned image reference."""
+    """ Digest-pinned image reference. """
     preset: str | Unset = UNSET
-    """Built-in preset the companion uses, when any."""
+    """ Built-in preset the companion uses, when any. """
     type_: str | Unset = UNSET
-    """init or sidecar."""
+    """ init or sidecar. """
     port: int | Unset = UNSET
-    """Declared port; it also opens the public <app>--<name> hostname."""
+    """ Declared port; it also opens the public <app>--<name> hostname. """
     ram_mb: int | Unset = UNSET
-    """Reserved RAM in MB."""
+    """ Reserved RAM in MB. """
     primary_ingress: bool | Unset = UNSET
-    """Whether the companion receives the app's public traffic."""
+    """ Whether the companion receives the app's public traffic. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

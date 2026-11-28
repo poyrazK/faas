@@ -24,12 +24,12 @@ class ProjectSubmissionReceipt:
     """Durable, account-scoped recovery for one project apply attempt."""
 
     selection_complete: bool
-    """Whether the selected workload set was durably recorded before enqueue."""
+    """ Whether the selected workload set was durably recorded before enqueue. """
     attempt_id: str
     project_slug: str
     status: ProjectSubmissionReceiptStatus
     apply: ApplyResponse
-    """Apply response. Carries the inserted project_id and per-app IDs."""
+    """ Apply response. Carries the inserted project_id and per-app IDs. """
     environment: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

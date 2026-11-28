@@ -14,7 +14,7 @@ class PutJobRegistryCredentialRequest:
     """Job private-registry credential payload. Password is sealed at rest and never returned."""
 
     registry: str
-    """HTTPS registry host, optionally with port."""
+    """ HTTPS registry host, optionally with port. """
     username: str
     password: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

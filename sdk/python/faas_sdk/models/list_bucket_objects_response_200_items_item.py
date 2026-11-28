@@ -18,7 +18,7 @@ class ListBucketObjectsResponse200ItemsItem:
     size_bytes: int
     last_modified: datetime.datetime
     from_parent: bool | Unset = UNSET
-    """In an environment branch's bucket, the object is read from the parent environment's bucket."""
+    """ In an environment branch's bucket, the object is read from the parent environment's bucket. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

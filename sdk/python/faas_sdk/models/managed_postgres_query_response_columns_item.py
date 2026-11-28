@@ -12,7 +12,7 @@ T = TypeVar("T", bound="ManagedPostgresQueryResponseColumnsItem")
 class ManagedPostgresQueryResponseColumnsItem:
     name: str
     type_: str
-    """PostgreSQL type name, or oid:N for a type the server did not name."""
+    """ PostgreSQL type name, or oid:N for a type the server did not name. """
 
     def to_dict(self) -> dict[str, Any]:
         name = self.name

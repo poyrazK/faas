@@ -29,16 +29,16 @@ class DeploymentReadinessProbe:
     """
 
     path: str | Unset = UNSET
-    """HTTP path requested on the app's runtime port; must start with `/`. Set exactly one of path or grpc."""
+    """ HTTP path requested on the app's runtime port; must start with `/`. Set exactly one of path or grpc. """
     grpc: DeploymentGRPCHealthcheck | Unset = UNSET
-    """Standard gRPC health.v1 readiness probe. An omitted or empty service checks overall server health."""
+    """ Standard gRPC health.v1 readiness probe. An omitted or empty service checks overall server health. """
     period_s: int | Unset = UNSET
-    """Probe interval in seconds; 0 = default (5)."""
+    """ Probe interval in seconds; 0 = default (5). """
     timeout_s: int | Unset = UNSET
-    """Per-probe timeout in seconds; 0 = default (2)."""
+    """ Per-probe timeout in seconds; 0 = default (2). """
     failure_threshold: int | Unset = UNSET
-    """Consecutive failures before traffic is withdrawn; 0 = default (3). A passing probe immediately restores
-    routing."""
+    """ Consecutive failures before traffic is withdrawn; 0 = default (3). A passing probe immediately restores
+    routing. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

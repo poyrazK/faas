@@ -32,8 +32,8 @@ class FinancialForecastResponse:
     bill_estimate_available: bool
     missing_bill_components: list[str]
     projected_subtotal_millicents: int | Unset = UNSET
-    """Plan fee plus every meter's projected usage charge for the month, in millicents. Present only when every
-    meter has an available forecast; it excludes the components listed in missing_bill_components."""
+    """ Plan fee plus every meter's projected usage charge for the month, in millicents. Present only when every
+    meter has an available forecast; it excludes the components listed in missing_bill_components. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

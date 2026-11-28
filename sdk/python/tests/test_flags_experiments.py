@@ -3,22 +3,23 @@ exposure per flag, customer, subject and variant an hour; flush sends it
 beside the events."""
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
 import pytest
-
 from faas_sdk.preview.flags import GREGALE_FLAG_CONTEXT_HEADER, GregaleFlags
 
 CUSTOMER = "00000000-0000-4000-8000-000000000101"
-BUNDLE = json.loads((Path(__file__).resolve().parents[3] / "pkg" / "flags" / "testdata" / "decisions.json").read_text())["bundle"]
+BUNDLE = json.loads(
+    (Path(__file__).resolve().parents[3] / "pkg" / "flags" / "testdata" / "decisions.json").read_text()
+)["bundle"]
 
 
 @pytest.mark.asyncio
 async def test_subject_experiment_exposures_are_deduplicated():
     sent: list[dict] = []
-    clock = {"now": datetime(2026, 11, 19, 12, tzinfo=timezone.utc).timestamp() * 1000}
+    clock = {"now": datetime(2026, 11, 19, 12, tzinfo=UTC).timestamp() * 1000}
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.host == "127.0.0.1":
@@ -29,7 +30,9 @@ async def test_subject_experiment_exposures_are_deduplicated():
         return httpx.Response(200, json={"accepted": 0})
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    flags = GregaleFlags("https://api.example.test", "http://127.0.0.1:8082/token", async_client=client, now=lambda: clock["now"])
+    flags = GregaleFlags(
+        "https://api.example.test", "http://127.0.0.1:8082/token", async_client=client, now=lambda: clock["now"]
+    )
     await flags.refresh()
 
     async def serve() -> str:
@@ -46,4 +49,11 @@ async def test_subject_experiment_exposures_are_deduplicated():
     await flags.flush()
     exposures = [e for body in sent for e in body.get("exposures", [])]
     assert len(exposures) == 2, "one exposure an hour, none for customer experiments"
-    assert exposures[0] == {"flag": "subject-checkout", "rule_id": "by-user", "variant": "new", "customer_id": CUSTOMER, "subject": "user-7", "at": "2026-11-19T12:00:00Z"}
+    assert exposures[0] == {
+        "flag": "subject-checkout",
+        "rule_id": "by-user",
+        "variant": "new",
+        "customer_id": CUSTOMER,
+        "subject": "user-7",
+        "at": "2026-11-19T12:00:00Z",
+    }

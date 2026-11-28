@@ -19,18 +19,18 @@ class OperationWorkflowReadinessResponse:
     """Readiness evaluation for the selected business subject and workflow instance at the reported time."""
 
     subject: OperationSubject
-    """Immutable public business correlation metadata. Captured at admission and preserved through recovery and
-    redeploy. Never an ownership or authorization claim."""
+    """ Immutable public business correlation metadata. Captured at admission and preserved through recovery and
+    redeploy. Never an ownership or authorization claim. """
     workflow: str
     instance_id: str
     evaluated_at: datetime.datetime
     readiness: OperationWorkflowTransitionReadiness
-    """Ready means declared requirements match retained reports and the proposed milestone plan. It does not
+    """ Ready means declared requirements match retained reports and the proposed milestone plan. It does not
     authorize or commit a transition or validate milestone payloads. All reported workflow prerequisites apply; only
     blockers targeting this Operation apply. Staleness, overdue deadlines, current-state reporting context and
     pending resolution proofs are advisories rather than undeclared guards. Reporting context uses current pinned
     expected_states, not invented required transition conditions. Planned reports do not replace this retained
-    context."""
+    context. """
 
     def to_dict(self) -> dict[str, Any]:
         subject = self.subject.to_dict()

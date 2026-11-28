@@ -2,15 +2,14 @@
 verified customer and sends them in batches to /v1/runtime/flags/events."""
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 import pytest
-
 from faas_sdk.preview.flags import GREGALE_FLAG_CONTEXT_HEADER, GregaleFlags
 
 TENANT = "00000000-0000-4000-8000-000000000001"
-NOW_MS = datetime(2026, 11, 15, 12, tzinfo=timezone.utc).timestamp() * 1000
+NOW_MS = datetime(2026, 11, 15, 12, tzinfo=UTC).timestamp() * 1000
 
 
 def flags_client(status: int = 200, accepted: int | None = None) -> tuple[GregaleFlags, list[dict]]:
@@ -20,11 +19,19 @@ def flags_client(status: int = 200, accepted: int | None = None) -> tuple[Gregal
         if request.url.host == "127.0.0.1":
             return httpx.Response(200, json={"access_token": "workload-token"})
         body = json.loads(request.content)
-        sent.append({"url": str(request.url), "body": body, "capabilities": request.headers.get("x-faas-flags-capabilities", "")})
+        sent.append(
+            {
+                "url": str(request.url),
+                "body": body,
+                "capabilities": request.headers.get("x-faas-flags-capabilities", ""),
+            }
+        )
         return httpx.Response(status, json={"accepted": len(body["events"]) if accepted is None else accepted})
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    flags = GregaleFlags("https://api.example.test", "http://127.0.0.1:8082/token", async_client=client, now=lambda: NOW_MS)
+    flags = GregaleFlags(
+        "https://api.example.test", "http://127.0.0.1:8082/token", async_client=client, now=lambda: NOW_MS
+    )
     return flags, sent
 
 
@@ -63,9 +70,21 @@ async def test_track_sends_properties_subject_and_request_flags():
     assert "track-v2" in sent[0]["capabilities"]
     decisions = {"new-checkout": "false", "pricing": "control"}
     assert sent[0]["body"]["events"] == [
-        {"name": "order_completed", "customer_id": TENANT, "at": "2026-11-15T12:00:00Z", "subject": "user-1",
-         "properties": {"plan": "pro"}, "flags": decisions},
-        {"name": "signup", "customer_id": TENANT, "at": "2026-11-15T12:00:00Z", "subject": "user-2", "flags": decisions},
+        {
+            "name": "order_completed",
+            "customer_id": TENANT,
+            "at": "2026-11-15T12:00:00Z",
+            "subject": "user-1",
+            "properties": {"plan": "pro"},
+            "flags": decisions,
+        },
+        {
+            "name": "signup",
+            "customer_id": TENANT,
+            "at": "2026-11-15T12:00:00Z",
+            "subject": "user-2",
+            "flags": decisions,
+        },
     ]
     assert flags.dropped_events() == 3
 

@@ -34,15 +34,15 @@ class OperationWorkflowCaseObligationHistoryItem:
     events: list[OperationWorkflowObligationEvent]
     events_truncated: bool
     fulfillment_review: OperationWorkflowObligationFulfillmentReview | Unset = UNSET
-    """Bounded independent observation of the latest fulfilled case/cycle and its original or reaffirmed proof.
+    """ Bounded independent observation of the latest fulfilled case/cycle and its original or reaffirmed proof.
     Flags remain latched until explicit reaffirmation or reopening; normal workflow progress is not invalidation.
     Reasons describe retained coverage, not inferred business failure. Identical semantic observations suppress
-    owner notices."""
+    owner notices. """
     subscription_tenant_id: UUID | Unset = UNSET
     current: OperationWorkflowCaseNextAction | Unset = UNSET
-    """One current coordination obligation or suggestion for an exact workflow case, including the responsible
+    """ One current coordination obligation or suggestion for an exact workflow case, including the responsible
     label, its own deadline and a source inbox link. Shared plans may span cases; evidence includes only references
-    matching this case. This does not authorize application execution or infer business completion."""
+    matching this case. This does not authorize application execution or infer business completion. """
 
     def to_dict(self) -> dict[str, Any]:
         obligation_id = self.obligation_id

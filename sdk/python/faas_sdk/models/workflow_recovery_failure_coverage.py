@@ -25,12 +25,12 @@ class WorkflowRecoveryFailureCoverage:
 
     capture_started_at: datetime.datetime
     coverage: WorkflowRecoveryFailureCoverageCoverage
-    """Prospective capture and retention limits prevent a claim of complete historical coverage."""
+    """ Prospective capture and retention limits prevent a claim of complete historical coverage. """
     captured_failures: int
     reviewed_failures: int
     unreviewed_failures: int
     missing_eligibility_evidence: int
-    """Sampled failures without historical retry preflight proof."""
+    """ Sampled failures without historical retry preflight proof. """
     truncated: bool
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

@@ -34,21 +34,21 @@ class DebugCoverageResponse:
     represented_requests: int
     error_requests: int
     trace_linked: DebugCoverageSignal
-    """Observed coverage for one debugger signal. Requests are weighted by collapsed-row count."""
+    """ Observed coverage for one debugger signal. Requests are weighted by collapsed-row count. """
     span_evidence: DebugCoverageSignal
-    """Observed coverage for one debugger signal. Requests are weighted by collapsed-row count."""
+    """ Observed coverage for one debugger signal. Requests are weighted by collapsed-row count. """
     wake_evidence: DebugCoverageSignal
-    """Observed coverage for one debugger signal. Requests are weighted by collapsed-row count."""
+    """ Observed coverage for one debugger signal. Requests are weighted by collapsed-row count. """
     guest_evidence: DebugCoverageSignal
-    """Observed coverage for one debugger signal. Requests are weighted by collapsed-row count."""
+    """ Observed coverage for one debugger signal. Requests are weighted by collapsed-row count. """
     oldest_telemetry_at: datetime.datetime | Unset = UNSET
     latest_telemetry_at: datetime.datetime | Unset = UNSET
     requests_not_retained: int | Unset = UNSET
-    """Requests the app's request analytics counted in the window's whole
+    """ Requests the app's request analytics counted in the window's whole
     minutes that the debugger did not keep, because the plan's
     per-minute debugger row limit turned them away. A lower bound;
     absent when request analytics do not cover the window.
-    """
+     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

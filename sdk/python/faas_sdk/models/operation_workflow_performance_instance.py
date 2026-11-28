@@ -32,50 +32,51 @@ class OperationWorkflowPerformanceInstance:
     """
 
     subject: OperationSubject
-    """Immutable public business correlation metadata. Captured at admission and preserved through recovery and
-    redeploy. Never an ownership or authorization claim."""
+    """ Immutable public business correlation metadata. Captured at admission and preserved through recovery and
+    redeploy. Never an ownership or authorization claim. """
     operation_id: UUID
     state: OperationWorkflowState
-    """Latest app-reported state for one declared workflow instance, including terminal and staleness indicators."""
+    """ Latest app-reported state for one declared workflow instance, including terminal and staleness indicators.
+    """
     observed_seconds: int
     resolution_verifications: list[OperationWorkflowResolutionVerification]
     awaiting_verification_count: int
     resolution_verification_count: int
     gap_queue_priority: OperationWorkflowGapQueuePriority | Unset = UNSET
-    """All current reporting gaps before queue filters and evidence previews. Guidance contains every eligible
+    """ All current reporting gaps before queue filters and evidence previews. Guidance contains every eligible
     pinned missing expectation, including owners beyond the evidence preview; it carries no prior report facts.
-    Blocked intervals spanning contracts are omitted."""
+    Blocked intervals spanning contracts are omitted. """
     gap_progress: OperationWorkflowNewMissingConditionProgressInstance | Unset = UNSET
-    """One current ongoing workflow with missing reports and a comparable retained baseline, ordered by stable
+    """ One current ongoing workflow with missing reports and a comparable retained baseline, ordered by stable
     workflow identity. Baseline_report identifies the pinned baseline definition source. A terminal baseline has no
     active expectations; newly active current gaps are new_expectation rather than reporting loss. Conditions use
-    canonical current step and condition ID order. Customer projections omit tenant identifiers."""
+    canonical current step and condition ID order. Customer projections omit tenant identifiers. """
     missing_condition_count: int | Unset = UNSET
-    """Exact missing condition count for the selected current state and refresh owner before preview limits."""
+    """ Exact missing condition count for the selected current state and refresh owner before preview limits. """
     missing_conditions_truncated: bool | Unset = UNSET
     missing_conditions: list[OperationWorkflowConditionCoverageEntry] | Unset = UNSET
-    """First matching missing conditions ordered by workflow step then condition ID with latest reporting Operation
+    """ First matching missing conditions ordered by workflow step then condition ID with latest reporting Operation
     pinned expectations and public guidance. No qualifying report exists in current contexts, so evidence is absent.
-   """
+    """
     refresh_priority: OperationWorkflowConditionRefreshPriority | Unset = UNSET
-    """Evidence and explanation for one ongoing workflow with overdue condition reports. Rankings use the same
+    """ Evidence and explanation for one ongoing workflow with overdue condition reports. Rankings use the same
     token-bound sample, complete-history eligibility and pinned definitions as active condition coverage. Owner
     lists and unassigned condition counts include all qualifying identities before the 16-fact preview cap. The
     oldest evidence has the earliest selected overdue report timestamp with canonical identity breaking ties, and is
     included independently of the preview. This is observational prioritization without business severity or
-    execution authority."""
+    execution authority. """
     refresh_evidence_count: int | Unset = UNSET
-    """Exact number of selected overdue conditions for this contributor. Owner dimensions restrict the count to
-    that owner; workflow priority dimensions count all overdue conditions across owners."""
+    """ Exact number of selected overdue conditions for this contributor. Owner dimensions restrict the count to
+    that owner; workflow priority dimensions count all overdue conditions across owners. """
     refresh_evidence_truncated: bool | Unset = UNSET
     refresh_evidence: list[OperationWorkflowDecisionOutcomeEvidence] | Unset = UNSET
-    """First 16 matching overdue condition facts in canonical identity order with pinned refresh guidance and
-    token-bound deadlines. More conditions may qualify; refresh_evidence_count remains exact."""
+    """ First 16 matching overdue condition facts in canonical identity order with pinned refresh guidance and
+    token-bound deadlines. More conditions may qualify; refresh_evidence_count remains exact. """
     decision_evidence: OperationWorkflowDecisionOutcomeEvidence | Unset = UNSET
-    """Retained report classifying this contributor. Completed outcome groups use the earliest qualifying fact;
+    """ Retained report classifying this contributor. Completed outcome groups use the earliest qualifying fact;
     active condition groups use the latest matching fact among current decision contexts. The optional business
     decision snapshot references its fact within operation_id. A path without a decision is evidenced by the report
-    itself. These are application-reported facts and do not establish causation."""
+    itself. These are application-reported facts and do not establish causation. """
     platform_tenant_id: UUID | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:

@@ -29,7 +29,7 @@ class WorkflowRecoveryReport:
     truncated: bool
     coverage_notes: list[str]
     totals: WorkflowRecoveryReportTotals
-    """Observed event-window counts and matched retry timing, without causal or live-state inference."""
+    """ Observed event-window counts and matched retry timing, without causal or live-state inference. """
     groups: list[WorkflowRecoveryReportGroup]
     blockers: list[WorkflowRecoveryReportBlocker]
     evidence: list[WorkflowRecoveryHistoryEntry]

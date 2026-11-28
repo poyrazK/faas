@@ -16,14 +16,14 @@ class OIDCExchangeResponse:
     """Body for `POST /v1/auth/oidc/exchange` success response."""
 
     bearer: str
-    """Opaque bearer, format `fp_oidc_<48 hex>`. Use in `Authorization: Bearer …` on routes allowed by the returned
-    scope profile."""
+    """ Opaque bearer, format `fp_oidc_<48 hex>`. Use in `Authorization: Bearer …` on routes allowed by the returned
+    scope profile. """
     expires_in: int
-    """Seconds until the bearer expires (300 today)."""
+    """ Seconds until the bearer expires (300 today). """
     token_id: str
-    """Opaque row id (UUID). Useful for log correlation / audit reads."""
+    """ Opaque row id (UUID). Useful for log correlation / audit reads. """
     scopes: list[str] | Unset = UNSET
-    """The fixed scopes granted to this bearer."""
+    """ The fixed scopes granted to this bearer. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

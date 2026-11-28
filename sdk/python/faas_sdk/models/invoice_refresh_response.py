@@ -28,11 +28,11 @@ class InvoiceRefreshResponse:
     invoice_id: UUID
     provider: InvoiceRefreshResponseProvider
     detailed: bool
-    """Whether the refreshed line snapshot is complete, classified, and exactly reconciled."""
+    """ Whether the refreshed line snapshot is complete, classified, and exactly reconciled. """
     line_items: int
     updated_at: datetime.datetime
     source_gap: InvoiceRefreshResponseSourceGap | Unset = UNSET
-    """Reason for aggregate fallback; omitted when detailed is true."""
+    """ Reason for aggregate fallback; omitted when detailed is true. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

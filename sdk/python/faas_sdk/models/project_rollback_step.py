@@ -44,15 +44,15 @@ class ProjectRollbackStep:
     attempt_id: UUID | Unset = UNSET
     rollback_operation_id: UUID | Unset = UNSET
     preparation_status: str | Unset = UNSET
-    """Target preparation state such as warming, checking, ready, blocked, or released."""
+    """ Target preparation state such as warming, checking, ready, blocked, or released. """
     blockers: list[BindingCheckFinding] | Unset = UNSET
     warnings: list[BindingCheckFinding] | Unset = UNSET
     crossed_releases: list[RollbackCrossedRelease] | Unset = UNSET
-    """Release runs crossed by this undo step."""
+    """ Release runs crossed by this undo step. """
     undo_artifacts: ProjectRollbackUndoArtifacts | Unset = UNSET
-    """The artifact hold for the exact deployment restored by an undo."""
+    """ The artifact hold for the exact deployment restored by an undo. """
     problem: Problem | Unset = UNSET
-    """RFC 9457 problem+json envelope. The `code` field is the stable
+    """ RFC 9457 problem+json envelope. The `code` field is the stable
     machine-readable identifier; clients branch on it. `limit` and
     `observed` are populated on quota errors. `docs_url` points the
     user at the next action. Common customer-facing codes and recovery
@@ -70,16 +70,16 @@ class ProjectRollbackStep:
     rejection renders as a form-field list the dashboard can
     iterate without parsing prose. Optional + omitempty so every
     other problem+json site keeps its existing flat shape unchanged.
-    """
+     """
     pre_cutover_health: ProjectRollbackPreCutoverHealth | Unset = UNSET
-    """Durable outcome of configured HTTP probes of the prepared revision before cutover."""
+    """ Durable outcome of configured HTTP probes of the prepared revision before cutover. """
     health: ProjectRollbackHealth | Unset = UNSET
-    """Durable outcome of the configured HTTP health probes for the exact restored route."""
+    """ Durable outcome of the configured HTTP health probes for the exact restored route. """
     live_traffic: ProjectRollbackLiveTraffic | Unset = UNSET
-    """Verification of configured 5xx budgets using production requests after an exact route generation was
-    applied."""
+    """ Verification of configured 5xx budgets using production requests after an exact route generation was
+    applied. """
     traffic: ProjectRollbackTraffic | Unset = UNSET
-    """Observed HTTP recovery for the exact restored deployment."""
+    """ Observed HTTP recovery for the exact restored deployment. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

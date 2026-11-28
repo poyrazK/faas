@@ -24,17 +24,17 @@ class CreateNotificationChannelRequest:
     """Adds a Slack, PagerDuty or email alert channel. Set only the fields for the chosen kind."""
 
     name: str
-    """Unique per account."""
+    """ Unique per account. """
     kind: CreateNotificationChannelRequestKind
-    """Destination type."""
+    """ Destination type. """
     slack_webhook_url: str | Unset = UNSET
-    """Slack incoming webhook, https://hooks.slack.com/services/… (kind slack)."""
+    """ Slack incoming webhook, https://hooks.slack.com/services/… (kind slack). """
     pagerduty_routing_key: str | Unset = UNSET
-    """Events API v2 integration key (kind pagerduty)."""
+    """ Events API v2 integration key (kind pagerduty). """
     pagerduty_region: CreateNotificationChannelRequestPagerdutyRegion | Unset = "us"
-    """PagerDuty service region (kind pagerduty)."""
+    """ PagerDuty service region (kind pagerduty). """
     email: str | Unset = UNSET
-    """The account's own email address (kind email)."""
+    """ The account's own email address (kind email). """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

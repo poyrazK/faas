@@ -27,27 +27,27 @@ class EnableAlertPresetRequest:
     """
 
     webhook_url: str | Unset = UNSET
-    """Signed webhook destination; required with webhook_secret unless channel_ids is set."""
+    """ Signed webhook destination; required with webhook_secret unless channel_ids is set. """
     webhook_secret: str | Unset = UNSET
-    """HMAC secret for the webhook; required with webhook_url unless channel_ids is set."""
+    """ HMAC secret for the webhook; required with webhook_url unless channel_ids is set. """
     channel_ids: list[UUID] | Unset = UNSET
-    """Notification channels the instantiated rule delivers to; with at least one, the webhook fields may be
-    omitted."""
+    """ Notification channels the instantiated rule delivers to; with at least one, the webhook fields may be
+    omitted. """
     action: EnableAlertPresetRequestAction | Unset = "webhook"
-    """Action to run when the instantiated alert fires. Omit to
+    """ Action to run when the instantiated alert fires. Omit to
     use the default webhook-only behavior. The login_target_pressure,
     login_target_signal_health, pre_auth_pressure,
     edge_validation_failures, and edge_rejection_pressure presets
     support webhook only.
-    """
+     """
     cooldown_minutes: int | Unset = UNSET
-    """Override for the preset's default_cooldown_minutes.
+    """ Override for the preset's default_cooldown_minutes.
     Omit to use the catalog default.
-    """
+     """
     enabled: bool | Unset = True
-    """Whether the instantiated rule is enabled. Defaults to
+    """ Whether the instantiated rule is enabled. Defaults to
     true; pass false to stage the rule in disabled state.
-    """
+     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

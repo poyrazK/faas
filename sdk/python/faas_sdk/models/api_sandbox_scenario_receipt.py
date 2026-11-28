@@ -25,7 +25,7 @@ class APISandboxScenarioReceipt:
     requests: list[APISandboxExampleRequest]
     revision: UUID
     seeded_ids: APISandboxScenarioGuideSeededIds | Unset = UNSET
-    """Synthetic IDs shown to invite recipients."""
+    """ Synthetic IDs shown to invite recipients. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

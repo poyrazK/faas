@@ -20,12 +20,12 @@ class MCPInstanceHealthProbeResponse:
     deployment_id: UUID
     instance_id: UUID
     http_status: int
-    """HTTP status returned by the workload's /healthz handler."""
+    """ HTTP status returned by the workload's /healthz handler. """
     health_body: str
-    """UTF-8 body returned by the workload's /healthz handler."""
+    """ UTF-8 body returned by the workload's /healthz handler. """
     health_body_too_large: bool | Unset = UNSET
-    """True when the workload response exceeded the 64 KiB probe limit and health_body contains only its bounded
-    prefix."""
+    """ True when the workload response exceeded the 64 KiB probe limit and health_body contains only its bounded
+    prefix. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -26,25 +26,25 @@ class OperationWorkflowDecisionOutcomeSummary:
     """
 
     matching_workflow_count: int
-    """All matching completed workflows before bounded sampling."""
+    """ All matching completed workflows before bounded sampling. """
     sampled_workflow_count: int
     linked_workflow_count: int
-    """Sampled complete workflows with a reported outcome and at least one decision or path identity. Includes
-    workflows whose groups are omitted by the group limit."""
+    """ Sampled complete workflows with a reported outcome and at least one decision or path identity. Includes
+    workflows whose groups are omitted by the group limit. """
     excluded_incomplete_workflow_count: int
     missing_outcome_workflow_count: int
-    """Complete completed workflows without a latest reported outcome code."""
+    """ Complete completed workflows without a latest reported outcome code. """
     unclassified_workflow_count: int
-    """Complete completed workflows with an outcome but no qualifying decision or path."""
+    """ Complete completed workflows with an outcome but no qualifying decision or path. """
     cohort_truncated: bool
     groups_truncated: bool
     groups: list[OperationWorkflowDecisionOutcomeGroup]
     rule_comparisons: OperationWorkflowRuleComparisonSummary | Unset = UNSET
-    """Side-by-side rule version statistics from the same bounded completed workflow sample. Observed identities
+    """ Side-by-side rule version statistics from the same bounded completed workflow sample. Observed identities
     are scoped to contract, decision code and rule ID. Version names are opaque and sorted lexically, not
     chronologically. Workflows may report several versions and contribute to several columns; comparisons do not
     establish causation or statistical significance. Coverage of unobserved versions cannot be inferred from missing
-    history."""
+    history. """
 
     def to_dict(self) -> dict[str, Any]:
         matching_workflow_count = self.matching_workflow_count

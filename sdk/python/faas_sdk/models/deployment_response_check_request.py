@@ -17,7 +17,7 @@ class DeploymentResponseCheckRequest:
     app_id: str
     scope: str
     path: str
-    """App-relative GET path with optional query; no fragment or controls."""
+    """ App-relative GET path with optional query; no fragment or controls. """
     project_id: str | Unset = UNSET
     environment_id: str | Unset = UNSET
 

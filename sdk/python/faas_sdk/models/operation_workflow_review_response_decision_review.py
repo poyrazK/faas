@@ -35,72 +35,72 @@ class OperationWorkflowReviewResponseDecisionReview:
     """
 
     decision_at: datetime.datetime
-    """OperationWorkflowReviewResponseDecisionReview.decision_at. Time of the decision that needs revalidation."""
+    """ OperationWorkflowReviewResponseDecisionReview.decision_at. Time of the decision that needs revalidation. """
     required_at: datetime.datetime
-    """OperationWorkflowReviewResponseDecisionReview.required_at. First sampled condition change, committed with
-    its one-time inbox alert."""
+    """ OperationWorkflowReviewResponseDecisionReview.required_at. First sampled condition change, committed with
+    its one-time inbox alert. """
     changes: list[str]
-    """OperationWorkflowReviewResponseDecisionReview.changes. Differences from the immutable reviewed snapshot,
-    including unavailable sources without claiming business failure."""
+    """ OperationWorkflowReviewResponseDecisionReview.changes. Differences from the immutable reviewed snapshot,
+    including unavailable sources without claiming business failure. """
     health: OperationWorkflowReviewResponseHealth
-    """Sampled advisory response-plan condition. Clear means no observed blockers or review obligations, not
-    business completion. Sampling stops on response resolution."""
+    """ Sampled advisory response-plan condition. Clear means no observed blockers or review obligations, not
+    business completion. Sampling stops on response resolution. """
     escalation_acknowledgment: OperationWorkflowReviewResponseEscalationAcknowledgment | Unset = UNSET
-    """Immutable human escalation acknowledgment with a coordinator commitment, recorded actor and time.
+    """ Immutable human escalation acknowledgment with a coordinator commitment, recorded actor and time.
     Notification acknowledgment alone does not create this record. The system overdue marker and explicit human
-    completion may be appended without changing commitment fields."""
+    completion may be appended without changing commitment fields. """
     acceptance_escalation_owner: str | Unset = UNSET
-    """OperationWorkflowReviewResponseDecisionReview.acceptance_escalation_owner. Escalation destination pinned at
+    """ OperationWorkflowReviewResponseDecisionReview.acceptance_escalation_owner. Escalation destination pinned at
     the actual handoff. Missing legacy destinations are not retroactively assigned; a destination equal to current
-    ownership receives only the ordinary overdue notice."""
+    ownership receives only the ordinary overdue notice. """
     acceptance_escalated_at: datetime.datetime | Unset = UNSET
-    """OperationWorkflowReviewResponseDecisionReview.acceptance_escalated_at. One-time escalation delivery marker
-    committed atomically with the overdue marker and both inbox notices. Reset only by a new handoff."""
+    """ OperationWorkflowReviewResponseDecisionReview.acceptance_escalated_at. One-time escalation delivery marker
+    committed atomically with the overdue marker and both inbox notices. Reset only by a new handoff. """
     handed_off_at: datetime.datetime | Unset = UNSET
-    """OperationWorkflowReviewResponseDecisionReview.handed_off_at. Current handoff timestamp; required by
-    acceptance and decline after manual reassignment. Legacy automatic handoffs can omit it."""
+    """ OperationWorkflowReviewResponseDecisionReview.handed_off_at. Current handoff timestamp; required by
+    acceptance and decline after manual reassignment. Legacy automatic handoffs can omit it. """
     reassignment: OperationWorkflowReviewResponseHandoffReassignment | Unset = UNSET
-    """Immutable manual routing record for an authorized operator, with preserved decline context and one-time
-    notification intent. Ownership assignment is not acceptance."""
+    """ Immutable manual routing record for an authorized operator, with preserved decline context and one-time
+    notification intent. Ownership assignment is not acceptance. """
     reassignment_required: bool | Unset = UNSET
-    """OperationWorkflowReviewResponseDecisionReview.reassignment_required. Declining team still owns the
-    unresolved review; manual owner reassignment clears this flag without erasing decline history."""
+    """ OperationWorkflowReviewResponseDecisionReview.reassignment_required. Declining team still owns the
+    unresolved review; manual owner reassignment clears this flag without erasing decline history. """
     decline: OperationWorkflowReviewResponseHandoffDecline | Unset = UNSET
-    """Immutable decline for a responsible team recorded by an authenticated authorized operator, without proof of
-    team membership. Retained history carries its one-time notification intent."""
+    """ Immutable decline for a responsible team recorded by an authenticated authorized operator, without proof of
+    team membership. Retained history carries its one-time notification intent. """
     acceptance_due_at: datetime.datetime | Unset = UNSET
-    """OperationWorkflowReviewResponseDecisionReview.acceptance_due_at. Acceptance deadline pinned from the actual
-    handoff time and effective window, separate from the unchanged decision-review deadline."""
+    """ OperationWorkflowReviewResponseDecisionReview.acceptance_due_at. Acceptance deadline pinned from the actual
+    handoff time and effective window, separate from the unchanged decision-review deadline. """
     acceptance_deadline_notified_at: datetime.datetime | Unset = UNSET
-    """OperationWorkflowReviewResponseDecisionReview.acceptance_deadline_notified_at. One-time unaccepted handoff
-    alert marker, independent of notification acknowledgment."""
+    """ OperationWorkflowReviewResponseDecisionReview.acceptance_deadline_notified_at. One-time unaccepted handoff
+    alert marker, independent of notification acknowledgment. """
     acceptance: OperationWorkflowReviewResponseHandoffAcceptance | Unset = UNSET
-    """Immutable acceptance by an authenticated authorized operator for the responsible team, without verifying
-    team membership or satisfying the original review deadline."""
+    """ Immutable acceptance by an authenticated authorized operator for the responsible team, without verifying
+    team membership or satisfying the original review deadline. """
     initial_owner: str | Unset = UNSET
-    """OperationWorkflowReviewResponseDecisionReview.initial_owner. Team responsible when this review episode
-    began; unknown legacy ownership prevents automatic handoff."""
+    """ OperationWorkflowReviewResponseDecisionReview.initial_owner. Team responsible when this review episode
+    began; unknown legacy ownership prevents automatic handoff. """
     owner_changed: bool | Unset = UNSET
-    """OperationWorkflowReviewResponseDecisionReview.owner_changed. Ownership changed during this episode,
-    including a move away and back; prevents automatic handoff."""
+    """ OperationWorkflowReviewResponseDecisionReview.owner_changed. Ownership changed during this episode,
+    including a move away and back; prevents automatic handoff. """
     fallback_owner: str | Unset = UNSET
-    """OperationWorkflowReviewResponseDecisionReview.fallback_owner. Distinct fallback team pinned when this
-    episode began; future policy edits do not rewrite it."""
+    """ OperationWorkflowReviewResponseDecisionReview.fallback_owner. Distinct fallback team pinned when this
+    episode began; future policy edits do not rewrite it. """
     previous_owner: str | Unset = UNSET
-    """OperationWorkflowReviewResponseDecisionReview.previous_owner. Responsible team immediately before the
-    deadline evaluation."""
+    """ OperationWorkflowReviewResponseDecisionReview.previous_owner. Responsible team immediately before the
+    deadline evaluation. """
     owner: str | Unset = UNSET
-    """OperationWorkflowReviewResponseDecisionReview.owner. Responsible team after the deadline evaluation, whether
-    handoff occurred or was protected."""
+    """ OperationWorkflowReviewResponseDecisionReview.owner. Responsible team after the deadline evaluation, whether
+    handoff occurred or was protected. """
     reassigned: bool | Unset = UNSET
-    """OperationWorkflowReviewResponseDecisionReview.reassigned. Whether the overdue evaluation transferred both
-    response and inbox ownership."""
+    """ OperationWorkflowReviewResponseDecisionReview.reassigned. Whether the overdue evaluation transferred both
+    response and inbox ownership. """
     due_at: datetime.datetime | Unset = UNSET
-    """OperationWorkflowReviewResponseDecisionReview.due_at. Immutable deadline pinned from required_at and the
-    response review window; legacy flags are backfilled."""
+    """ OperationWorkflowReviewResponseDecisionReview.due_at. Immutable deadline pinned from required_at and the
+    response review window; legacy flags are backfilled. """
     deadline_notified_at: datetime.datetime | Unset = UNSET
-    """OperationWorkflowReviewResponseDecisionReview.deadline_notified_at. One-time overdue alert marker;
-    acknowledgment and ordinary edits do not fulfill revalidation."""
+    """ OperationWorkflowReviewResponseDecisionReview.deadline_notified_at. One-time overdue alert marker;
+    acknowledgment and ordinary edits do not fulfill revalidation. """
 
     def to_dict(self) -> dict[str, Any]:
         decision_at = self.decision_at.isoformat()

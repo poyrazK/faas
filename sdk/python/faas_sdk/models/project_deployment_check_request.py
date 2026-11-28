@@ -34,8 +34,8 @@ class ProjectDeploymentCheckRequest:
     stabilize: bool | Unset = UNSET
     sync_config: bool | Unset = UNSET
     release_config: Any | Unset = UNSET
-    """Complete variable sets and optional staged secret version references for selected workloads; omitted
-    snapshots inherit prior release values."""
+    """ Complete variable sets and optional staged secret version references for selected workloads; omitted
+    snapshots inherit prior release values. """
     workloads: list[ProjectDeploymentCheckWorkload] | Unset = UNSET
     managed: list[str] | Unset = UNSET
 

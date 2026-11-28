@@ -35,24 +35,24 @@ class OperationWorkflowRetainedMilestone:
     """
 
     requirement: OperationWorkflowRetainedMilestoneRequirement
-    """Source operation and milestone bound to a declared transaction-backed step of the selected workflow
-    contract."""
+    """ Source operation and milestone bound to a declared transaction-backed step of the selected workflow
+    contract. """
     status: OperationWorkflowRetainedMilestoneStatus
     recovery: OperationWorkflowPrerequisiteRecovery | Unset = UNSET
-    """Application-owned steps to restore a missing or unusable retained prerequisite. Derived from the pinned
+    """ Application-owned steps to restore a missing or unusable retained prerequisite. Derived from the pinned
     selector; absent for verified evidence. This is guidance and does not establish that the producer operation is
     currently executable. Steps are ordered perform_operation then publish_milestone then recheck_readiness.
     Publication must use the same ownership boundary and workflow instance and contract version. Freshness limits
-    still apply."""
+    still apply. """
     freshness: OperationWorkflowRetainedMilestoneFreshness | Unset = UNSET
-    """Evidence age evaluated at the shared server timestamp. Expiry is inclusive; missing evidence omits expiry
-    and age fields. Remaining seconds round up while eligible and are zero after expiry."""
+    """ Evidence age evaluated at the shared server timestamp. Expiry is inclusive; missing evidence omits expiry
+    and age fields. Remaining seconds round up while eligible and are zero after expiry. """
     invalidation: OperationWorkflowRetainedMilestoneInvalidation | Unset = UNSET
-    """Identity of the retained fact that invalidated a prerequisite by business occurrence time. Equal occurrence
+    """ Identity of the retained fact that invalidated a prerequisite by business occurrence time. Equal occurrence
     timestamps invalidate conservatively; a later prerequisite fact can satisfy the requirement again. Normal
-    retention applies to both sources."""
+    retention applies to both sources. """
     evidence: OperationWorkflowInstanceMilestoneRef | Unset = UNSET
-    """Identity and occurrence and publication times of a milestone observed for a declared workflow step."""
+    """ Identity and occurrence and publication times of a milestone observed for a declared workflow step. """
 
     def to_dict(self) -> dict[str, Any]:
         requirement = self.requirement.to_dict()

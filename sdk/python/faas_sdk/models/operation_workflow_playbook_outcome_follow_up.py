@@ -21,20 +21,20 @@ class OperationWorkflowPlaybookOutcomeFollowUp:
     """
 
     outcome_code: str
-    """OperationWorkflowPlaybookOutcomeFollowUp.outcome_code. Exact pinned outcome associated with this list."""
+    """ OperationWorkflowPlaybookOutcomeFollowUp.outcome_code. Exact pinned outcome associated with this list. """
     observation: OperationWorkflowPlaybookBusinessOutcome
-    """OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen
+    """ OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen
     playbook expectation. Independent of human completion and evidence satisfaction; changed guidance never silently
-    changes the expected outcome."""
+    changes the expected outcome. """
     items: list[OperationWorkflowPlaybookProgressItem]
-    """OperationWorkflowPlaybookOutcomeFollowUp.items. Pinned ordered steps with scoped evidence references and
-    human review stamps."""
+    """ OperationWorkflowPlaybookOutcomeFollowUp.items. Pinned ordered steps with scoped evidence references and
+    human review stamps. """
     completed_count: int
-    """OperationWorkflowPlaybookOutcomeFollowUp.completed_count. Reviewed completed steps, independent of original
-    checklist completion."""
+    """ OperationWorkflowPlaybookOutcomeFollowUp.completed_count. Reviewed completed steps, independent of original
+    checklist completion. """
     checklist_complete: bool
-    """OperationWorkflowPlaybookOutcomeFollowUp.checklist_complete. All declared steps reviewed complete; never
-    proves application state or execution."""
+    """ OperationWorkflowPlaybookOutcomeFollowUp.checklist_complete. All declared steps reviewed complete; never
+    proves application state or execution. """
 
     def to_dict(self) -> dict[str, Any]:
         outcome_code = self.outcome_code

@@ -25,7 +25,7 @@ class FinancialPriceContract:
     """Historical activation of recorded account pricing."""
 
     price: FinancialPrice
-    """Immutable version of a meter's exact price and allowance terms."""
+    """ Immutable version of a meter's exact price and allowance terms. """
     plan: FinancialPriceContractPlan
     effective_from: datetime.datetime
     delivery_mode: FinancialPriceContractDeliveryMode

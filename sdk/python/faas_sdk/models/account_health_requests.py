@@ -19,13 +19,13 @@ class AccountHealthRequests:
     """API requests Gregale refused for the account in the recent window."""
 
     window_hours: int
-    """Length of the window in hours."""
+    """ Length of the window in hours. """
     total: int
-    """Refused requests in the window."""
+    """ Refused requests in the window. """
     by_code: list[AccountHealthCode]
-    """Counts by problem code, most frequent first, at most 10."""
+    """ Counts by problem code, most frequent first, at most 10. """
     recent: list[AccountHealthRequest]
-    """Most recent refused requests, at most 20."""
+    """ Most recent refused requests, at most 20. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

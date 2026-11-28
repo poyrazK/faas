@@ -39,129 +39,130 @@ class PlanWorkload:
 
     name: str
     root_dir: str
-    """Effective build context inside the uploaded repository archive. Workspace manifests and sibling packages
-    remain available outside this directory."""
+    """ Effective build context inside the uploaded repository archive. Workspace manifests and sibling packages
+    remain available outside this directory. """
     command: list[str]
     ports: list[int]
     public_url: str | Unset = UNSET
-    """Reviewed public HTTPS base URL derived from this app allocation and installation domain. Absent when
-    wildcard app URLs are disabled."""
+    """ Reviewed public HTTPS base URL derived from this app allocation and installation domain. Absent when
+    wildcard app URLs are disabled. """
     public_auth_mode: str | Unset = UNSET
-    """Public URL auth the app will have after apply (bearer, basic, ...), from the existing app or the plan
-    default for a new app. Omitted when the URL accepts anonymous requests."""
+    """ Public URL auth the app will have after apply (bearer, basic, ...), from the existing app or the plan
+    default for a new app. Omitted when the URL accepts anonymous requests. """
     app_slug: str | Unset = UNSET
-    """Reviewed Gregale app name. Repository name, dependencies and configuration keys retain their original
+    """ Reviewed Gregale app name. Repository name, dependencies and configuration keys retain their original
     identity. Present for migration scans, existing allocations, and new workloads whose name cannot be a slug,
-    which get the project-prefixed name."""
+    which get the project-prefixed name. """
     platform_tenant_required: bool | Unset = UNSET
-    """Requested customer identity policy from Compose x-gregale-platform-tenant-required or the request override.
-    Omitted preserves existing app policy; new apps default to false."""
+    """ Requested customer identity policy from Compose x-gregale-platform-tenant-required or the request override.
+    Omitted preserves existing app policy; new apps default to false. """
     visibility: PlanWorkloadVisibility | Unset = UNSET
-    """Present when the app is or will be internal (no public route): an existing internal app, or a new Compose
-    service without `ports:`. Omitted means public."""
+    """ Present when the app is or will be internal (no public route): an existing internal app, or a new Compose
+    service without `ports:`. Omitted means public. """
     access: PlanWorkloadAccess | Unset = UNSET
-    """Declared access to the service's public URL (`x-gregale-access` in Compose or
+    """ Declared access to the service's public URL (`x-gregale-access` in Compose or
     `project.services.<name>.access` in gregale.yaml): `public` needs no Gregale API key, `key` needs one. Every
-    production deploy applies it. Omitted when the source declares none."""
+    production deploy applies it. Omitted when the source declares none. """
     dockerfile: str | Unset = UNSET
     image: str | Unset = UNSET
-    """Normalized prebuilt OCI image for a workload without build. Tags are resolved and pinned by the image worker
+    """ Normalized prebuilt OCI image for a workload without build. Tags are resolved and pinned by the image worker
     before materialization; stateful images remain managed requirements. Image deployments return a deployment_id
-    without a build_id."""
+    without a build_id. """
     image_healthcheck: ComposeHealthcheck | Unset = UNSET
-    """Partial Compose override for a prebuilt image HEALTHCHECK. Empty test and zero timing/retry values inherit
+    """ Partial Compose override for a prebuilt image HEALTHCHECK. Empty test and zero timing/retry values inherit
     image settings. NONE disables the check. Durations retain nanosecond precision; positive durations must be at
-    least 1ms."""
+    least 1ms. """
     image_process: ComposeProcess | Unset = UNSET
-    """Compose process overrides for a prebuilt image. Omitted fields inherit the image's ENTRYPOINT, USER, WORKDIR
-    and stop settings."""
+    """ Compose process overrides for a prebuilt image. Omitted fields inherit the image's ENTRYPOINT, USER, WORKDIR
+    and stop settings. """
     build_target: str | Unset = UNSET
-    """Dockerfile stage a source-built Compose service builds (build.target). Omitted builds the final stage."""
+    """ Dockerfile stage a source-built Compose service builds (build.target). Omitted builds the final stage. """
     build_args: list[str] | Unset = UNSET
-    """Names of the Compose build.args passed to the Dockerfile build, sorted. Values are not returned."""
+    """ Names of the Compose build.args passed to the Dockerfile build, sorted. Values are not returned. """
     go_command: str | Unset = UNSET
-    """The cmd/<name> main package this service builds from the root of a Go module with several commands."""
+    """ The cmd/<name> main package this service builds from the root of a Go module with several commands. """
     secret_files: list[SecretFile] | Unset = UNSET
-    """Compose secrets written to /run/secrets."""
+    """ Compose secrets written to /run/secrets. """
     resources: ComposeResources | Unset = UNSET
-    """A Compose service's deploy.replicas and deploy.resources.limits, converted to app settings. Omitted fields
-    are undeclared and keep the app's own settings."""
+    """ A Compose service's deploy.replicas and deploy.resources.limits, converted to app settings. Omitted fields
+    are undeclared and keep the app's own settings. """
     depends_on: list[str] | Unset = UNSET
-    """Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects
-    GREGALE_SERVICE_<NAME>_URL plus GREGALE_SERVICE_<NAME>_HTTPS_URL for workload dependencies."""
+    """ Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects
+    GREGALE_SERVICE_<NAME>_URL plus GREGALE_SERVICE_<NAME>_HTTPS_URL for workload dependencies. """
     depends_on_conditions: PlanWorkloadDependsOnConditions | Unset = UNSET
-    """Explicit Compose dependency conditions. service_started retains admission ordering; service_healthy gates
-    release on the captured same-project, same-environment dependency deployment."""
+    """ Explicit Compose dependency conditions. service_started retains admission ordering; service_healthy gates
+    release on the captured same-project, same-environment dependency deployment. """
     uses: WorkloadUses | Unset = UNSET
-    """A service's cross-app grants from gregale.yaml: what its workload token may call on other apps of the same
-    account."""
+    """ A service's cross-app grants from gregale.yaml: what its workload token may call on other apps of the same
+    account. """
     release_command: str | Unset = UNSET
-    """Command the service runs once before each of its releases goes live (shell string, or exec-form argv joined
-    by spaces). Omitted when it declares none."""
+    """ Command the service runs once before each of its releases goes live (shell string, or exec-form argv joined
+    by spaces). Omitted when it declares none. """
     release_command_source: str | Unset = UNSET
-    """Where release_command is declared: a Compose service the workload waits for with
-    service_completed_successfully, a Procfile release: process, or gregale.yaml release.command."""
+    """ Where release_command is declared: a Compose service the workload waits for with
+    service_completed_successfully, a Procfile release: process, or gregale.yaml release.command. """
     service_binding_policy: ServiceBindingPolicy | Unset = UNSET
-    """Caller-side authorization policy for internal service requests. `account` preserves same-account
+    """ Caller-side authorization policy for internal service requests. `account` preserves same-account
     reachability; `declared` permits only targets present in the caller's service bindings; `project` also permits
-    every service in the caller's own project."""
+    every service in the caller's own project. """
     service_reliability: ServiceReliabilityPolicies | Unset = UNSET
-    """Map of declared target service names to caller-owned reliability policies. Only names in this app's service
-    bindings may appear."""
+    """ Map of declared target service names to caller-owned reliability policies. Only names in this app's service
+    bindings may appear. """
     service_binding_transport: ServiceBindingTransport | Unset = UNSET
-    """Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private
-    `.internal` alias; `http` preserves the legacy `.svc.gregale` endpoint."""
+    """ Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private
+    `.internal` alias; `http` preserves the legacy `.svc.gregale` endpoint. """
     preview_service_calls_policy: PreviewServiceCallsPolicy | Unset = UNSET
-    """Production target policy for internal service calls from preview apps. `allow` preserves existing behavior;
-    `deny` rejects preview callers before waking the target."""
+    """ Production target policy for internal service calls from preview apps. `allow` preserves existing behavior;
+    `deny` rejects preview callers before waking the target. """
     app_protocol: str | Unset = UNSET
-    """Protocol from Compose `x-gregale-app-protocol` (`http1`, `http2` or `grpc`). Omitted when the file sets
-    none."""
+    """ Protocol from Compose `x-gregale-app-protocol` (`http1`, `http2` or `grpc`). Omitted when the file sets
+    none. """
     streaming: bool | Unset = UNSET
-    """Compose `x-gregale-streaming`. Omitted when the file sets none."""
+    """ Compose `x-gregale-streaming`. Omitted when the file sets none. """
     wake_ahead: bool | Unset = UNSET
-    """Compose `x-gregale-wake-ahead`. Omitted when the file sets none."""
+    """ Compose `x-gregale-wake-ahead`. Omitted when the file sets none. """
     allowed_service_callers: list[str] | Unset = UNSET
-    """Target-side service allowlist from Compose `x-gregale-allow-callers`. Omitted permits same-account callers;
-    an empty array denies all."""
+    """ Target-side service allowlist from Compose `x-gregale-allow-callers`. Omitted permits same-account callers;
+    an empty array denies all. """
     allowed_service_call_scopes: ServiceCallerScopes | Unset = UNSET
-    """Target-owned service authorization map from logical caller app name to allowed HTTP methods and path
-    prefixes. When present, callers missing from the map are denied."""
+    """ Target-owned service authorization map from logical caller app name to allowed HTTP methods and path
+    prefixes. When present, callers missing from the map are denied. """
     class_: PlanWorkloadClass | Unset = UNSET
     schedule: str | Unset = UNSET
-    """cron expression when declared (CronJob, render, serverless)"""
+    """ cron expression when declared (CronJob, render, serverless) """
     env_keys: list[str] | Unset = UNSET
-    """KEYS only — never values; forbids logging secrets"""
+    """ KEYS only — never values; forbids logging secrets """
     required_env_keys: list[str] | Unset = UNSET
-    """Explicit names from .gregale/required-secrets.json. Detected env_keys alone do not establish requirements."""
+    """ Explicit names from .gregale/required-secrets.json. Detected env_keys alone do not establish requirements.
+    """
     unset_env_keys: list[str] | Unset = UNSET
-    """Names from env_keys and required_env_keys that will have no value in the selected environment: not
-    configured on the app and not provided by the platform. Names only, never values."""
+    """ Names from env_keys and required_env_keys that will have no value in the selected environment: not
+    configured on the app and not provided by the platform. Names only, never values. """
     unset_env_key_reasons: PlanWorkloadUnsetEnvKeyReasons | Unset = UNSET
-    """For an unset_env_keys name with a Compose value, why that value is not imported. Never values."""
+    """ For an unset_env_keys name with a Compose value, why that value is not imported. Never values. """
     source_hosts: list[PlanSourceHost] | Unset = UNSET
-    """String literals in the workload's source that dial another service by its Compose name, which does not
-    resolve on Gregale. At most a few per workload."""
+    """ String literals in the workload's source that dial another service by its Compose name, which does not
+    resolve on Gregale. At most a few per workload. """
     imported_env_keys: list[str] | Unset = UNSET
-    """Compose environment names whose plain values apply will write, because the project sets x-gregale-env-
-    import: true and they are unset. Names only."""
+    """ Compose environment names whose plain values apply will write, because the project sets x-gregale-env-
+    import: true and they are unset. Names only. """
     source: str | Unset = UNSET
-    """detector provenance, e.g. compose.yaml: api"""
+    """ detector provenance, e.g. compose.yaml: api """
     tier: PlanWorkloadTier | Unset = UNSET
     action: PlanWorkloadAction | Unset = UNSET
-    """Blast-radius projection. create = workload is new to the account; update = existing app matches (root_dir,
-    name)."""
+    """ Blast-radius projection. create = workload is new to the account; update = existing app matches (root_dir,
+    name). """
     existing_app_id: str | Unset = UNSET
-    """App row ID the update targets. Empty iff action == create."""
+    """ App row ID the update targets. Empty iff action == create. """
     detected_by: PlanDetectedBy | Unset = UNSET
-    """Structured detection trace for one workload.
+    """ Structured detection trace for one workload.
     `source` on PlanWorkload carries the same provenance as free
     text ("compose.yaml: api"); this is the machine-readable form
     so a client can branch on the detector without parsing it.
 
     Additive and optional: absent on any response the server did
     not populate, so existing consumers are unaffected.
-    """
+     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

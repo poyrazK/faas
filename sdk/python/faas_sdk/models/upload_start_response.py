@@ -20,11 +20,11 @@ class UploadStartResponse:
 
     upload_id: str
     chunk_size: int
-    """Server-decided chunk size in bytes. Default 8 MiB; 16 MiB for Scale."""
+    """ Server-decided chunk size in bytes. Default 8 MiB; 16 MiB for Scale. """
     total_size: int
-    """Echo of the requested total_size for client confirmation."""
+    """ Echo of the requested total_size for client confirmation. """
     expires_at: datetime.datetime
-    """ISO 8601 UTC timestamp; PATCH after this returns 410 Gone."""
+    """ ISO 8601 UTC timestamp; PATCH after this returns 410 Gone. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

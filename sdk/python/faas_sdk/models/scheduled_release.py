@@ -33,7 +33,7 @@ class ScheduledRelease:
     updated_at: datetime.datetime
     revision: int | Unset = UNSET
     canary: CanaryPresetSpec | Unset = UNSET
-    """The canary ladder a customer asks for on a deploy (A + production-leveling
+    """ The canary ladder a customer asks for on a deploy (A + production-leveling
     Stream F). Preset is the catalog name (none/slow/balanced/aggressive/1-10-50-100/adaptive/
     custom). When Preset is 'custom', Stages is the
     customer-supplied ladder (each entry is percent +
@@ -43,12 +43,12 @@ class ScheduledRelease:
     added) is additive on the consumer side because the
     prior StepDurations field was declared-but-dead — no
     pre-PR client ever sent it.
-    """
+     """
     override_freeze: str | Unset = UNSET
-    """The reason given for releasing into the freezes in overridden_freezes."""
+    """ The reason given for releasing into the freezes in overridden_freezes. """
     overridden_freezes: list[UUID] | Unset = UNSET
     outcome_code: str | Unset = UNSET
-    """Why a schedule ended without starting, such as release_frozen or not_ready."""
+    """ Why a schedule ended without starting, such as release_frozen or not_ready. """
     outcome_detail: str | Unset = UNSET
     started_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

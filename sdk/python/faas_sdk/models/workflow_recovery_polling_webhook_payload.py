@@ -44,7 +44,7 @@ class WorkflowRecoveryPollingWebhookPayload:
     observed_at: datetime.datetime
     inspection_url: str
     monitoring_only: bool
-    """Always true; successful polling does not prove successful workflow execution."""
+    """ Always true; successful polling does not prove successful workflow execution. """
     review_id: UUID | Unset = UNSET
     retry_at: datetime.datetime | Unset = UNSET
 

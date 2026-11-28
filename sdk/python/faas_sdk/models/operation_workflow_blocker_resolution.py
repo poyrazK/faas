@@ -23,25 +23,25 @@ class OperationWorkflowBlockerResolution:
     code: str
     operation: str
     description: str
-    """Public UTF-8 explanation limited to 512 bytes without control characters."""
+    """ Public UTF-8 explanation limited to 512 bytes without control characters. """
     blocker_operation_id: UUID
     blocker_report_id: UUID
     blocker_revision: int
-    """Source revision must precede the resolution report revision."""
+    """ Source revision must precede the resolution report revision. """
     verification_milestone_id: UUID | Unset = UNSET
-    """Exact expected milestone ID paired with verification_milestone_name. Missing retained evidence leaves
-    verification pending."""
+    """ Exact expected milestone ID paired with verification_milestone_name. Missing retained evidence leaves
+    verification pending. """
     verification_milestone_name: str | Unset = UNSET
-    """Expected milestone name paired with its exact ID."""
+    """ Expected milestone name paired with its exact ID. """
     verification_operation_id: UUID | Unset = UNSET
-    """Optional evidence Operation ID. Defaults to the Operation containing this resolution. Evidence must match
-    the same account/customer/app/scope/subject/workflow-instance/contract boundary."""
+    """ Optional evidence Operation ID. Defaults to the Operation containing this resolution. Evidence must match
+    the same account/customer/app/scope/subject/workflow-instance/contract boundary. """
     verification_owner: str | Unset = UNSET
-    """Public application-assigned verification owner limited to 128 UTF-8 bytes without control characters.
-    Requires a verification milestone. Omitted means unassigned."""
+    """ Public application-assigned verification owner limited to 128 UTF-8 bytes without control characters.
+    Requires a verification milestone. Omitted means unassigned. """
     resolved_by: str | Unset = UNSET
-    """Optional public application-reported resolver identifier or team, limited to 128 UTF-8 bytes without control
-    characters. This is not verified platform identity."""
+    """ Optional public application-reported resolver identifier or team, limited to 128 UTF-8 bytes without control
+    characters. This is not verified platform identity. """
 
     def to_dict(self) -> dict[str, Any]:
         code = self.code

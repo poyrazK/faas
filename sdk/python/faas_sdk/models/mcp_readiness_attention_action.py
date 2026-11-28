@@ -28,17 +28,17 @@ class MCPReadinessAttentionAction:
     """
 
     request_id: UUID
-    """Reuse this UUID and identical body when retrying the same decision."""
+    """ Reuse this UUID and identical body when retrying the same decision. """
     expected_version: int
-    """Current incident attention version; zero is valid."""
+    """ Current incident attention version; zero is valid. """
     action: MCPReadinessAttentionActionAction
     reason: str
-    """Nonblank explanation limited to 500 UTF-8 bytes."""
+    """ Nonblank explanation limited to 500 UTF-8 bytes. """
     expires_at: datetime.datetime | Unset = UNSET
-    """Optional absolute acknowledgement expiry within the next 30 days."""
+    """ Optional absolute acknowledgement expiry within the next 30 days. """
     reminder_policy: MCPReadinessReminderPolicy | Unset = UNSET
-    """Per-incident lifetime creation budget. Both zero disables; otherwise interval is 60–86400 seconds and budget
-    is 1–10. Reconfiguration never resets the count."""
+    """ Per-incident lifetime creation budget. Both zero disables; otherwise interval is 60–86400 seconds and budget
+    is 1–10. Reconfiguration never resets the count. """
 
     def to_dict(self) -> dict[str, Any]:
         request_id = str(self.request_id)

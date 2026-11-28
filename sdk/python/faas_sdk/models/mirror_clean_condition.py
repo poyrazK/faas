@@ -14,9 +14,9 @@ class MirrorCleanCondition:
     """Mirror quality gate for a canary stage."""
 
     min_invocations: int
-    """Minimum completed mirror comparisons required in the window."""
+    """ Minimum completed mirror comparisons required in the window. """
     window_s: int
-    """Trailing mirror-summary window in seconds."""
+    """ Trailing mirror-summary window in seconds. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -34,21 +34,21 @@ class MCPReadinessNotificationQueue:
     enabled: bool
     outstanding_count: int
     blocked_count: int
-    """Events newer than the oldest event; inspect destinations for actual receiver blocking."""
+    """ Events newer than the oldest event; inspect destinations for actual receiver blocking. """
     oldest_age_seconds: float
     state: MCPReadinessNotificationQueueState
     can_retry: bool
-    """Snapshot hint; the action transaction rechecks current eligibility."""
+    """ Snapshot hint; the action transaction rechecks current eligibility. """
     can_abandon: bool
-    """Whether the current snapshot permits permanent abandonment."""
+    """ Whether the current snapshot permits permanent abandonment. """
     destinations: list[MCPReadinessDestinationQueue] | Unset = UNSET
-    """Ordered receiver queues including fallback reservations awaiting the primary outcome."""
+    """ Ordered receiver queues including fallback reservations awaiting the primary outcome. """
     mcp_readiness_scope: str | Unset = UNSET
-    """Omitted for an all-environment rule."""
+    """ Omitted for an all-environment rule. """
     failure_kind: MCPReadinessNotificationQueueFailureKind | Unset = UNSET
-    """Safe failure classification without webhook URLs or remote response bodies."""
+    """ Safe failure classification without webhook URLs or remote response bodies. """
     head: MCPReadinessIncidentEvent | Unset = UNSET
-    """Readiness incident transition or continuation with current notification status."""
+    """ Readiness incident transition or continuation with current notification status. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

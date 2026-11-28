@@ -12,8 +12,8 @@ T = TypeVar("T", bound="ParkAppIfDeploymentBody")
 @_attrs_define
 class ParkAppIfDeploymentBody:
     expected_deployment_id: UUID
-    """Compare the latest app deployment atomically with parking. A changed or missing deployment returns 409
-    without parking; resend the same guard on drain retries."""
+    """ Compare the latest app deployment atomically with parking. A changed or missing deployment returns 409
+    without parking; resend the same guard on drain retries. """
 
     def to_dict(self) -> dict[str, Any]:
         expected_deployment_id = str(self.expected_deployment_id)

@@ -17,14 +17,14 @@ class APISandboxCreateRequest:
     """Configuration for a fresh copy of an API release."""
 
     smoke_path: str | Unset = UNSET
-    """Optional absolute path on the sandbox host to check with GET. Use the same value when retrying with this
-    sandbox UUID."""
+    """ Optional absolute path on the sandbox host to check with GET. Use the same value when retrying with this
+    sandbox UUID. """
     scenario_revision: UUID | Unset = UNSET
-    """Copy the selected app library or release scenario revision into the sandbox. Reuse this value when retrying
-    the same sandbox UUID."""
+    """ Copy the selected app library or release scenario revision into the sandbox. Reuse this value when retrying
+    the same sandbox UUID. """
     partner_label: str | Unset = UNSET
-    """Optional recipient label. Requires scenario_revision and creates a private copy. Raw partner progress is
-    available to the owner."""
+    """ Optional recipient label. Requires scenario_revision and creates a private copy. Raw partner progress is
+    available to the owner. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

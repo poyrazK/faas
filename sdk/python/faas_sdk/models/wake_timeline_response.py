@@ -22,19 +22,19 @@ class WakeTimelineResponse:
     """Envelope for `GET /v1/apps/{slug}/wakes/{wake_id}/timeline`."""
 
     wake_id: str
-    """Echo of the path-segment wake_id."""
+    """ Echo of the path-segment wake_id. """
     app_id: UUID
-    """Resolved app id (the slug's owning app)."""
+    """ Resolved app id (the slug's owning app). """
     events: list[WakeTimelineEvent]
     limit: int
-    """Effective limit applied (always 1..1000)."""
+    """ Effective limit applied (always 1..1000). """
     next_cursor: str | Unset = UNSET
-    """Legacy timestamp hint, sent back as since. Can skip equal-time events. keyset_v1 uses page.next_cursor
-    instead."""
+    """ Legacy timestamp hint, sent back as since. Can skip equal-time events. keyset_v1 uses page.next_cursor
+    instead. """
     page: WakeTimelinePage | Unset = UNSET
-    """Opt-in keyset_v1 metadata. App scoping and canonical boot selection precede the exclusive timestamp/event-ID
+    """ Opt-in keyset_v1 metadata. App scoping and canonical boot selection precede the exclusive timestamp/event-ID
     seek and page limit. Complete means no further retained row in this live read, not complete capture or a frozen
-    snapshot. Native event IDs stay inside the opaque cursor."""
+    snapshot. Native event IDs stay inside the opaque cursor. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

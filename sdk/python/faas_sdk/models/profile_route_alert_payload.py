@@ -48,15 +48,15 @@ class ProfileRouteAlertPayload:
     source: ProfileRouteAlertPayloadSource
     checked_at: datetime.datetime
     baseline: ProfileQuery
-    """Authorized deployment CPU capture window."""
+    """ Authorized deployment CPU capture window. """
     candidate: ProfileQuery
-    """Authorized deployment CPU capture window."""
+    """ Authorized deployment CPU capture window. """
     route_check: ProfileRouteRegression
-    """Retained advisory route-associated sampled CPU/request observation. Missing attribution, sparse requests or
-    inadequate capture coverage produces insufficient_data. No rollout decision is changed."""
+    """ Retained advisory route-associated sampled CPU/request observation. Missing attribution, sparse requests or
+    inadequate capture coverage produces insufficient_data. No rollout decision is changed. """
     evidence_path: str
     comparison_url: str | Unset = UNSET
-    """Dashboard link with the exact route, baseline and candidate windows and selected route call path."""
+    """ Dashboard link with the exact route, baseline and candidate windows and selected route call path. """
     application_frames: list[ProfileCallPathFrame] | Unset = UNSET
     investigation_path: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

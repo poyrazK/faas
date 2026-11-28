@@ -13,7 +13,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from queue import Empty, Queue
 
 import pytest
-
 from faas_sdk.preview.object_storage_runtime import ObjectStorageBinding, ObjectStorageBindingError
 from faas_sdk.secret_reload_runtime import (
     SecretConsumer,

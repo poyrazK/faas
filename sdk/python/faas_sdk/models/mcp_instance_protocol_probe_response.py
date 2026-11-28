@@ -25,8 +25,8 @@ class MCPInstanceProtocolProbeResponse:
     protocol_version: str | Unset = UNSET
     session_id: str | Unset = UNSET
     session_id_present: bool | Unset = UNSET
-    """True when the workload returned an MCP-Session-Id header, including when its value exceeded the response
-    header cap."""
+    """ True when the workload returned an MCP-Session-Id header, including when its value exceeded the response
+    header cap. """
     body_too_large: bool | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

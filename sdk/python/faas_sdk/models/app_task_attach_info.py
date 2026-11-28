@@ -19,9 +19,9 @@ class AppTaskAttachInfo:
     """One-time attach credential for an interactive app task. Returned only in the create response."""
 
     token: str
-    """Send in X-Gregale-Attach-Token with the account credential; consumed by the first attach."""
+    """ Send in X-Gregale-Attach-Token with the account credential; consumed by the first attach. """
     path: str
-    """Gateway WebSocket path for this task."""
+    """ Gateway WebSocket path for this task. """
     subprotocol: AppTaskAttachInfoSubprotocol
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

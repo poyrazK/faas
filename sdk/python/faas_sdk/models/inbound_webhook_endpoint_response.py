@@ -36,7 +36,7 @@ class InboundWebhookEndpointResponse:
     created_at: datetime.datetime
     updated_at: datetime.datetime
     endpoint_url: str | Unset = UNSET
-    """One-time-disclosed public provider URL, present only on create."""
+    """ One-time-disclosed public provider URL, present only on create. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

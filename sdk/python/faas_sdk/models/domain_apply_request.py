@@ -17,8 +17,8 @@ class DomainApplyRequest:
     """Apply exactly the reviewed bindings. Confirmation and the fingerprint from planDomains are required."""
 
     manifest: DomainManifest
-    """Versioned desired bindings. Only listed domains change; omission never removes a binding. At most 20
-    bindings in a 128 KiB request. Use a separate file from the application deployment manifest."""
+    """ Versioned desired bindings. Only listed domains change; omission never removes a binding. At most 20
+    bindings in a 128 KiB request. Use a separate file from the application deployment manifest. """
     expected_plan_sha256: str
     confirm: bool
 

@@ -2,6 +2,7 @@ package apidserver_test
 
 import (
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -76,5 +77,98 @@ func TestCapabilitiesFollowRuntimeGates(t *testing.T) {
 		if len(want) != 0 {
 			t.Fatalf("capabilities missing: %v", want)
 		}
+	}
+}
+
+// Prod hunt 2026-11-28: AI access tokens were listed as available and could
+// be created, while their documented host answered "No such app".
+func TestAIAccessTokensFollowThePublicHost(t *testing.T) {
+	for _, on := range []bool{true, false} {
+		var response api.CapabilitiesResponse
+		if err := json.Unmarshal(apidserver.CapabilitiesWithAIAccessTokenHost(on, api.PlanScale).Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, capability := range response.Capabilities {
+			if capability.Key != "ai-access-tokens" {
+				continue
+			}
+			found = true
+			// With the host on, the preview's platform flag (off on a bare
+			// server) still decides; it is never blamed on the host.
+			blamesHost := strings.Contains(capability.UnavailableDetail, "public host")
+			if on && blamesHost {
+				t.Errorf("host on: detail %q still blames the host", capability.UnavailableDetail)
+			}
+			if !on && (capability.Enabled || capability.UnavailableReason != api.CapabilityUnavailableRuntime || !blamesHost) {
+				t.Errorf("host off: enabled %t reason %q detail %q", capability.Enabled, capability.UnavailableReason, capability.UnavailableDetail)
+			}
+		}
+		if !found {
+			t.Fatal("ai-access-tokens missing from the capability list")
+		}
+	}
+
+	// A plan that excludes the gateway is told so, not that the host is off.
+	var free api.CapabilitiesResponse
+	if err := json.Unmarshal(apidserver.CapabilitiesWithAIAccessTokenHost(false, api.PlanFree).Body.Bytes(), &free); err != nil {
+		t.Fatal(err)
+	}
+	for _, capability := range free.Capabilities {
+		if capability.Key == "ai-access-tokens" && capability.UnavailableReason != api.CapabilityUnavailableRuntime &&
+			strings.Contains(capability.UnavailableDetail, "public host") {
+			t.Errorf("free plan: reason %q but detail %q blames the host", capability.UnavailableReason, capability.UnavailableDetail)
+		}
+	}
+
+	// Creating a token is refused while the host is off: it would have
+	// nowhere to be used.
+	if recorder, reached := apidserver.CreateAIAccessTokenWithHost(false); reached || recorder.Code != http.StatusForbidden ||
+		!strings.Contains(recorder.Body.String(), "public host") {
+		t.Errorf("host off: create reached %t, status %d, body %s", reached, recorder.Code, recorder.Body.String())
+	}
+	if _, reached := apidserver.CreateAIAccessTokenWithHost(true); !reached {
+		t.Error("host on: create did not reach the handler")
+	}
+}
+
+// Interactive sessions (exec -it, cp, port-forward, postgres connect) need
+// FAAS_INTERACTIVE_APP_TASKS on top of the app-task API; app-tasks alone used
+// to advertise them while every session answered 501.
+func TestInteractiveAppSessionsCapabilityFollowsItsGate(t *testing.T) {
+	read := func(appTasks, interactive bool) (tasks, sessions api.CapabilityStatus) {
+		t.Helper()
+		recorder := apidserver.CapabilitiesWithAppTaskGates(appTasks, interactive)
+		var response api.CapabilitiesResponse
+		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+			t.Fatalf("status %d: %v", recorder.Code, err)
+		}
+		for _, capability := range response.Capabilities {
+			switch capability.Key {
+			case "app-tasks":
+				tasks = capability
+			case "interactive-app-sessions":
+				sessions = capability
+			}
+		}
+		if tasks.Key == "" || sessions.Key == "" {
+			t.Fatalf("app-tasks or interactive-app-sessions missing from %d capabilities", len(response.Capabilities))
+		}
+		return tasks, sessions
+	}
+	if tasks, sessions := read(false, false); tasks.Enabled || sessions.Enabled {
+		t.Fatalf("app task API off: app-tasks=%v sessions=%v, want both off", tasks.Enabled, sessions.Enabled)
+	}
+	if _, sessions := read(false, true); sessions.Enabled {
+		t.Fatal("interactive sessions advertised while the app-task API is off")
+	}
+	tasks, sessions := read(true, false)
+	if sessions.Enabled {
+		t.Fatal("interactive sessions advertised while FAAS_INTERACTIVE_APP_TASKS is off")
+	}
+	tasksOnly := tasks.Enabled
+	tasks, sessions = read(true, true)
+	if sessions.Enabled != tasks.Enabled || tasks.Enabled != tasksOnly {
+		t.Fatalf("both gates on: app-tasks=%v sessions=%v (app-tasks alone %v); want sessions to follow app-tasks", tasks.Enabled, sessions.Enabled, tasksOnly)
 	}
 }

@@ -14,7 +14,7 @@ class PutAppEnvRequest:
     """Set an env var: plaintext value (persisted verbatim in app_envs, non-sensitive by contract)."""
 
     value: str
-    """Plaintext env-var value. Stored as-is; do NOT use this surface for credentials."""
+    """ Plaintext env-var value. Stored as-is; do NOT use this surface for credentials. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

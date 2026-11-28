@@ -13,7 +13,7 @@ class SetServiceWakeAheadRequest:
     """Turns service wake-ahead on or off for one app."""
 
     enabled: bool
-    """true to wake measured services ahead, false to wake them only when called."""
+    """ true to wake measured services ahead, false to wake them only when called. """
 
     def to_dict(self) -> dict[str, Any]:
         enabled = self.enabled

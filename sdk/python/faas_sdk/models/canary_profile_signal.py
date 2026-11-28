@@ -49,54 +49,54 @@ class CanaryProfileSignal:
     metric: CanaryProfileSignalMetric
     window_seconds: int
     options: ProfileRegressionOptions
-    """Threshold policy for sampled CPU per wall-clock second or per weighted observed request. Both relative and
+    """ Threshold policy for sampled CPU per wall-clock second or per weighted observed request. Both relative and
     selected-metric absolute increase thresholds must be met. CPU-per-request mode also requires retained request
     telemetry and its configured minimum request count in both deployment windows; absent or sparse counts are
     inconclusive. Request telemetry rows use minute-bucket timestamps, so counts near window boundaries can be
-    approximate and may be incomplete. Capture requirements apply separately to each profile window."""
+    approximate and may be incomplete. Capture requirements apply separately to each profile window. """
     evidence: list[ProfileRegressionEvidence]
     uncomparable_entries: int
     gate: ProfileCanaryGateState | Unset = UNSET
-    """Retained stage evidence and bounded route streaks used to qualify the profiling gate."""
+    """ Retained stage evidence and bounded route streaks used to qualify the profiling gate. """
     attribution: ProfileAttributionComparison | Unset = UNSET
-    """Captured route attribution quality comparison. An absolute labeled-share change of at least 20 percentage
+    """ Captured route attribution quality comparison. An absolute labeled-share change of at least 20 percentage
     points suppresses advisory route regression conclusions without changing aggregate results or rollout behavior.
-    Background work and traffic changes can also change labeled CPU share."""
+    Background work and traffic changes can also change labeled CPU share. """
     route_checks: list[ProfileRouteRegression] | Unset = UNSET
     request_mix: ProfileRequestMixSnapshot | Unset = UNSET
-    """Frozen observed telemetry summary, at most 16 KiB JSON. Completeness describes route/status aggregation, not
-    telemetry delivery. Readable with the assessment after raw request telemetry expires."""
+    """ Frozen observed telemetry summary, at most 16 KiB JSON. Completeness describes route/status aggregation, not
+    telemetry delivery. Readable with the assessment after raw request telemetry expires. """
     checked_at: datetime.datetime | Unset = UNSET
-    """Last completed assessment attempt, absent until the worker has queried both profile windows."""
+    """ Last completed assessment attempt, absent until the worker has queried both profile windows. """
     next_attempt_at: datetime.datetime | Unset = UNSET
-    """Scheduled first check or retry time while the result is pending."""
+    """ Scheduled first check or retry time while the result is pending. """
     completed_at: datetime.datetime | Unset = UNSET
     baseline: ProfileQuery | Unset = UNSET
-    """Authorized deployment CPU capture window."""
+    """ Authorized deployment CPU capture window. """
     candidate: ProfileQuery | Unset = UNSET
-    """Authorized deployment CPU capture window."""
+    """ Authorized deployment CPU capture window. """
     baseline_requests: int | Unset = UNSET
     candidate_requests: int | Unset = UNSET
     baseline_coverage: ProfileCoverage | Unset = UNSET
-    """Recorded collection evidence. Overlapping intervals count once; gaps can include idle time or loss. Failure
+    """ Recorded collection evidence. Overlapping intervals count once; gaps can include idle time or loss. Failure
     counts are a lower bound; losses before ingestion are unknown. Unavailable coverage must not be interpreted as
-    zero collection."""
+    zero collection. """
     candidate_coverage: ProfileCoverage | Unset = UNSET
-    """Recorded collection evidence. Overlapping intervals count once; gaps can include idle time or loss. Failure
+    """ Recorded collection evidence. Overlapping intervals count once; gaps can include idle time or loss. Failure
     counts are a lower bound; losses before ingestion are unknown. Unavailable coverage must not be interpreted as
-    zero collection."""
+    zero collection. """
     baseline_source: ProfileSource | Unset = UNSET
-    """Deployment-recorded GitHub provenance. Links use a full immutable commit SHA; uploaded or generated source
-    is not verified against that commit. Unavailable provenance is explicit."""
+    """ Deployment-recorded GitHub provenance. Links use a full immutable commit SHA; uploaded or generated source
+    is not verified against that commit. Unavailable provenance is explicit. """
     candidate_source: ProfileSource | Unset = UNSET
-    """Deployment-recorded GitHub provenance. Links use a full immutable commit SHA; uploaded or generated source
-    is not verified against that commit. Unavailable provenance is explicit."""
+    """ Deployment-recorded GitHub provenance. Links use a full immutable commit SHA; uploaded or generated source
+    is not verified against that commit. Unavailable provenance is explicit. """
     comparison_url: str | Unset = UNSET
-    """Dashboard link to load the exact stable and canary profile windows for a completed assessment."""
+    """ Dashboard link to load the exact stable and canary profile windows for a completed assessment. """
     total: ProfileRegressionMetric | Unset = UNSET
-    """Observed sampled CPU/s comparison, optionally with CPU seconds per weighted observed request.
+    """ Observed sampled CPU/s comparison, optionally with CPU seconds per weighted observed request.
     exceeds_threshold and relative_increase_percent use the metric selected by options. The relative percentage is
-    absent when that metric's baseline is zero."""
+    absent when that metric's baseline is zero. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

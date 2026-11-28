@@ -34,14 +34,14 @@ class OutboundAIBudgetThresholdWebhookPayload:
     budget: OutboundAIBudgetThresholdWebhookPayloadBudget
     app_id: None | UUID
     end_user: None | str
-    """The X-Gregale-AI-User value whose daily budget crossed the threshold."""
+    """ The X-Gregale-AI-User value whose daily budget crossed the threshold. """
     period_start: datetime.date
     threshold_percent: OutboundAIBudgetThresholdWebhookPayloadThresholdPercent
     limit: int
     used: int
     crossed_at: datetime.datetime
     tag: None | str
-    """The tag whose daily cost limit crossed the threshold."""
+    """ The tag whose daily cost limit crossed the threshold. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

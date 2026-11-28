@@ -28,7 +28,7 @@ class RouteGateDecision:
     reasons: list[str]
     check_queued: bool
     lifecycle_approval_ids: list[UUID] | Unset = UNSET
-    """Exact persisted successor-review receipts accepted inside this advance transaction."""
+    """ Exact persisted successor-review receipts accepted inside this advance transaction. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

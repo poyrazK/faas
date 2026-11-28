@@ -33,21 +33,21 @@ class FinancialBudgetResponse:
     account_id: UUID
     revision: int
     spec: FinancialBudgetSpec
-    """Customer budget intent; activation and enforcement are separately acknowledged."""
+    """ Customer budget intent; activation and enforcement are separately acknowledged. """
     created_at: datetime.datetime
     updated_at: datetime.datetime
     status: FinancialBudgetResponseStatus
     enforcement_ready: bool
-    """True when the selected stopping integration is available; actual per-target teardown is reported in
-    runtime.stops. Strict compute balances are reported in runtime.compute."""
+    """ True when the selected stopping integration is available; actual per-target teardown is reported in
+    runtime.stops. Strict compute balances are reported in runtime.compute. """
     reasons: list[str]
     deleted_at: datetime.datetime | Unset = UNSET
     notification_ready: bool | Unset = UNSET
-    """True for an enabled supported monitored policy; inspect runtime for evaluation freshness and delivery
-    status."""
+    """ True for an enabled supported monitored policy; inspect runtime for evaluation freshness and delivery
+    status. """
     runtime: FinancialBudgetRuntime | Unset = UNSET
-    """Evaluation and alerts cover the current revision and UTC month. Active manual stop decisions can carry over
-    from earlier months until a policy mutation releases that revision."""
+    """ Evaluation and alerts cover the current revision and UTC month. Active manual stop decisions can carry over
+    from earlier months until a policy mutation releases that revision. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

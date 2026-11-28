@@ -42,64 +42,64 @@ class OutboundIntegrationOffer:
     allowed_path_prefixes: list[str]
     enabled: bool
     runs_enabled: bool
-    """Whether account policy grants use by stateless Runs."""
+    """ Whether account policy grants use by stateless Runs. """
     credential_source: OutboundIntegrationOfferCredentialSource
-    """Who supplies the provider Authorization value."""
+    """ Who supplies the provider Authorization value. """
     credential_configured: bool
-    """Whether the selected source currently has a credential; never reveals its value."""
+    """ Whether the selected source currently has a credential; never reveals its value. """
     owner_kind: OutboundIntegrationOfferOwnerKind
-    """Whether the integration is operator-provisioned or customer-created."""
+    """ Whether the integration is operator-provisioned or customer-created. """
     daily_request_limit: int | None
-    """Effective per-integration UTC-day admitted-request limit; null means no configured limit."""
+    """ Effective per-integration UTC-day admitted-request limit; null means no configured limit. """
     request_policy: OutboundRequestPolicy
-    """Effective customer-selected per-integration policy, bounded by the account plan."""
+    """ Effective customer-selected per-integration policy, bounded by the account plan. """
     ai_provider: OutboundIntegrationOfferAiProvider | Unset = UNSET
-    """Present for AI gateway integrations. openai is the OpenAI-compatible wire format; the provider also selects
+    """ Present for AI gateway integrations. openai is the OpenAI-compatible wire format; the provider also selects
     how the managed credential is applied (header, AWS SigV4 for bedrock, Google service-account token for vertex)
-    and how token usage is read."""
+    and how token usage is read. """
     ai_daily_token_limit: int | None | Unset = UNSET
-    """UTC-day input plus output token limit; admission stops new calls once settled usage reaches it. null means
-    no limit."""
+    """ UTC-day input plus output token limit; admission stops new calls once settled usage reaches it. null means
+    no limit. """
     ai_daily_cost_limit_millicents: int | None | Unset = UNSET
-    """UTC-day cost limit priced from the integration's price list."""
+    """ UTC-day cost limit priced from the integration's price list. """
     ai_monthly_cost_limit_millicents: int | None | Unset = UNSET
-    """Calendar-month cost limit priced from the integration's price list."""
+    """ Calendar-month cost limit priced from the integration's price list. """
     ai_request_log_enabled: bool | Unset = UNSET
-    """Whether every settled AI call writes one metadata row to the request log."""
+    """ Whether every settled AI call writes one metadata row to the request log. """
     ai_request_log_content: bool | Unset = UNSET
-    """Whether logged calls also keep the first 32 KiB of their request and response bodies for 3 days."""
+    """ Whether logged calls also keep the first 32 KiB of their request and response bodies for 3 days. """
     ai_content_policy: OutboundAIContentPolicy | Unset = UNSET
-    """An integration's content guardrails. Each detector is off, redacts its findings before the request reaches
+    """ An integration's content guardrails. Each detector is off, redacts its findings before the request reaches
     the provider, or blocks the request. A request containing a blocked term, compared without case, is blocked. The
-    gateway checks the string values of JSON bodies and the text fields of forms."""
+    gateway checks the string values of JSON bodies and the text fields of forms. """
     ai_log_export: bool | Unset = UNSET
-    """Whether each settled app call writes one metadata line to the app's log drains."""
+    """ Whether each settled app call writes one metadata line to the app's log drains. """
     ai_allow_unmetered: bool | Unset = UNSET
-    """Whether writes the gateway can neither meter nor knows to be free go through, outside the caps."""
+    """ Whether writes the gateway can neither meter nor knows to be free go through, outside the caps. """
     ai_auto_prompt_cache: bool | Unset = UNSET
-    """Whether the gateway adds prompt-cache breakpoints to Claude requests that carry none."""
+    """ Whether the gateway adds prompt-cache breakpoints to Claude requests that carry none. """
     ai_semantic_cache: OutboundAISemanticCache | Unset = UNSET
-    """Answer a call from the response cache when its last user turn means the same as a cached call's and
+    """ Answer a call from the response cache when its last user turn means the same as a cached call's and
     everything else matches exactly. Pro and Scale plans; needs ai_provider and a response cache TTL. The embedding
     integration, one of the account's enabled OpenAI or Gemini integrations, embeds each candidate call on its own
     key, metered under the caller semantic_cache. A hit carries X-Gregale-AI-Cache semantic and X-Gregale-AI-
-    Similarity."""
+    Similarity. """
     ai_trace_max_calls: int | Unset = UNSET
-    """Calls each AI trace may make, settled and in flight. Absent when unlimited."""
+    """ Calls each AI trace may make, settled and in flight. Absent when unlimited. """
     ai_trace_max_cost_millicents: int | Unset = UNSET
-    """Cost each AI trace may reach, with live reservations. Absent when unlimited."""
+    """ Cost each AI trace may reach, with live reservations. Absent when unlimited. """
     ai_trace_max_repeated_tool_calls: int | Unset = UNSET
-    """Consecutive calls of a trace whose responses may request the same tools with the same arguments. Absent when
-    unlimited."""
+    """ Consecutive calls of a trace whose responses may request the same tools with the same arguments. Absent when
+    unlimited. """
     ai_user_daily_token_limit: int | None | Unset = UNSET
-    """UTC-day input plus output token limit for each end user named by X-Gregale-AI-User."""
+    """ UTC-day input plus output token limit for each end user named by X-Gregale-AI-User. """
     ai_user_daily_cost_limit_millicents: int | None | Unset = UNSET
-    """UTC-day cost limit for each end user named by X-Gregale-AI-User."""
+    """ UTC-day cost limit for each end user named by X-Gregale-AI-User. """
     ai_online_evaluation: OutboundAIOnlineEvaluation | Unset = UNSET
-    """Score sample_percent of answered app calls from 1 to 5 with judge_model through judge_integration_id, one of
-    the account's AI integrations, metered under the caller evaluation."""
+    """ Score sample_percent of answered app calls from 1 to 5 with judge_model through judge_integration_id, one of
+    the account's AI integrations, metered under the caller evaluation. """
     ai_quality_alerts: bool | Unset = UNSET
-    """Drift alerts on the integration's quality signals are on."""
+    """ Drift alerts on the integration's quality signals are on. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

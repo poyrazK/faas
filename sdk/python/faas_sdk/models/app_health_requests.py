@@ -29,8 +29,8 @@ class AppHealthRequests:
     server_errors: int
     error_rate_pct: float
     policy: AppHealthRequestPolicy
-    """Diagnostic severity defaults, independent of customer SLO configuration. Error thresholds require both
-    minimum request and server-error counts."""
+    """ Diagnostic severity defaults, independent of customer SLO configuration. Error thresholds require both
+    minimum request and server-error counts. """
 
     def to_dict(self) -> dict[str, Any]:
         known = self.known

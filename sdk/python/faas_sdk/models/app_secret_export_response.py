@@ -21,7 +21,7 @@ class AppSecretExportResponse:
     key: str
     scope: str
     ciphertext: str
-    """base64-encoded age-sealed envelope"""
+    """ base64-encoded age-sealed envelope """
     created_at: datetime.datetime
     updated_at: datetime.datetime
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

@@ -21,12 +21,12 @@ class DebugDependencyImpactEdge:
     """Bounded normalized parent-to-child dependency edge reconstructed from retained redacted span links."""
 
     from_: DebugCriticalPathSegment
-    """One redacted span identity in a canonical historical critical-path signature."""
+    """ One redacted span identity in a canonical historical critical-path signature. """
     to: DebugCriticalPathSegment
-    """One redacted span identity in a canonical historical critical-path signature."""
+    """ One redacted span identity in a canonical historical critical-path signature. """
     exemplars: list[DebugDependencyImpactExemplar]
-    """Bounded current, baseline, and error representatives. Each request_id resolves only to redacted debugger
-    evidence."""
+    """ Bounded current, baseline, and error representatives. Each request_id resolves only to redacted debugger
+    evidence. """
     calls: int
     error_calls: int
     error_rate_pct: float

@@ -25,11 +25,11 @@ class BindingRuntimeFreshness:
     """
 
     source: str
-    """Currently instance_started_at."""
+    """ Currently instance_started_at. """
     observed_at: datetime.datetime
     deployments: list[BindingRuntimeDeployment]
     config_changed_at: datetime.datetime | Unset = UNSET
-    """Latest app-wide environment or secret change. Without a stamp, resident freshness is unknown."""
+    """ Latest app-wide environment or secret change. Without a stamp, resident freshness is unknown. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

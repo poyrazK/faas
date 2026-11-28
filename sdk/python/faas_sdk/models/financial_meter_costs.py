@@ -22,11 +22,11 @@ class FinancialMeterCosts:
 
     meter: str
     coverage: FinancialMeterCoverage
-    """Completeness and freshness of authoritative retained meter evidence."""
+    """ Completeness and freshness of authoritative retained meter evidence. """
     accrued: FinancialContractCosts
-    """One shared period allowance applied across historical rate versions."""
+    """ One shared period allowance applied across historical rate versions. """
     forecast: FinancialForecast
-    """Quantity run-rate projection; absent amounts mean unavailable, never zero."""
+    """ Quantity run-rate projection; absent amounts mean unavailable, never zero. """
     price_contracts: list[FinancialPriceContract]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

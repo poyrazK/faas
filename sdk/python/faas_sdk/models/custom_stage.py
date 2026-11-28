@@ -27,12 +27,13 @@ class CustomStage:
     """
 
     percent: int
-    """Traffic share this stage moves to (0..100). The terminal stage must be 100."""
+    """ Traffic share this stage moves to (0..100). The terminal stage must be 100. """
     duration: str
-    """Wall-clock dwell at this stage, in time.ParseDuration form (e.g. '30s', '2m'). '0s' for the terminal hop."""
+    """ Wall-clock dwell at this stage, in time.ParseDuration form (e.g. '30s', '2m'). '0s' for the terminal hop.
+    """
     mirror_clean: MirrorCleanCondition | None | Unset = UNSET
-    """Require a clean traffic-mirror window before advancing out of this stage. Any status, schema, body, or crash
-    diff aborts the rollout."""
+    """ Require a clean traffic-mirror window before advancing out of this stage. Any status, schema, body, or crash
+    diff aborts the rollout. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

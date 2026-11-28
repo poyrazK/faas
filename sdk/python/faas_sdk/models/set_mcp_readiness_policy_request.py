@@ -25,7 +25,7 @@ class SetMCPReadinessPolicyRequest:
     roles: list[MCPReadinessRole]
     reason: str
     scope: str | Unset = UNSET
-    """Environment whose readiness policy is replaced by this request. Omit for default."""
+    """ Environment whose readiness policy is replaced by this request. Omit for default. """
 
     def to_dict(self) -> dict[str, Any]:
         expected_revision = self.expected_revision

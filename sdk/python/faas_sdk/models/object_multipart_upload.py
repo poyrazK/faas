@@ -32,15 +32,15 @@ class ObjectMultipartUpload:
     expires_at: datetime.datetime
     created_at: datetime.datetime
     completion_error_code: str | Unset = UNSET
-    """Persisted conditional completion rejection; retries retain the outcome."""
+    """ Persisted conditional completion rejection; retries retain the outcome. """
     etag: str | Unset = UNSET
-    """Actual committed ETag when completion is confirmed."""
+    """ Actual committed ETag when completion is confirmed. """
     version_id: str | Unset = UNSET
-    """Owned public version ID when completion is confirmed; null denotes a mutable provider version."""
+    """ Owned public version ID when completion is confirmed; null denotes a mutable provider version. """
     encryption: ObjectEncryption | Unset = UNSET
-    """Owned encryption selection for object writes and upload policies. KMS requires an enrolled Gregale key
+    """ Owned encryption selection for object writes and upload policies. KMS requires an enrolled Gregale key
     reference; bucket keys apply only to aws:kms. Context is canonical base64 of a bounded JSON object with unique
-    string entries."""
+    string entries. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -49,6 +49,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/apid/mailoutbox"
 	"github.com/onebox-faas/faas/pkg/apid/managedpg"
+	"github.com/onebox-faas/faas/pkg/apid/mcpcontract"
 	"github.com/onebox-faas/faas/pkg/apid/mcplisting"
 	"github.com/onebox-faas/faas/pkg/apid/receivers"
 	"github.com/onebox-faas/faas/pkg/apid/sales"
@@ -790,6 +791,12 @@ type server struct {
 	// must not call them available (prod findings 2026-11-15 #25).
 	tcpListenersEnabled bool
 	udpListenersEnabled bool
+	// aiAccessTokenHostEnabled says whether the edge serves the AI
+	// gateway's public host (FAAS_AI_ACCESS_TOKEN_HOST_ENABLED, rendered
+	// from faas_ai_gateway_public_enabled). Without it an AI access token
+	// has nowhere to be used: ai.gregale.dev answered "No such app" while
+	// the capability was listed (prod hunt 2026-11-28).
+	aiAccessTokenHostEnabled bool
 	// interactiveImageRunsEnabled admits `interactive: true` image runs
 	// (ADR-1330, FAAS_INTERACTIVE_IMAGE_RUNS).
 	interactiveImageRunsEnabled bool
@@ -1294,6 +1301,11 @@ func (s *server) WithAppTaskAPIEnabled(enabled bool) *server {
 // listeners, for the capability list.
 func (s *server) WithListenersEnabled(tcp, udp bool) *server {
 	s.tcpListenersEnabled, s.udpListenersEnabled = tcp, udp
+	return s
+}
+
+func (s *server) WithAIAccessTokenHostEnabled(enabled bool) *server {
+	s.aiAccessTokenHostEnabled = enabled
 	return s
 }
 
@@ -2944,6 +2956,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/mcp-listing", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(mcpListing.Get))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/mcp-listing", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(mcpListing.Put))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/mcp-listing", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(mcpListing.Delete))))
+	// ADR-20261127191645: the tool contract production deploys are held to.
+	mcpContract := mcpcontract.Owner{Host: mcpContractHost{consumerSignupHost{s: s}}, Log: s.log}
+	mux.HandleFunc("GET /v1/apps/{slug}/mcp-contract", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(mcpContract.Get))))
+	mux.HandleFunc("POST /v1/apps/{slug}/mcp-contract/overrides", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(mcpContract.CreateOverride))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumer-identities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.consumerSignup.ListIdentities))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/consumer-identities/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.consumerSignup.DeleteIdentity))))
 	mux.HandleFunc("GET /v1/apps/{slug}/consumer-overdue-holds", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.consumerControls.ListOverdueHolds)))
@@ -4526,7 +4542,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/outbound/ai-prompts/{prompt}/evaluations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.CreatePromptEvaluation)))))
 	mux.HandleFunc("GET /v1/outbound/ai-prompts/{prompt}/evaluations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListPromptEvaluations)))))
 	mux.HandleFunc("GET /v1/outbound/ai-prompt-evaluations/{evaluation}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetPromptEvaluation)))))
-	mux.HandleFunc("POST /v1/apps/{slug}/ai-access-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.CreateAccessToken)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/ai-access-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.aiAccessTokenHost(s.outboundAI.CreateAccessToken))))))
 	mux.HandleFunc("GET /v1/apps/{slug}/ai-access-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListAccessTokens)))))
 	// ADR 20261022153155: an app's AI calls by deployment.
 	mux.HandleFunc("GET /v1/apps/{slug}/ai-deployments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListDeployments)))))
@@ -5931,6 +5947,7 @@ func (s *server) handler() http.Handler {
 	mux.Handle("GET /dashboard/data", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderDashboardPipelines))))
 	mux.Handle("POST /dashboard/data", s.dashboardChain(s.sessionAuth(s.requireVerifiedEmailHandler(http.HandlerFunc(s.dashboardPipelineAction)))))
 	mux.Handle("GET /dashboard/apps/{slug}/data-api", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderDashboardDataAPI))))
+	mux.Handle("GET /dashboard/apps/{slug}/tasks", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderDashboardAppTasks))))
 	mux.Handle("GET /dashboard/apps/{slug}/auth", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderDashboardAuth))))
 	mux.Handle("POST /dashboard/apps/{slug}/auth/settings", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardAuthSettings))))
 	mux.Handle("POST /dashboard/apps/{slug}/auth/providers", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardAuthProviderEnable))))

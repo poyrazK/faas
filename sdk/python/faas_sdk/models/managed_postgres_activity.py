@@ -25,21 +25,21 @@ class ManagedPostgresActivity:
     database_id: str
     database_name: str
     since: datetime.datetime
-    """Start of the period after clamping to the 30-day retention."""
+    """ Start of the period after clamping to the 30-day retention. """
     until: datetime.datetime
     starts: int
-    """Recorded compute starts in the period."""
+    """ Recorded compute starts in the period. """
     awake_seconds: int
-    """Seconds the compute was up in the period; a start still running counts to until."""
+    """ Seconds the compute was up in the period; a start still running counts to until. """
     causes: list[ManagedPostgresActivityCause]
     compute_starts: list[ManagedPostgresActivityComputeStart]
-    """The latest starts, newest first, at most 200."""
+    """ The latest starts, newest first, at most 200. """
     hints: list[ManagedPostgresActivityHint]
     docs_url: str
     suspend_timeout_seconds: int | Unset = UNSET
-    """The suspend timeout in force; omitted for an always-on database or when it could not be read."""
+    """ The suspend timeout in force; omitted for an always-on database or when it could not be read. """
     truncated: bool | Unset = UNSET
-    """True when the period had more starts than compute_starts lists; the totals and causes count them all."""
+    """ True when the period had more starts than compute_starts lists; the totals and causes count them all. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -32,18 +32,18 @@ class OperationWorkflowRuleVersionStatistics:
     excluded_incomplete_workflow_count: int
     missing_outcome_workflow_count: int
     completion_time: OperationWorkflowDurationDistribution
-    """One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
-    zero."""
+    """ One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
+    zero. """
     blocked_time: OperationWorkflowDurationDistribution
-    """One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
-    zero."""
+    """ One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
+    zero. """
     outcomes_truncated: bool
     outcomes: list[OperationWorkflowRuleVersionOutcome]
     single_version: OperationWorkflowRuleVersionCohort | Unset = UNSET
-    """Complete completed workflows with a latest reported outcome and exactly one observed version for the same
+    """ Complete completed workflows with a latest reported outcome and exactly one observed version for the same
     contract/decision/rule identity before the first terminal report. Detection occurs before version truncation.
     Incomplete histories never qualify. Statistics exclude overlapping workflows and are still observational rather
-    than causal."""
+    than causal. """
 
     def to_dict(self) -> dict[str, Any]:
         rule_version = self.rule_version

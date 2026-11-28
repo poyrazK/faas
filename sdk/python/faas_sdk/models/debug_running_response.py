@@ -34,7 +34,7 @@ class DebugRunningResponse:
     retention_clamped: bool
     current: list[DebugRunningCause]
     config: DebugRunningConfig
-    """Configuration context shown with the observed running causes."""
+    """ Configuration context shown with the observed running causes. """
     history: list[DebugRunningObservation]
     history_truncated: bool
     current_observed_at: datetime.datetime | Unset = UNSET

@@ -21,15 +21,15 @@ class OperationWorkflowPlaybookStepAssignmentReference:
     """OperationWorkflowPlaybookStepAssignmentReference. One retained queue delivery identity per outcome step and watch."""
 
     outcome_code: str
-    """OperationWorkflowPlaybookStepAssignmentReference.outcome_code. Pinned outcome selector."""
+    """ OperationWorkflowPlaybookStepAssignmentReference.outcome_code. Pinned outcome selector. """
     item_index: int
-    """OperationWorkflowPlaybookStepAssignmentReference.item_index. Exact local step index."""
+    """ OperationWorkflowPlaybookStepAssignmentReference.item_index. Exact local step index. """
     notification: OperationWorkflowReadinessOutcomeEscalationReference
-    """Reference to the single retained escalation notification in the same subscription. Pruning does not recreate
-    escalations; links may expire."""
+    """ Reference to the single retained escalation notification in the same subscription. Pruning does not recreate
+    escalations; links may expire. """
     dependency_review_revision: int | Unset = UNSET
-    """OperationWorkflowPlaybookStepAssignmentReference.dependency_review_revision. Revision of the delivered
-    dependency review obligation; absent for ordinary assignments."""
+    """ OperationWorkflowPlaybookStepAssignmentReference.dependency_review_revision. Revision of the delivered
+    dependency review obligation; absent for ordinary assignments. """
 
     def to_dict(self) -> dict[str, Any]:
         outcome_code = self.outcome_code

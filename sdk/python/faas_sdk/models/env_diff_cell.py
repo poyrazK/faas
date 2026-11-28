@@ -22,12 +22,12 @@ class EnvDiffCell:
     """
 
     present: bool
-    """True if the (row.key, scope) pair is stamped on the app; false if missing."""
+    """ True if the (row.key, scope) pair is stamped on the app; false if missing. """
     value_hash: str | Unset = UNSET
-    """16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key. Secret cells only."""
+    """ 16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key. Secret cells only. """
     value: str | Unset = UNSET
-    """Plaintext env var. Env cells only; NEVER populated on secret cells (the load-bearing security property of
-    the endpoint)."""
+    """ Plaintext env var. Env cells only; NEVER populated on secret cells (the load-bearing security property of
+    the endpoint). """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

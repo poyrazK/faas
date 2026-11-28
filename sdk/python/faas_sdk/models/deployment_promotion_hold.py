@@ -24,12 +24,12 @@ class DeploymentPromotionHold:
     detail: str
     observed_at: datetime.datetime
     held_at: datetime.datetime
-    """First compatibility hold observation."""
+    """ First compatibility hold observation. """
     recovery_attempts: int
-    """Number of claimed automatic recovery attempts."""
+    """ Number of claimed automatic recovery attempts. """
     recovery_in_progress: bool
     next_retry_at: datetime.datetime | Unset = UNSET
-    """Eligibility time; while an attempt runs this is its lease expiry, not a promise of execution."""
+    """ Eligibility time; while an attempt runs this is its lease expiry, not a promise of execution. """
     last_recovery_outcome: DeploymentPromotionHoldLastRecoveryOutcome | Unset = UNSET
     last_recovery_at: datetime.datetime | Unset = UNSET
     last_recovery_error_code: str | Unset = UNSET

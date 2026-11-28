@@ -16,7 +16,7 @@ class APISandboxReceiverOutcome:
 
     delivery_id: UUID
     applied_count: int
-    """Number of committed business effects reported by the partner."""
+    """ Number of committed business effects reported by the partner. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

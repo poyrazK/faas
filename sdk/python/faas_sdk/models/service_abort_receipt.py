@@ -27,12 +27,12 @@ class ServiceAbortReceipt:
     predecessor_deployment_id: UUID
     request_id: UUID
     scope: str
-    """Default scope or the original named environment slug."""
+    """ Default scope or the original named environment slug. """
     accepted_at: datetime.datetime
     project_id: UUID | Unset = UNSET
-    """Original project identity; present for named scopes."""
+    """ Original project identity; present for named scopes. """
     environment_id: UUID | Unset = UNSET
-    """Original environment identity; present for named scopes."""
+    """ Original environment identity; present for named scopes. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

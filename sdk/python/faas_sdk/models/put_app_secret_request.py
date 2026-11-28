@@ -24,10 +24,10 @@ class PutAppSecretRequest:
     """
 
     value: str
-    """Plaintext. Sealed server-side; never persisted in plaintext."""
+    """ Plaintext. Sealed server-side; never persisted in plaintext. """
     secret_class: PutAppSecretRequestSecretClass | Unset = UNSET
-    """Optional snapshot-retention policy. Ephemeral secrets cause their runtime VM to be destroyed instead of
-    creating warm or init snapshots when parked; new requests cold-boot."""
+    """ Optional snapshot-retention policy. Ephemeral secrets cause their runtime VM to be destroyed instead of
+    creating warm or init snapshots when parked; new requests cold-boot. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

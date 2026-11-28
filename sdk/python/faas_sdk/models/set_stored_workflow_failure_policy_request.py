@@ -13,15 +13,15 @@ class SetStoredWorkflowFailurePolicyRequest:
     """Complete failure policy replacement guarded by an expected version."""
 
     expected_version: int
-    """Failure policy revision the caller intends to replace."""
+    """ Failure policy revision the caller intends to replace. """
     enabled: bool
-    """Requested setting controlling whether scheduler evaluation can create a new runtime failure pause."""
+    """ Requested setting controlling whether scheduler evaluation can create a new runtime failure pause. """
     failure_threshold: int
-    """Requested number of terminal failures required to latch a failure pause."""
+    """ Requested number of terminal failures required to latch a failure pause. """
     min_completed_runs: int
-    """Requested minimum terminal non-cancelled sample count before failure pausing."""
+    """ Requested minimum terminal non-cancelled sample count before failure pausing. """
     window_seconds: int
-    """Requested lookback in seconds, bounded by the latest monitoring epoch."""
+    """ Requested lookback in seconds, bounded by the latest monitoring epoch. """
 
     def to_dict(self) -> dict[str, Any]:
         expected_version = self.expected_version

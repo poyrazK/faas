@@ -38,13 +38,13 @@ class RequestAnalyticsResponse:
 
     slug: str
     since: str
-    """Effective lookback duration after retention clamping."""
+    """ Effective lookback duration after retention clamping. """
     from_: datetime.datetime
-    """Inclusive lower bound of the analytics window."""
+    """ Inclusive lower bound of the analytics window. """
     until: datetime.datetime
-    """Exclusive upper bound of the analytics window."""
+    """ Exclusive upper bound of the analytics window. """
     window_clamped: bool
-    """True when the requested lookback exceeded plan retention."""
+    """ True when the requested lookback exceeded plan retention. """
     requests: int
     error_requests: int
     error_rate_pct: float
@@ -55,38 +55,38 @@ class RequestAnalyticsResponse:
     group_by: RequestAnalyticsResponseGroupBy
     groups: list[RequestAnalyticsGroup]
     groups_limit: int
-    """Maximum number of top groups before __other__."""
+    """ Maximum number of top groups before __other__. """
     groups_truncated: bool
-    """True when __other__ contains groups outside the top-N."""
+    """ True when __other__ contains groups outside the top-N. """
     routes: list[RequestAnalyticsRoute]
     routes_limit: int
-    """Maximum number of route rows returned."""
+    """ Maximum number of route rows returned. """
     routes_truncated: bool
-    """True when more route rows matched than routes_limit."""
+    """ True when more route rows matched than routes_limit. """
     dependencies_truncated: bool
-    """True when dependency span rows, route dependency groups, or route dependency outputs were capped."""
+    """ True when dependency span rows, route dependency groups, or route dependency outputs were capped. """
     as_of: datetime.datetime
-    """RFC3339Nano UTC assembly timestamp."""
+    """ RFC3339Nano UTC assembly timestamp. """
     omitted: list[str] | Unset = UNSET
-    """Optional enrichment sections unavailable within their query budgets; traffic totals remain available."""
+    """ Optional enrichment sections unavailable within their query budgets; traffic totals remain available. """
     compute_cost: RequestAnalyticsComputeCost | Unset = UNSET
-    """Estimated app compute value over the analytics window, allocated by observed request share. This is not an
-    invoice amount; it values raw RAM-hours before the account's included allowance and excludes egress."""
+    """ Estimated app compute value over the analytics window, allocated by observed request share. This is not an
+    invoice amount; it values raw RAM-hours before the account's included allowance and excludes egress. """
     deployment_costs: RequestAnalyticsDeploymentCostBreakdown | Unset = UNSET
-    """Bounded deployment allocation of the app's estimated raw compute value for the analytics window. It is not
-    an invoice amount."""
+    """ Bounded deployment allocation of the app's estimated raw compute value for the analytics window. It is not
+    an invoice amount. """
     telemetry_complete: bool | Unset = UNSET
-    """True when every gateway delivered this window's request telemetry, so the totals include every request.
+    """ True when every gateway delivered this window's request telemetry, so the totals include every request.
     Judged up to two minutes before `as_of`, because the newest minutes are still arriving. Absent when it could not
     be judged.
-    """
+     """
     telemetry_gaps: list[RequestAnalyticsTelemetryGap] | Unset = UNSET
-    """Why requests in this window may be missing from the totals. Empty or absent when the window is complete."""
+    """ Why requests in this window may be missing from the totals. Empty or absent when the window is complete. """
     sampled_measures: RequestAnalyticsResponseSampledMeasures | Unset = UNSET
-    """Whether the detail only sampled raw rows carry is in this response: group CPU and sampled latency,
+    """ Whether the detail only sampled raw rows carry is in this response: group CPU and sampled latency,
     `deployment_costs`, and per-route deployment splits. `omitted` when reading it failed or ran past its
     time budget; request counts, error rates and percentiles never depend on it.
-    """
+     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -27,7 +27,8 @@ class ProfileCanaryGateState:
     """Retained stage evidence and bounded route streaks used to qualify the profiling gate."""
 
     policy: ProfileCanaryGatePolicy
-    """Opt-in policy requiring consecutive qualified route CPU/request comparisons before a canary stage advances."""
+    """ Opt-in policy requiring consecutive qualified route CPU/request comparisons before a canary stage advances.
+    """
     status: ProfileCanaryGateStateStatus
     reason: str
     deadline: datetime.datetime
@@ -35,7 +36,7 @@ class ProfileCanaryGateState:
     streaks: list[ProfileGateRouteStreak]
     last_window_end: datetime.datetime | Unset = UNSET
     next_candidate: ProfileQuery | Unset = UNSET
-    """Authorized deployment CPU capture window."""
+    """ Authorized deployment CPU capture window. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

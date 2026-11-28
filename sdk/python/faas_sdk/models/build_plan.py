@@ -24,30 +24,30 @@ class BuildPlan:
     """
 
     framework: BuildPlanFramework
-    """Compatibility framework family derived from the persisted source profile. `unknown` means no supported
-    framework was inferred (monorepo / custom build)."""
+    """ Compatibility framework family derived from the persisted source profile. `unknown` means no supported
+    framework was inferred (monorepo / custom build). """
     runtime: None | str | Unset = UNSET
-    """Runtime the app is pinned to (eg `node22`, `python312`). Echoed from app.Runtime. nil for apps without a
-    runtime set (image deploys)."""
+    """ Runtime the app is pinned to (eg `node22`, `python312`). Echoed from app.Runtime. nil for apps without a
+    runtime set (image deploys). """
     version: None | str | Unset = UNSET
-    """Framework version extracted from the detected marker (eg `package.json` `engines.node`, `requirements.txt`
-    head pin). nil when the marker has no version or framework is `unknown`."""
+    """ Framework version extracted from the detected marker (eg `package.json` `engines.node`, `requirements.txt`
+    head pin). nil when the marker has no version or framework is `unknown`. """
     entrypoint: None | str | Unset = UNSET
-    """Effective start command from the persisted source profile, replaced by an explicit entrypoint override when
-    supplied."""
+    """ Effective start command from the persisted source profile, replaced by an explicit entrypoint override when
+    supplied. """
     port: int | None | Unset = UNSET
-    """Effective listen port from the persisted source profile, replaced by an explicit port override when
-    supplied."""
+    """ Effective listen port from the persisted source profile, replaced by an explicit port override when
+    supplied. """
     health_path: None | str | Unset = UNSET
-    """Effective readiness path selected by the source profile or deployment override."""
+    """ Effective readiness path selected by the source profile or deployment override. """
     config_file: None | str | Unset = UNSET
-    """Framework configuration file that supplied the resolved build settings, when present."""
+    """ Framework configuration file that supplied the resolved build settings, when present. """
     class_: BuildPlanClassType1 | BuildPlanClassType2Type1 | BuildPlanClassType3Type1 | None | Unset = UNSET
-    """App class from `app.Type` — `app` for plain apps, `function` for function rewrites."""
+    """ App class from `app.Type` — `app` for plain apps, `function` for function rewrites. """
     handler: None | str | Unset = UNSET
-    """Function-layer export (for example `handler.handler`). Distinct from the process entrypoint."""
+    """ Function-layer export (for example `handler.handler`). Distinct from the process entrypoint. """
     source_sha256: None | str | Unset = UNSET
-    """Content identity of the exact source archive being previewed. Source contents are never returned."""
+    """ Content identity of the exact source archive being previewed. Source contents are never returned. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

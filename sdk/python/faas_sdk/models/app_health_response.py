@@ -30,19 +30,19 @@ class AppHealthResponse:
     scope: str
     evaluated_at: datetime.datetime
     valid_for_seconds: int
-    """Maximum age before clients must reconfirm this assessment."""
+    """ Maximum age before clients must reconfirm this assessment. """
     serving_deployment_ids: list[str]
     capacity: AppHealthCapacity
-    """Measured serving replica counts, with explicit evidence availability."""
+    """ Measured serving replica counts, with explicit evidence availability. """
     checks: list[AppHealthCheck]
     project_id: str | Unset = UNSET
     environment_id: str | Unset = UNSET
     metrics_as_of: datetime.datetime | Unset = UNSET
-    """Actual telemetry sample time; absent when unconfirmed."""
+    """ Actual telemetry sample time; absent when unconfirmed. """
     latest_deployment_id: str | Unset = UNSET
     requests: AppHealthRequests | Unset = UNSET
-    """Scoped request evidence; counts are confirmed only when known is true. Covers current serving releases,
-    excluding previous releases and other scopes."""
+    """ Scoped request evidence; counts are confirmed only when known is true. Covers current serving releases,
+    excluding previous releases and other scopes. """
 
     def to_dict(self) -> dict[str, Any]:
         app_id = self.app_id

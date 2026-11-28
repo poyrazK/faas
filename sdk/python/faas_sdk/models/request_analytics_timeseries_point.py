@@ -15,7 +15,7 @@ class RequestAnalyticsTimeseriesPoint:
     """One UTC-aligned hourly request analytics bucket."""
 
     start: datetime.datetime
-    """Inclusive UTC start of the one-hour bucket."""
+    """ Inclusive UTC start of the one-hour bucket. """
     requests: int
     error_requests: int
     error_rate_pct: float

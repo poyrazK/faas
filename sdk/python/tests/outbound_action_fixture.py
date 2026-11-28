@@ -9,7 +9,6 @@ from uuid import uuid4
 
 import httpx
 from compensation_fixture import Gates, ReceiptStore
-
 from faas_sdk.preview.outbound_action_state import OutboundActionActor, OutboundActionError
 from faas_sdk.preview.outbound_actions import OutboundAction
 from faas_sdk.preview.pipeline_state import PipelineScope

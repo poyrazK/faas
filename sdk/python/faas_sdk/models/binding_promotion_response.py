@@ -19,18 +19,18 @@ class BindingPromotionResponse:
     """Atomic traffic transition and the bindings check enforced at its write boundary."""
 
     deployment: DeploymentResponse
-    """One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional
+    """ One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional
     `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object; they round-
     trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy pinned. Env
     values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed because the ref shape
-    is non-secret by design."""
+    is non-secret by design. """
     from_percent: int
     to_percent: int
     already_promoted: bool
     bindings_check: BindingCheckReport
-    """Safe preflight findings for the declared policy at checked_at. Coverage may be complete, partial or none; a
+    """ Safe preflight findings for the declared policy at checked_at. Coverage may be complete, partial or none; a
     passed report does not independently establish application readiness or credential use. Optional application
-    acknowledgements are version-bound self-attestations."""
+    acknowledgements are version-bound self-attestations. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

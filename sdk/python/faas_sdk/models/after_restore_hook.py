@@ -20,13 +20,13 @@ class AfterRestoreHook:
     """
 
     path: str | Unset = UNSET
-    """Absolute path on the app's loopback HTTP listener. Called with POST after restore, before readiness."""
+    """ Absolute path on the app's loopback HTTP listener. Called with POST after restore, before readiness. """
     timeout_ms: int | Unset = 500
-    """Callback timeout in milliseconds; 0 uses the 500 ms default."""
+    """ Callback timeout in milliseconds; 0 uses the 500 ms default. """
     identity: AfterRestoreHookIdentity | Unset = UNSET
-    """reload lets an environment branch wake from the parent deployment's credential-free capture instead of a
+    """ reload lets an environment branch wake from the parent deployment's credential-free capture instead of a
     cold boot; the callback then re-reads config and reconnects under the branch's identity. Omit to cold-boot
-    branches."""
+    branches. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

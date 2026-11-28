@@ -25,9 +25,9 @@ class PlanManagedProvision:
     database: str
     bindings: list[PlanManagedBinding]
     existing: bool | Unset = UNSET
-    """True when a database with this name already exists and is reused."""
+    """ True when a database with this name already exists and is reused. """
     postgres_major: int | Unset = UNSET
-    """The database's PostgreSQL major: the Compose image's, or the nearest newer one the platform offers."""
+    """ The database's PostgreSQL major: the Compose image's, or the nearest newer one the platform offers. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

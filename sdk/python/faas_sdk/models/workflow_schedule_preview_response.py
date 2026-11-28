@@ -33,18 +33,18 @@ class WorkflowSchedulePreviewResponse:
     deployment_id: UUID
     schedule: str
     timezone: str
-    """Effective IANA timezone."""
+    """ Effective IANA timezone. """
     overlap: WorkflowSchedulePreviewResponseOverlap
-    """Configured overlap policy. Active runs may still block admission when overlap is skip."""
+    """ Configured overlap policy. Active runs may still block admission when overlap is skip. """
     enabled: bool
     observed_at: datetime.datetime
     evaluation_at: datetime.datetime
-    """Actual or hypothetical evaluator time."""
+    """ Actual or hypothetical evaluator time. """
     dst_behavior: WorkflowScheduleDSTBehavior
-    """Gregale's timezone-transition behavior for fixed wall-time and interval cron expressions."""
+    """ Gregale's timezone-transition behavior for fixed wall-time and interval cron expressions. """
     upcoming: list[WorkflowScheduleFirePreview]
     catch_up: WorkflowScheduleCatchUpPreview
-    """Simulated next evaluator decision. It does not reserve quota or promise worker availability."""
+    """ Simulated next evaluator decision. It does not reserve quota or promise worker availability. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

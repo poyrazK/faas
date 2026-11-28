@@ -17,7 +17,7 @@ class StartStoredWorkflowLiveVerificationRequest:
     expected_deployment_id: str
     case_name: str
     confirm_real_actions: bool
-    """Must be true to authorize real handler and connected-service actions."""
+    """ Must be true to authorize real handler and connected-service actions. """
 
     def to_dict(self) -> dict[str, Any]:
         expected_version = self.expected_version

@@ -49,8 +49,8 @@ class InstanceResponse:
     state: str
     ram_mb: int
     resident: bool
-    """True when this instance currently holds host memory. Historical parked, stopped, and failed rows report
-    false."""
+    """ True when this instance currently holds host memory. Historical parked, stopped, and failed rows report
+    false. """
     host_ip: None | str | Unset = UNSET
     wake_id: str | Unset = UNSET
     started_at: datetime.datetime | None | Unset = UNSET
@@ -64,7 +64,7 @@ class InstanceResponse:
         | None
         | Unset
     ) = UNSET
-    """Closed-set execution mode for this instance."""
+    """ Closed-set execution mode for this instance. """
     lifecycle_failure_reason: (
         InstanceResponseLifecycleFailureReasonType1
         | InstanceResponseLifecycleFailureReasonType2Type1
@@ -72,7 +72,7 @@ class InstanceResponse:
         | None
         | Unset
     ) = UNSET
-    """Reason for the most recent terminal transition. null when still running."""
+    """ Reason for the most recent terminal transition. null when still running. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

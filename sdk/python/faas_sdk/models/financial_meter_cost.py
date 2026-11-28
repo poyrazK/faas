@@ -19,7 +19,7 @@ class FinancialMeterCost:
     """Meter cost priced by one immutable contract with its assigned allowance."""
 
     price: FinancialPrice
-    """Immutable version of a meter's exact price and allowance terms."""
+    """ Immutable version of a meter's exact price and allowance terms. """
     quantity: int
     included_quantity: int
     gross_millicents: int

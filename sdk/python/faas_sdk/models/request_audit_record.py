@@ -32,7 +32,7 @@ class RequestAuditRecord:
     commit_sha: str | Unset = UNSET
     request_id: str | Unset = UNSET
     source_ip: str | Unset = UNSET
-    """Verified public-gateway client IP when available."""
+    """ Verified public-gateway client IP when available. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

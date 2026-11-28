@@ -1,5 +1,5 @@
 from http import HTTPStatus
-from typing import Any
+from typing import Any, cast
 from urllib.parse import quote
 
 import httpx
@@ -13,7 +13,7 @@ from ...types import File, Response
 def _get_kwargs(
     id: str,
     *,
-    body: File | bytes,
+    body: File,
     upload_offset: int,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
@@ -26,16 +26,17 @@ def _get_kwargs(
         ),
     }
 
-    _kwargs["content"] = body if isinstance(body, bytes) else body.payload.read()
-    headers["Content-Type"] = "application/offset+octet-stream"
+    _kwargs["content"] = body.payload
+    headers["Content-Type"] = "application/octet-stream"
 
     _kwargs["headers"] = headers
     return _kwargs
 
 
-def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Problem | None:
+def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Any | Problem | None:
     if response.status_code == 200:
-        return None
+        response_200 = cast(Any, None)
+        return response_200
 
     if response.status_code == 400:
         response_400 = Problem.from_dict(response.json())
@@ -68,7 +69,7 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
         return None
 
 
-def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[Problem]:
+def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[Any | Problem]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -81,22 +82,22 @@ def sync_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: File | bytes,
+    body: File,
     upload_offset: int,
-) -> Response[Problem]:
+) -> Response[Any | Problem]:
     """Append a chunk to an open session.
 
     Args:
         id (str):
         upload_offset (int):
-        body (File | bytes):
+        body (File):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Problem]
+        Response[Any | Problem]
     """
 
     kwargs = _get_kwargs(
@@ -116,15 +117,15 @@ def sync(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: File | bytes,
+    body: File,
     upload_offset: int,
-) -> Problem | None:
+) -> Any | Problem | None:
     """Append a chunk to an open session.
 
     Args:
         id (str):
         upload_offset (int):
-        body (File | bytes):
+        body (File):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -146,22 +147,22 @@ async def asyncio_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: File | bytes,
+    body: File,
     upload_offset: int,
-) -> Response[Problem]:
+) -> Response[Any | Problem]:
     """Append a chunk to an open session.
 
     Args:
         id (str):
         upload_offset (int):
-        body (File | bytes):
+        body (File):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Problem]
+        Response[Any | Problem]
     """
 
     kwargs = _get_kwargs(
@@ -179,15 +180,15 @@ async def asyncio(
     id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: File | bytes,
+    body: File,
     upload_offset: int,
-) -> Problem | None:
+) -> Any | Problem | None:
     """Append a chunk to an open session.
 
     Args:
         id (str):
         upload_offset (int):
-        body (File | bytes):
+        body (File):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

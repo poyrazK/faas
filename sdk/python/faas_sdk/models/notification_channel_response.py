@@ -29,16 +29,17 @@ class NotificationChannelResponse:
     name: str
     kind: NotificationChannelResponseKind
     target: str
-    """Non-secret hint: Slack workspace and hook ids, the routing key last four characters, or the email address."""
+    """ Non-secret hint: Slack workspace and hook ids, the routing key last four characters, or the email address.
+    """
     created_at: datetime.datetime
     pagerduty_region: NotificationChannelResponsePagerdutyRegion | Unset = UNSET
-    """Region of a PagerDuty channel."""
+    """ Region of a PagerDuty channel. """
     last_delivered_at: datetime.datetime | Unset = UNSET
-    """Last successful delivery or test."""
+    """ Last successful delivery or test. """
     last_error: str | Unset = UNSET
-    """Most recent delivery error, if any."""
+    """ Most recent delivery error, if any. """
     last_error_at: datetime.datetime | Unset = UNSET
-    """When last_error occurred."""
+    """ When last_error occurred. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

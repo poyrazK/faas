@@ -18,8 +18,8 @@ class ProjectReleaseSecretStageRequest:
 
     request_id: str
     workloads: ProjectReleaseSecretStageRequestWorkloads
-    """Complete proposed workload secret snapshots within shared document and per-plan value limits. Values are
-    accepted over TLS and sealed before storage."""
+    """ Complete proposed workload secret snapshots within shared document and per-plan value limits. Values are
+    accepted over TLS and sealed before storage. """
 
     def to_dict(self) -> dict[str, Any]:
         request_id = self.request_id

@@ -31,14 +31,14 @@ class ProfileCoverage:
     covered_seconds: float
     gap_seconds: float
     recorded_failed_uploads: int
-    """Rate limited recorded failures; a lower bound on failed attempts rather than exact lost profiles."""
+    """ Rate limited recorded failures; a lower bound on failed attempts rather than exact lost profiles. """
     failures_complete: bool
-    """False because failures before ingestion and omitted failure records are unknown."""
+    """ False because failures before ingestion and omitted failure records are unknown. """
     attribution_reasons: list[ProfileAttributionReason] | Unset = UNSET
-    """Optional host-generated whole-capture CPU diagnostics. Legacy captures have no counters; public attribution
-    quality reconciles counters against merged CPU before declaring completeness."""
+    """ Optional host-generated whole-capture CPU diagnostics. Legacy captures have no counters; public attribution
+    quality reconciles counters against merged CPU before declaring completeness. """
     last_received_at: datetime.datetime | Unset = UNSET
-    """Latest recorded receipt among profiles in the selected capture window."""
+    """ Latest recorded receipt among profiles in the selected capture window. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

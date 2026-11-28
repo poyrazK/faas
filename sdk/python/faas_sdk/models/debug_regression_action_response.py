@@ -21,10 +21,10 @@ class DebugRegressionActionResponse:
     """Updated regression plus the exact workflow receipt. Older servers may omit review."""
 
     regression: DebugRegressionItem
-    """One regression observation row."""
+    """ One regression observation row. """
     review: DebugRegressionReview | Unset = UNSET
-    """Exact workflow-only observation. Opaque version invalidates on every update; state is stored triage
-    metadata, not health or effective inbox visibility."""
+    """ Exact workflow-only observation. Opaque version invalidates on every update; state is stored triage
+    metadata, not health or effective inbox visibility. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

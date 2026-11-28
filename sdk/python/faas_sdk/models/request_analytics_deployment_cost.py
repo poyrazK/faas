@@ -20,26 +20,27 @@ class RequestAnalyticsDeploymentCost:
     """
 
     deployment_id: str
-    """Immutable deployment UUID."""
+    """ Immutable deployment UUID. """
     requests: int
     request_share_pct: float
     estimated_compute_cost_millicents: int
     guest_cpu_measured_requests: int
-    """Request-weighted number of requests with measured guest CPU data."""
+    """ Request-weighted number of requests with measured guest CPU data. """
     guest_cpu_regression: bool
-    """True when measured guest CPU/request increased by at least 25% from the comparison baseline. Advisory and
-    sensitive to traffic mix."""
+    """ True when measured guest CPU/request increased by at least 25% from the comparison baseline. Advisory and
+    sensitive to traffic mix. """
     commit_sha: str | Unset = UNSET
     deployment_tag: str | Unset = UNSET
     deployment_created_at: str | Unset = UNSET
     guest_cpu_avg_ms: int | Unset = UNSET
-    """Mean measured guest CPU time per request in the analytics window; only populated for supported Linux one-
-    shot runtimes."""
+    """ Mean measured guest CPU time per request in the analytics window; only populated for supported Linux one-
+    shot runtimes. """
     guest_cpu_change_pct: float | Unset = UNSET
-    """Percentage change in mean guest CPU time from the earlier comparable deployment in this analytics window.
-    Only computed when both deployments have at least 20 measured requests and the baseline is non-zero."""
+    """ Percentage change in mean guest CPU time from the earlier comparable deployment in this analytics window.
+    Only computed when both deployments have at least 20 measured requests and the baseline is non-zero. """
     guest_cpu_compared_to: str | Unset = UNSET
-    """Tag, commit SHA, or deployment UUID for the earlier measured deployment used as the CPU comparison baseline."""
+    """ Tag, commit SHA, or deployment UUID for the earlier measured deployment used as the CPU comparison baseline.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

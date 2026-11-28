@@ -23,8 +23,8 @@ class OperationWorkflowObligationFulfillmentRequest:
     """
 
     binding: OperationWorkflowObligationTargetBinding
-    """One obligation-cycle and exact-case target binding, recorded with an authenticated actor and reason.
-    Unrelated edits preserve it; a new cycle never inherits it. Current readiness is independently reassessed."""
+    """ One obligation-cycle and exact-case target binding, recorded with an authenticated actor and reason.
+    Unrelated edits preserve it; a new cycle never inherits it. Current readiness is independently reassessed. """
     reason: str
     evidence_operation_id: UUID
     evidence_report_id: str

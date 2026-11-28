@@ -39,11 +39,11 @@ class ProfileCanaryGateDecision:
     on_timeout: ProfileCanaryGateDecisionOnTimeout | Unset = UNSET
     stable_deployment_id: UUID | Unset = UNSET
     signal: CanaryProfileSignal | Unset = UNSET
-    """Latest retained sampled CPU comparison for a deployment's canary stages, produced by a background worker
+    """ Latest retained sampled CPU comparison for a deployment's canary stages, produced by a background worker
     using the app's enabled automatic profile policy and equal fixed windows. The stage and policy revision identify
     the assessment. Route-health reads return the saved result and never query profile storage. Checks are advisory
     unless canary_gate is explicitly configured. Gate evidence requires consecutive distinct qualified route
-    windows; timeout behavior is configured explicitly. Completed assessments are retained for 30 days."""
+    windows; timeout behavior is configured explicitly. Completed assessments are retained for 30 days. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -52,25 +52,25 @@ class DeploymentLivenessProbe:
     """
 
     path: str | Unset = UNSET
-    """HTTP path the probe requests from the guest; must start with `/` (e.g. `/healthz`). Reuses the runner's
-    existing listener — no runner changes. Set exactly one of path or grpc."""
+    """ HTTP path the probe requests from the guest; must start with `/` (e.g. `/healthz`). Reuses the runner's
+    existing listener — no runner changes. Set exactly one of path or grpc. """
     grpc: DeploymentGRPCLivenessProbe | Unset = UNSET
-    """Standard gRPC health.v1 liveness probe. An omitted or empty service checks overall server health."""
+    """ Standard gRPC health.v1 liveness probe. An omitted or empty service checks overall server health. """
     interval_s: int | Unset = UNSET
-    """Per-plan poll cadence in seconds; 0 = inherit per-plan default (Hobby/Pro/Scale → 5 s). Clamped to
-    [MinLivenessPeriodSeconds=1, MaxLivenessPeriodSeconds=60]."""
+    """ Per-plan poll cadence in seconds; 0 = inherit per-plan default (Hobby/Pro/Scale → 5 s). Clamped to
+    [MinLivenessPeriodSeconds=1, MaxLivenessPeriodSeconds=60]. """
     timeout_s: int | Unset = UNSET
-    """Per-probe HTTP or gRPC timeout in seconds; 0 = inherit 2 s default. A timeout is treated identically to a
-    non-2xx response by the failure counter."""
+    """ Per-probe HTTP or gRPC timeout in seconds; 0 = inherit 2 s default. A timeout is treated identically to a
+    non-2xx response by the failure counter. """
     consecutive_failures: int | Unset = UNSET
-    """N at which DestroyForLivenessFailure fires; 0 = inherit per-plan default (Hobby/Pro/Scale → 3). The counter
+    """ N at which DestroyForLivenessFailure fires; 0 = inherit per-plan default (Hobby/Pro/Scale → 3). The counter
     is reset to 0 on the first 2xx and survives an intermittent 5xx across the consecutive window (AC #2 — flaky app
-    does NOT oscillate)."""
+    does NOT oscillate). """
     cooldown_s: int | Unset = UNSET
-    """Cooldown window in seconds after a liveness-driven destroy fires. While inside the window the VM manager-
+    """ Cooldown window in seconds after a liveness-driven destroy fires. While inside the window the VM manager-
     side probe loop short-circuits the failure counter so the cold-boot replacement has time to settle (closure). 0
     = no cooldown (Free-plan / legacy behaviour); clamped to [MinLivenessCooldownSeconds=10,
-    MaxLivenessCooldownSeconds=600] when the field is populated by a Pro/Scale deployment override."""
+    MaxLivenessCooldownSeconds=600] when the field is populated by a Pro/Scale deployment override. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

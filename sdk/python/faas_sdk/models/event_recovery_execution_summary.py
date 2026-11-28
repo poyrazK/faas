@@ -20,7 +20,7 @@ class EventRecoveryExecutionSummary:
     """
 
     saved_results: int
-    """Subset of tracked_count with saved confirmed terminal evidence. Not an additional state bucket."""
+    """ Subset of tracked_count with saved confirmed terminal evidence. Not an additional state bucket. """
     observed_at: datetime.datetime
     tracked_count: int
     queued: int

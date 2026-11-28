@@ -30,7 +30,7 @@ class MCPConnectionHealthIssue:
     recovery_action: str
     recovery_path: str
     scope: str | Unset = UNSET
-    """Environment containing the MCP connection with this health issue. Empty means default."""
+    """ Environment containing the MCP connection with this health issue. Empty means default. """
     app_deleted: bool | Unset = UNSET
     retirement_id: UUID | Unset = UNSET
     expires_at: datetime.datetime | Unset = UNSET

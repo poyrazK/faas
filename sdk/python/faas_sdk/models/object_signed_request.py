@@ -30,7 +30,7 @@ class ObjectSignedRequest:
     headers: ObjectSignedRequestHeaders
     expires_at: datetime.datetime
     upload_id: UUID | Unset = UNSET
-    """Durable write receipt for an object PUT URL. Omitted for reads and multipart part URLs."""
+    """ Durable write receipt for an object PUT URL. Omitted for reads and multipart part URLs. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -37,9 +37,10 @@ class MCPReadinessDestinationDelivery:
     status: MCPReadinessDestinationDeliveryStatus
     attempt_count: int
     provider: MCPReadinessDestinationDeliveryProvider | Unset = UNSET
-    """Transport for this receiver delivery; omission denotes a legacy webhook."""
+    """ Transport for this receiver delivery; omission denotes a legacy webhook. """
     provider_status: MCPReadinessDestinationDeliveryProviderStatus | Unset = UNSET
-    """PagerDuty transport progress; accepted means a validated 202 acknowledgement rather than a confirmed page."""
+    """ PagerDuty transport progress; accepted means a validated 202 acknowledgement rather than a confirmed page.
+    """
     last_status_code: int | Unset = UNSET
     last_delivery_id: UUID | Unset = UNSET
     next_attempt_at: datetime.datetime | Unset = UNSET

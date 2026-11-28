@@ -17,9 +17,9 @@ class OperationWorkflowReviewResponseLinkRequest:
     """
 
     subscription_id: UUID
-    """OperationWorkflowReviewResponseLinkRequest.subscription_id. Source review subscription identity."""
+    """ OperationWorkflowReviewResponseLinkRequest.subscription_id. Source review subscription identity. """
     sequence: int
-    """OperationWorkflowReviewResponseLinkRequest.sequence. Source review notification sequence."""
+    """ OperationWorkflowReviewResponseLinkRequest.sequence. Source review notification sequence. """
 
     def to_dict(self) -> dict[str, Any]:
         subscription_id = str(self.subscription_id)

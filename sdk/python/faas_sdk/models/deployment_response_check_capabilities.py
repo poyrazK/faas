@@ -15,10 +15,10 @@ class DeploymentResponseCheckCapabilities:
     """Installed deployment-check protocol and forwarding configuration; no workload admission is performed."""
 
     protocol_version: int
-    """Protocol implemented by this API; clients require a compatible version."""
+    """ Protocol implemented by this API; clients require a compatible version. """
     available: bool
     unavailable_reason: str | Unset = UNSET
-    """Stable gateway_unsupported, gateway_unconfigured, or gateway_unavailable code when unavailable."""
+    """ Stable gateway_unsupported, gateway_unconfigured, or gateway_unavailable code when unavailable. """
 
     def to_dict(self) -> dict[str, Any]:
         protocol_version = self.protocol_version

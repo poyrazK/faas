@@ -25,7 +25,7 @@ class DebugRegressionActionRequest:
     route: str
     action: DebugRegressionActionRequestAction
     dismissed_until: datetime.datetime | Unset = UNSET
-    """Dismissal expiry; defaults to 24h and is capped at 30d."""
+    """ Dismissal expiry; defaults to 24h and is capped at 30d. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

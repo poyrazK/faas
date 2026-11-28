@@ -28,14 +28,14 @@ class AppliedBuild:
     deployment_id: str | Unset = UNSET
     build_id: str | Unset = UNSET
     deployment_status: str | Unset = UNSET
-    """Terminal deployment status added by wait-aware CLI responses."""
+    """ Terminal deployment status added by wait-aware CLI responses. """
     build_status: str | Unset = UNSET
-    """Terminal build status added by wait-aware CLI responses."""
+    """ Terminal build status added by wait-aware CLI responses. """
     configuration: DeploymentConfigurationStatus | Unset = UNSET
-    """Server-managed cron activation diagnostics. CLI-owned settings are additionally reflected in CLI receipt
-    configuration_complete. Reads never create builds or modify schedules."""
+    """ Server-managed cron activation diagnostics. CLI-owned settings are additionally reflected in CLI receipt
+    configuration_complete. Reads never create builds or modify schedules. """
     error: str | Unset = UNSET
-    """Staging or enqueue error message; partial-failure rows carry this in lieu of IDs."""
+    """ Staging or enqueue error message; partial-failure rows carry this in lieu of IDs. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

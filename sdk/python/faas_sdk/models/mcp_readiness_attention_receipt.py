@@ -37,17 +37,17 @@ class MCPReadinessAttentionReceipt:
     created_at: datetime.datetime
     version: int
     source: MCPReadinessAttentionReceiptSource | Unset = UNSET
-    """Provider provenance for this MCPReadinessAttentionReceipt; absence denotes a local account action."""
+    """ Provider provenance for this MCPReadinessAttentionReceipt; absence denotes a local account action. """
     provider_event_id: str | Unset = UNSET
-    """PagerDuty event associated with this MCPReadinessAttentionReceipt."""
+    """ PagerDuty event associated with this MCPReadinessAttentionReceipt. """
     provider_incident_id: str | Unset = UNSET
-    """Provider incident associated with this MCPReadinessAttentionReceipt."""
+    """ Provider incident associated with this MCPReadinessAttentionReceipt. """
     provider_occurred_at: datetime.datetime | Unset = UNSET
-    """Signed provider event time retained in this MCPReadinessAttentionReceipt."""
+    """ Signed provider event time retained in this MCPReadinessAttentionReceipt. """
     expires_at: datetime.datetime | Unset = UNSET
     reminder_policy: MCPReadinessReminderPolicy | Unset = UNSET
-    """Per-incident lifetime creation budget. Both zero disables; otherwise interval is 60–86400 seconds and budget
-    is 1–10. Reconfiguration never resets the count."""
+    """ Per-incident lifetime creation budget. Both zero disables; otherwise interval is 60–86400 seconds and budget
+    is 1–10. Reconfiguration never resets the count. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

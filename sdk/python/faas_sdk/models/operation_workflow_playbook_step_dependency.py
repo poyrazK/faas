@@ -16,10 +16,11 @@ class OperationWorkflowPlaybookStepDependency:
     """
 
     label: str
-    """OperationWorkflowPlaybookStepDependency.label. Exact declared dependent step label, unique within the graph."""
+    """ OperationWorkflowPlaybookStepDependency.label. Exact declared dependent step label, unique within the graph.
+    """
     prerequisites: list[str]
-    """OperationWorkflowPlaybookStepDependency.prerequisites. Exact declared prerequisites; each must be reviewed
-    complete with its own prerequisites satisfied."""
+    """ OperationWorkflowPlaybookStepDependency.prerequisites. Exact declared prerequisites; each must be reviewed
+    complete with its own prerequisites satisfied. """
 
     def to_dict(self) -> dict[str, Any]:
         label = self.label

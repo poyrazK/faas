@@ -29,9 +29,9 @@ class ProfileRegressionMetric:
     exceeds_threshold: bool
     relative_increase_percent: float | Unset = UNSET
     cpu_per_request: ProfileRegressionMetricCpuPerRequest | Unset = UNSET
-    """Present when retained request telemetry has observations for both deployment windows. Counts are weighted
+    """ Present when retained request telemetry has observations for both deployment windows. Counts are weighted
     collapsed rows with minute-bucket timestamps; boundary counts can be approximate and telemetry can be
-    incomplete."""
+    incomplete. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

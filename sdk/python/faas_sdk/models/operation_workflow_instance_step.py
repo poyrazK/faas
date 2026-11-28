@@ -27,20 +27,20 @@ class OperationWorkflowInstanceStep:
     milestone: str
     position: int
     observed: bool
-    """True when a matching fact is visible on the current milestone page."""
+    """ True when a matching fact is visible on the current milestone page. """
     milestones_in_page: int
-    """Number of matching facts on the current milestone page."""
+    """ Number of matching facts on the current milestone page. """
     observed_in_retention: bool
-    """True when at least one matching fact for the selected contract version remains under normal Operation
-    retention. False means no matching fact is currently retained and does not prove it never occurred."""
+    """ True when at least one matching fact for the selected contract version remains under normal Operation
+    retention. False means no matching fact is currently retained and does not prove it never occurred. """
     milestones_in_retention: int
-    """Number of matching facts for the selected contract version that remain under normal Operation retention."""
+    """ Number of matching facts for the selected contract version that remain under normal Operation retention. """
     operation: str | Unset = UNSET
     operation_id: UUID | Unset = UNSET
     latest_milestone: OperationWorkflowInstanceMilestoneRef | Unset = UNSET
-    """Identity and occurrence and publication times of a milestone observed for a declared workflow step."""
+    """ Identity and occurrence and publication times of a milestone observed for a declared workflow step. """
     latest_retained_milestone: OperationWorkflowInstanceMilestoneRef | Unset = UNSET
-    """Identity and occurrence and publication times of a milestone observed for a declared workflow step."""
+    """ Identity and occurrence and publication times of a milestone observed for a declared workflow step. """
 
     def to_dict(self) -> dict[str, Any]:
         step = self.step

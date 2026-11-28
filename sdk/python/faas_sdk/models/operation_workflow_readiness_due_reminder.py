@@ -18,12 +18,12 @@ class OperationWorkflowReadinessDueReminder:
     """
 
     id: UUID
-    """OperationWorkflowReadinessDueReminder.id. Stable UUID derived from notification identity and normalized
-    deadline, shared across retries and restarts."""
+    """ OperationWorkflowReadinessDueReminder.id. Stable UUID derived from notification identity and normalized
+    deadline, shared across retries and restarts. """
     due_at: datetime.datetime
-    """OperationWorkflowReadinessDueReminder.due_at. Deadline this reminder belongs to."""
+    """ OperationWorkflowReadinessDueReminder.due_at. Deadline this reminder belongs to. """
     created_at: datetime.datetime
-    """OperationWorkflowReadinessDueReminder.created_at. Successful reminder publication time."""
+    """ OperationWorkflowReadinessDueReminder.created_at. Successful reminder publication time. """
 
     def to_dict(self) -> dict[str, Any]:
         id = str(self.id)

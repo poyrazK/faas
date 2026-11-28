@@ -21,10 +21,10 @@ class BillingCancelResponse:
     """
 
     cancel_scheduled: bool
-    """Always true; the absence of an active subscription returns 409 instead."""
+    """ Always true; the absence of an active subscription returns 409 instead. """
     effective_at: datetime.datetime
-    """RFC 3339 instant at which the subscription terminates (Stripe: current_period_end; Paddle: next month-
-    rollover)."""
+    """ RFC 3339 instant at which the subscription terminates (Stripe: current_period_end; Paddle: next month-
+    rollover). """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

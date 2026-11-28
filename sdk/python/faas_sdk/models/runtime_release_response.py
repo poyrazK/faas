@@ -30,15 +30,15 @@ class RuntimeReleaseResponse:
     runtime: RuntimeReleaseResponseRuntime
     architecture: RuntimeReleaseResponseArchitecture
     source_digest: str
-    """Immutable OCI source manifest digest."""
+    """ Immutable OCI source manifest digest. """
     guest_init_digest: str
-    """SHA-256 of the PID 1 binary injected into this base."""
+    """ SHA-256 of the PID 1 binary injected into this base. """
     base_digest: str
-    """SHA-256 of the exact published ext4 bytes."""
+    """ SHA-256 of the exact published ext4 bytes. """
     layout_version: str
     published_at: datetime.datetime
     qualification: RuntimeReleaseResponseQualification
-    """Publication alone establishes no upgrade compatibility verdict."""
+    """ Publication alone establishes no upgrade compatibility verdict. """
 
     def to_dict(self) -> dict[str, Any]:
         id = self.id

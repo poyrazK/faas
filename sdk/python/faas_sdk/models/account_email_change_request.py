@@ -17,7 +17,7 @@ class AccountEmailChangeRequest:
 
     email: str
     current_password: str | Unset = UNSET
-    """Required when the account has a password and no two-factor authentication."""
+    """ Required when the account has a password and no two-factor authentication. """
     csrf_token: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

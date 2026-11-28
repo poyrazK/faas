@@ -21,22 +21,22 @@ class EgressOverageResponse:
     """
 
     enabled: bool
-    """Whether the election is on."""
+    """ Whether the election is on. """
     electable: bool
-    """Whether the plan allows the election; Free does not."""
+    """ Whether the plan allows the election; Free does not. """
     included_gib: int
-    """The plan's monthly egress allowance in GiB."""
+    """ The plan's monthly egress allowance in GiB. """
     billing: EgressOverageResponseBilling
-    """live when egress above the allowance is billed while the election is on; off while egress is not billed,
-    when the allowance still holds."""
+    """ live when egress above the allowance is billed while the election is on; off while egress is not billed,
+    when the allowance still holds. """
     enabled_at: datetime.datetime | Unset = UNSET
-    """When the election started; kept when it is turned off and on again."""
+    """ When the election started; kept when it is turned off and on again. """
     disabled_at: datetime.datetime | Unset = UNSET
-    """When the election was last turned off."""
+    """ When the election was last turned off. """
     price_millicents_per_gib: int | Unset = UNSET
-    """Price of a GiB above the allowance while billing is live, in millicents."""
+    """ Price of a GiB above the allowance while billing is live, in millicents. """
     currency: str | Unset = UNSET
-    """Currency of the price."""
+    """ Currency of the price. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

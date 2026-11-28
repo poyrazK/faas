@@ -21,7 +21,7 @@ class ManagedPostgresQueryResponse:
     rows: list[list[None | str]]
     row_count: int
     truncated: bool
-    """True when the row or 1 MiB cap stopped reading before the result ended."""
+    """ True when the row or 1 MiB cap stopped reading before the result ended. """
     duration_ms: int
 
     def to_dict(self) -> dict[str, Any]:

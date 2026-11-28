@@ -19,7 +19,7 @@ class DebugDependencyQueryItem:
     """
 
     pattern: str
-    """Redacted, normalized statement; never contains literal values."""
+    """ Redacted, normalized statement; never contains literal values. """
     calls: int
     error_calls: int
     p95_ms: int

@@ -421,9 +421,26 @@ def test_regenerated_preview_barrel_preserves_live_jobs(tmp_path, monkeypatch):
 
 def test_regenerated_preview_barrel_preserves_job_pipelines(tmp_path, monkeypatch):
     generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
-    for module in ("pipeline_state.py", "job_pipelines.py", "job_pipeline_client.py", "pipeline_gates.py", "pipeline_children.py", "pipeline_children_state.py"):
+    for module in (
+        "pipeline_state.py",
+        "job_pipelines.py",
+        "job_pipeline_client.py",
+        "pipeline_gates.py",
+        "pipeline_children.py",
+        "pipeline_children_state.py",
+    ):
         assert module in generator.PREVIEW_WRAPPER_MODULES
-    for name in ("JobPipelineClient", "JobPipeline", "PipelineScope", "PipelineJobReceipt", "job_pipeline_live_snapshot", "PipelineGateService", "PipelineGateOptions", "PipelineChildren", "PipelineChildOptions"):
+    for name in (
+        "JobPipelineClient",
+        "JobPipeline",
+        "PipelineScope",
+        "PipelineJobReceipt",
+        "job_pipeline_live_snapshot",
+        "PipelineGateService",
+        "PipelineGateOptions",
+        "PipelineChildren",
+        "PipelineChildOptions",
+    ):
         assert name in generator._PREVIEW_INIT_PY_TEMPLATE
         assert name not in generator._INIT_PY_TEMPLATE
     compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
@@ -433,7 +450,13 @@ def test_regenerated_preview_barrel_preserves_event_pipelines(tmp_path, monkeypa
     generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
     for module in ("event_contract.py", "event_types.py", "event_pipeline_state.py", "event_pipelines.py"):
         assert module in generator.PREVIEW_WRAPPER_MODULES
-    for name in ("EventContract", "EventPipeline", "EventPipelineReceipt", "EventPipelineDelivery", "PostgresEventPipelineStore"):
+    for name in (
+        "EventContract",
+        "EventPipeline",
+        "EventPipelineReceipt",
+        "EventPipelineDelivery",
+        "PostgresEventPipelineStore",
+    ):
         assert name in generator._PREVIEW_INIT_PY_TEMPLATE
         assert name not in generator._INIT_PY_TEMPLATE
     compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
@@ -441,9 +464,22 @@ def test_regenerated_preview_barrel_preserves_event_pipelines(tmp_path, monkeypa
 
 def test_regenerated_preview_preserves_event_outbox(tmp_path, monkeypatch):
     generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
-    for module in ("_event_outbox_protocol.py", "event_outbox.py", "event_outbox_state.py", "event_outbox_transaction.py", "event_publication.py"):
+    for module in (
+        "_event_outbox_protocol.py",
+        "event_outbox.py",
+        "event_outbox_state.py",
+        "event_outbox_transaction.py",
+        "event_publication.py",
+    ):
         assert module in generator.PREVIEW_WRAPPER_MODULES
-    for name in ("EventPublisher", "EventOutbox", "EventOutboxTransaction", "PsycopgEventOutboxPool", "EVENT_OUTBOX_SCHEMA", "with_event_outbox_transaction"):
+    for name in (
+        "EventPublisher",
+        "EventOutbox",
+        "EventOutboxTransaction",
+        "PsycopgEventOutboxPool",
+        "EVENT_OUTBOX_SCHEMA",
+        "with_event_outbox_transaction",
+    ):
         assert name in generator._PREVIEW_INIT_PY_TEMPLATE
         assert name not in generator._INIT_PY_TEMPLATE
     compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
@@ -471,9 +507,22 @@ def test_regenerated_preview_preserves_stripe_webhooks(tmp_path, monkeypatch):
 
 def test_regenerated_preview_preserves_pipeline_tools(tmp_path, monkeypatch):
     generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
-    for module in ("_pipeline_tool_protocol.py", "pipeline_tool_state.py", "pipeline_tools.py", "pipeline_tool_mcp.py", "pipeline_output_resources.py"):
+    for module in (
+        "_pipeline_tool_protocol.py",
+        "pipeline_tool_state.py",
+        "pipeline_tools.py",
+        "pipeline_tool_mcp.py",
+        "pipeline_output_resources.py",
+    ):
         assert module in generator.PREVIEW_WRAPPER_MODULES
-    for name in ("PipelineTool", "PipelineToolMCP", "PipelineToolActor", "PipelineOutputResource", "PipelineToolResult", "PIPELINE_TOOL_SCHEMA"):
+    for name in (
+        "PipelineTool",
+        "PipelineToolMCP",
+        "PipelineToolActor",
+        "PipelineOutputResource",
+        "PipelineToolResult",
+        "PIPELINE_TOOL_SCHEMA",
+    ):
         assert name in generator._PREVIEW_INIT_PY_TEMPLATE
         assert name not in generator._INIT_PY_TEMPLATE
     compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
@@ -496,7 +545,13 @@ def test_regenerated_preview_preserves_compensation(tmp_path, monkeypatch):
 
 def test_regenerated_preview_preserves_outbound_actions(tmp_path, monkeypatch):
     generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
-    for module in ("_outbound_action_protocol.py", "outbound_action_state.py", "outbound_actions.py", "outbound_action_mcp.py", "stripe_refund_actions.py"):
+    for module in (
+        "_outbound_action_protocol.py",
+        "outbound_action_state.py",
+        "outbound_actions.py",
+        "outbound_action_mcp.py",
+        "stripe_refund_actions.py",
+    ):
         assert module in generator.PREVIEW_WRAPPER_MODULES
     for name in ("OutboundAction", "OutboundActionMCP", "StripeRefundActionProvider", "OUTBOUND_ACTION_SCHEMA"):
         assert name in generator._PREVIEW_INIT_PY_TEMPLATE

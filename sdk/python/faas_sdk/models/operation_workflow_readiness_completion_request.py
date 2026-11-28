@@ -34,40 +34,40 @@ class OperationWorkflowReadinessCompletionRequest:
     """
 
     outcome: OperationWorkflowReadinessCompletionRequestOutcome
-    """OperationWorkflowReadinessCompletionRequest.outcome. Retained follow-up completion value; never changes
-    application evidence."""
+    """ OperationWorkflowReadinessCompletionRequest.outcome. Retained follow-up completion value; never changes
+    application evidence. """
     note: str
-    """OperationWorkflowReadinessCompletionRequest.note. Retained follow-up completion value; never changes
-    application evidence."""
+    """ OperationWorkflowReadinessCompletionRequest.note. Retained follow-up completion value; never changes
+    application evidence. """
     evidence_operation_ids: list[UUID]
-    """OperationWorkflowReadinessCompletionRequest.evidence_operation_ids. Retained follow-up completion value;
-    never changes application evidence."""
+    """ OperationWorkflowReadinessCompletionRequest.evidence_operation_ids. Retained follow-up completion value;
+    never changes application evidence. """
     playbook_review_after_seconds: int | Unset = UNSET
-    """OperationWorkflowReadinessCompletionRequest.playbook_review_after_seconds. Optional review window after
-    business-aware playbook completion; zero disables. Monitoring also ends with source inbox retention."""
+    """ OperationWorkflowReadinessCompletionRequest.playbook_review_after_seconds. Optional review window after
+    business-aware playbook completion; zero disables. Monitoring also ends with source inbox retention. """
     playbook_resolution: OperationWorkflowReadinessCompletionRequestPlaybookResolution | Unset = UNSET
-    """OperationWorkflowReadinessCompletionRequest.playbook_resolution. Optional business disposition for assigned
+    """ OperationWorkflowReadinessCompletionRequest.playbook_resolution. Optional business disposition for assigned
     playbook escalations. Expected or alternative resolutions require outcome resolved; canceled requires
     no_longer_applicable. Uses the frozen expectation, permits empty note and evidence IDs, and excludes extra
-    outcome or verification watches."""
+    outcome or verification watches. """
     escalation_policy: OperationWorkflowReadinessOutcomeEscalationPolicy | Unset = UNSET
-    """Opt-in deadline escalation policy frozen at completion. Requires an outcome watch and future outcome
-    deadline. Schedules one assigned follow-up on the deadline notification; never executes business actions."""
+    """ Opt-in deadline escalation policy frozen at completion. Requires an outcome watch and future outcome
+    deadline. Schedules one assigned follow-up on the deadline notification; never executes business actions. """
     watch_outcome: bool | Unset = UNSET
-    """OperationWorkflowReadinessCompletionRequest.watch_outcome. Opt in at completion to observe a pending or
+    """ OperationWorkflowReadinessCompletionRequest.watch_outcome. Opt in at completion to observe a pending or
     unknown business result; requires expected_outcome_code and a source workflow. The watch expires with source
-    inbox retention."""
+    inbox retention. """
     outcome_deadline_at: datetime.datetime | Unset = UNSET
-    """OperationWorkflowReadinessCompletionRequest.outcome_deadline_at. Optional future UTC deadline requiring
+    """ OperationWorkflowReadinessCompletionRequest.outcome_deadline_at. Optional future UTC deadline requiring
     watch_outcome. The first successful due check without an observed achieved outcome emits one notice; this is not
-    business failure or a historical deadline verdict."""
+    business failure or a historical deadline verdict. """
     expected_outcome_code: str | Unset = UNSET
-    """OperationWorkflowReadinessCompletionRequest.expected_outcome_code. Optional caller-selected terminal outcome
+    """ OperationWorkflowReadinessCompletionRequest.expected_outcome_code. Optional caller-selected terminal outcome
     slug compared with application reports for the source workflow; never defines or modifies application success
-    rules."""
+    rules. """
     watch_verification: bool | Unset = UNSET
-    """OperationWorkflowReadinessCompletionRequest.watch_verification. Opt in at completion to watch up to 16
-    currently pending saved resolutions; requires comparable current pending evidence."""
+    """ OperationWorkflowReadinessCompletionRequest.watch_verification. Opt in at completion to watch up to 16
+    currently pending saved resolutions; requires comparable current pending evidence. """
 
     def to_dict(self) -> dict[str, Any]:
         outcome: str = self.outcome

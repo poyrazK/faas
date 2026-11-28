@@ -113,6 +113,9 @@ func (h *Handler) commitHostingFailure(ctx context.Context, app state.App, dep s
 	case apihostingreceipt.SmokeErrorVerificationContractFailed:
 		code = api.CodeDeploymentVerificationContractFailed
 		message = smokeErr.Error()
+	case apihostingreceipt.SmokeErrorMCPContractBreaking:
+		code = api.CodeMCPContractBreaking
+		message = smokeErr.Error()
 	}
 	changed, err := store.FailDeploymentWithHostingReceipt(ctx, dep.ID, raw, code, message)
 	if err != nil {

@@ -17,7 +17,8 @@ class OperationWorkflowReadinessSubscriptionsResponse:
     """Subscriptions in this ownership, application and environment scope."""
 
     items: list[OperationWorkflowReadinessSubscription]
-    """OperationWorkflowReadinessSubscriptionsResponse.items. Subscriptions ordered by creation time and identity."""
+    """ OperationWorkflowReadinessSubscriptionsResponse.items. Subscriptions ordered by creation time and identity.
+    """
 
     def to_dict(self) -> dict[str, Any]:
         items = []

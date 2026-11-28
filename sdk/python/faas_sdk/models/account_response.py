@@ -35,37 +35,37 @@ class AccountResponse:
     plan: AccountResponsePlan
     status: AccountResponseStatus
     limits: AccountLimits
-    """Plan-driven quota, resource caps, and trigger capabilities returned by GET /v1/account."""
+    """ Plan-driven quota, resource caps, and trigger capabilities returned by GET /v1/account. """
     usage_gb_hours: float
     app_count: int
     developer_app_count: int
-    """Live `gregale dev` environments; these do not consume deployed_apps slots."""
+    """ Live `gregale dev` environments; these do not consume deployed_apps slots. """
     display_name: str | Unset = UNSET
-    """Optional display name; absent when unset."""
+    """ Optional display name; absent when unset. """
     email_verification_grace_ends_at: datetime.datetime | Unset = UNSET
-    """30-day verification deadline; present only while email_verified is false."""
+    """ 30-day verification deadline; present only while email_verified is false. """
     github_install_id: None | str | Unset = UNSET
     plan_change_status: str | Unset = UNSET
     requested_plan: AccountResponseRequestedPlan | Unset = UNSET
     effective_at: datetime.datetime | Unset = UNSET
     business_name: str | Unset = UNSET
-    """Legal business name used on future invoices."""
+    """ Legal business name used on future invoices. """
     billing_address: str | Unset = UNSET
-    """Free-form billing address used on future invoices."""
+    """ Free-form billing address used on future invoices. """
     tax_id: str | Unset = UNSET
-    """Customer tax/VAT identifier used on future invoices."""
+    """ Customer tax/VAT identifier used on future invoices. """
     key_scopes: list[str] | Unset = UNSET
-    """Scopes of the API key that authenticated this request; absent for a dashboard session. An agent key (scope
-    agent) lists the tools the hosted MCP server offers it."""
+    """ Scopes of the API key that authenticated this request; absent for a dashboard session. An agent key (scope
+    agent) lists the tools the hosted MCP server offers it. """
     key_app: AppAgentBinding | Unset = UNSET
-    """Immutable app binding of an app-scoped headless agent credential; absent for account keys."""
+    """ Immutable app binding of an app-scoped headless agent credential; absent for account keys. """
     key_org: KeyOrg | Unset = UNSET
-    """The shared organization an API key acts in."""
+    """ The shared organization an API key acts in. """
     key_projects: list[str] | Unset = UNSET
-    """Slugs of the projects the authenticating key is limited to; absent when the key reaches every project."""
+    """ Slugs of the projects the authenticating key is limited to; absent when the key reaches every project. """
     abuse_hold: AccountAbuseHold | Unset = UNSET
-    """Present while the account is on an abuse hold: outbound traffic from its workloads matched a scanning or
-    abuse pattern, so nothing runs or deploys until an operator releases it."""
+    """ Present while the account is on an abuse hold: outbound traffic from its workloads matched a scanning or
+    abuse pattern, so nothing runs or deploys until an operator releases it. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -45,40 +45,40 @@ class MCPReadinessIncidentEvent:
     """Readiness incident transition or continuation with current notification status."""
 
     id: UUID
-    """Logical event ID."""
+    """ Logical event ID. """
     incident_id: UUID
     event_id: UUID
-    """Stable across retries; also the signed webhook ID."""
+    """ Stable across retries; also the signed webhook ID. """
     event: MCPReadinessIncidentEventEvent
     rule_id: UUID
     scopes: list[str]
     occurred_at: datetime.datetime
-    """Logical event time"""
+    """ Logical event time """
     incident_status: MCPReadinessIncidentEventIncidentStatus
-    """Current incident state independent of notification success."""
+    """ Current incident state independent of notification success. """
     delivery_status: MCPReadinessIncidentEventDeliveryStatus
     attempt_count: int
     subjects: list[MCPReadinessMonitorStatus]
     destination_deliveries: list[MCPReadinessDestinationDelivery] | Unset = UNSET
-    """Materialized receiver progress with independent retry and lease times."""
+    """ Materialized receiver progress with independent retry and lease times. """
     delivery_routing: MCPReadinessDeliveryRouting | Unset = UNSET
-    """Credential-free destination progress for one immutable readiness event. A recovery can remain pending after
-    fallback succeeds while the previously informed primary is still outstanding."""
+    """ Credential-free destination progress for one immutable readiness event. A recovery can remain pending after
+    fallback succeeds while the previously informed primary is still outstanding. """
     mcp_readiness_scope: str | Unset = UNSET
-    """Empty or omitted selects all environments."""
+    """ Empty or omitted selects all environments. """
     attempted_at: datetime.datetime | Unset = UNSET
     delivery_version: int | Unset = UNSET
-    """Changes on claims, completions, suppression and operator decisions."""
+    """ Changes on claims, completions, suppression and operator decisions. """
     last_operator_action: MCPReadinessNotificationReceipt | Unset = UNSET
-    """Immutable recovery decision retained transactionally with the queue change."""
+    """ Immutable recovery decision retained transactionally with the queue change. """
     maintenance_window_ids: list[UUID] | Unset = UNSET
-    """Windows responsible for suppressing this notification."""
+    """ Windows responsible for suppressing this notification. """
     suppression_reason: MCPReadinessIncidentEventSuppressionReason | Unset = UNSET
     notification_reason: MCPReadinessIncidentEventNotificationReason | Unset = UNSET
     reminder_number: int | Unset = UNSET
-    """Per-incident reminder creation number; omitted for ordinary notifications."""
+    """ Per-incident reminder creation number; omitted for ordinary notifications. """
     next_attempt_at: datetime.datetime | Unset = UNSET
-    """Next eligible delivery time. Omitted for all terminal delivery states."""
+    """ Next eligible delivery time. Omitted for all terminal delivery states. """
     last_delivery_id: UUID | Unset = UNSET
     last_status_code: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

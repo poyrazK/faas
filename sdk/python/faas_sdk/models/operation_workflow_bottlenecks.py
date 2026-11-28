@@ -31,21 +31,21 @@ class OperationWorkflowBottlenecks:
 
     evaluated_at: datetime.datetime
     history_complete: bool
-    """True only when the retained window starts at revision 1 and reaches the current report without gaps or
-    invalid interval boundaries."""
+    """ True only when the retained window starts at revision 1 and reaches the current report without gaps or
+    invalid interval boundaries. """
     incomplete_reasons: list[OperationWorkflowBottlenecksIncompleteReasonsItem]
     reports_in_window: int
     history_truncated: bool
     ongoing: bool
-    """Current workflow state is nonterminal. Ongoing duration is evaluated as of evaluated_at."""
+    """ Current workflow state is nonterminal. Ongoing duration is evaluated as of evaluated_at. """
     state_seconds: int
     blocked_seconds: int
-    """Union of measured intervals with at least one active blocker. Overlapping blocker groups can sum to more
-    than this total."""
+    """ Union of measured intervals with at least one active blocker. Overlapping blocker groups can sum to more
+    than this total. """
     verification_unknown_start_count: int
     verification_wait_seconds: int
-    """Sum of whole observed wait seconds across obligations with known publication starts in the history window.
-    Overlapping waits are counted separately."""
+    """ Sum of whole observed wait seconds across obligations with known publication starts in the history window.
+    Overlapping waits are counted separately. """
     states: list[OperationWorkflowStateDuration]
     blockers: list[OperationWorkflowBlockerDuration]
     verification_owners: list[OperationWorkflowVerificationDuration]

@@ -19,15 +19,15 @@ class FeatureHint:
     """
 
     id: str
-    """Stable hint ID, such as health-default-path or public-needs-api-key"""
+    """ Stable hint ID, such as health-default-path or public-needs-api-key """
     applied: str
-    """What Gregale will do with this source"""
+    """ What Gregale will do with this source """
     workloads: list[str] | Unset = UNSET
-    """Workloads the hint is about"""
+    """ Workloads the hint is about """
     change: str | Unset = UNSET
-    """How to change it"""
+    """ How to change it """
     commands: list[str] | Unset = UNSET
-    """Exact gregale commands; <placeholders> need a value"""
+    """ Exact gregale commands; <placeholders> need a value """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

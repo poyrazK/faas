@@ -24,12 +24,12 @@ class ExecutionWorkflowResponse:
     workflow_id: str
     run_count: int
     status_counts: ExecutionWorkflowStatusCounts
-    """Number of runs in each lifecycle state."""
+    """ Number of runs in each lifecycle state. """
     usage: ExecutionWorkflowUsage
-    """Host-measured usage summed over terminal runs; peak memory is the maximum individual run peak."""
+    """ Host-measured usage summed over terminal runs; peak memory is the maximum individual run peak. """
     managed: list[ManagedExecutionWorkflowResponse] | Unset = UNSET
-    """Managed plans matching the workflow id and visible to this principal. Broad credentials can see plans
-    submitted by multiple key families."""
+    """ Managed plans matching the workflow id and visible to this principal. Broad credentials can see plans
+    submitted by multiple key families. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

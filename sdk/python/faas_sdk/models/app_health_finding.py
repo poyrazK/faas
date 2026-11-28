@@ -20,14 +20,14 @@ class AppHealthFinding:
     reason: AppHealthFindingReason
     status: AppHealthFindingStatus
     detail: str
-    """Safe explanation without probe output or infrastructure addresses."""
+    """ Safe explanation without probe output or infrastructure addresses. """
     deployment_id: str
     instance_id: str
     source: str
-    """node, configuration, primary_app, or sidecar followed by a colon and the declared companion name."""
+    """ node, configuration, primary_app, or sidecar followed by a colon and the declared companion name. """
     observed_at: datetime.datetime | Unset = UNSET
-    """Recorded readiness transition or last node heartbeat; absent for missing evidence. A transition time is not
-    a probe heartbeat."""
+    """ Recorded readiness transition or last node heartbeat; absent for missing evidence. A transition time is not
+    a probe heartbeat. """
 
     def to_dict(self) -> dict[str, Any]:
         reason: str = self.reason

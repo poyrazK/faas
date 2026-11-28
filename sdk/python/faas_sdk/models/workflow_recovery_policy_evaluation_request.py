@@ -22,17 +22,17 @@ class WorkflowRecoveryPolicyEvaluationRequest:
 
     expected_version: int
     policy: WorkflowRecoveryPolicy
-    """Explicit app recovery policy. Preview prepares parent-job plans and worker-discovered initial-failure
+    """ Explicit app recovery policy. Preview prepares parent-job plans and worker-discovered initial-failure
     reviews. initial_failure requires explicit failure statuses. Opt-in automatic_retry requires saved_failure only;
     automatic_initial requires initial_failure only. Both require explicit workflow and failure-status filters and
     execution limits. Resume count caps the absolute generation; preparation and execution budgets are separate.
-    Cancellation remains manual."""
+    Cancellation remains manual. """
     workflow: str | Unset = UNSET
     created_after: datetime.datetime | Unset = UNSET
-    """Inclusive evaluation start; defaults to seven days before the end."""
+    """ Inclusive evaluation start; defaults to seven days before the end. """
     created_before: datetime.datetime | Unset = UNSET
-    """Inclusive evaluation end; defaults to observation time. Maximum window is 30 days and future bounds are
-    rejected."""
+    """ Inclusive evaluation end; defaults to observation time. Maximum window is 30 days and future bounds are
+    rejected. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

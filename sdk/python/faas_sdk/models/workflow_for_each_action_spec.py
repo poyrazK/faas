@@ -36,7 +36,7 @@ class WorkflowForEachActionSpec:
     run: str | Unset = UNSET
     path: str | Unset = UNSET
     outbound: WorkflowOutboundSpec | Unset = UNSET
-    """Call an existing customer managed outbound integration bound to this app.
+    """ Call an existing customer managed outbound integration bound to this app.
     Credentials and fixed-origin routing remain with the outbound gateway. Input is a
     templated JSON body. Path segments and query values support the workflow
     template syntax; dynamic path values are escaped as one segment. GET and
@@ -44,16 +44,16 @@ class WorkflowForEachActionSpec:
     One provider call occurs per workflow attempt. Automatic mutating retries
     require explicit provider idempotency support. Workflow outputs contain
     status and body; sensitive headers and failed-response bodies are omitted.
-    """
+     """
     method: WorkflowForEachActionSpecMethod | Unset = UNSET
     input_: bool | float | list[Any] | None | str | Unset | WorkflowForEachActionSpecInputType0 = UNSET
-    """Typed JSON input template for each item."""
+    """ Typed JSON input template for each item. """
     timeout: str | Unset = UNSET
-    """Per-item action timeout, bounded by the workflow plan limit."""
+    """ Per-item action timeout, bounded by the workflow plan limit. """
     retry: WorkflowRetrySpec | Unset = UNSET
-    """Retry policy for one workflow step."""
+    """ Retry policy for one workflow step. """
     when: WorkflowGuardSpec | Unset = UNSET
-    """Bounded declarative when predicate. Specify exactly one of all, any,
+    """ Bounded declarative when predicate. Specify exactly one of all, any,
     not, or ref/op/value. References select input or a direct dependency
     output using input.foo or steps.lookup.output.body.foo without template
     delimiters. Equality is type-sensitive and accepts scalar literals only.
@@ -63,7 +63,7 @@ class WorkflowForEachActionSpec:
     At most 32 predicate nodes, 8 levels and 16 KiB per guard. Guards are
     forbidden on on_failure/on_timeout handler targets. A false guard skips
     its step and propagates through dependencies; skipped paths do not join.
-    """
+     """
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.workflow_for_each_action_spec_input_type_0 import WorkflowForEachActionSpecInputType0

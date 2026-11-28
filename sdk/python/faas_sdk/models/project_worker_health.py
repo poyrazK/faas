@@ -21,9 +21,9 @@ class ProjectWorkerHealth:
 
     status: ProjectWorkerHealthStatus
     candidate: ProjectWorkerJobSample
-    """Attributed delivery attempts in a bounded window, including unknown unfinished deliveries."""
+    """ Attributed delivery attempts in a bounded window, including unknown unfinished deliveries. """
     baseline: ProjectWorkerJobSample
-    """Attributed delivery attempts in a bounded window, including unknown unfinished deliveries."""
+    """ Attributed delivery attempts in a bounded window, including unknown unfinished deliveries. """
     pending_jobs: int
     oldest_pending_age_ms: int
     baseline_pending_jobs: int

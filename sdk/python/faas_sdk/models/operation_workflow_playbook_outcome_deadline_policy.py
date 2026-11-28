@@ -19,23 +19,23 @@ class OperationWorkflowPlaybookOutcomeDeadlinePolicy:
     """
 
     after_seconds: int
-    """OperationWorkflowPlaybookOutcomeDeadlinePolicy.after_seconds. Expected wait from checklist creation, bounded
-    to ten years."""
+    """ OperationWorkflowPlaybookOutcomeDeadlinePolicy.after_seconds. Expected wait from checklist creation, bounded
+    to ten years. """
     owner: str
-    """OperationWorkflowPlaybookOutcomeDeadlinePolicy.owner. Required responsible team label with no surrounding
-    whitespace or control characters."""
+    """ OperationWorkflowPlaybookOutcomeDeadlinePolicy.owner. Required responsible team label with no surrounding
+    whitespace or control characters. """
     follow_up_after_seconds: int
-    """OperationWorkflowPlaybookOutcomeDeadlinePolicy.follow_up_after_seconds. Assigned follow-up delay from actual
-    notice delivery, independently bounded to one week."""
+    """ OperationWorkflowPlaybookOutcomeDeadlinePolicy.follow_up_after_seconds. Assigned follow-up delay from actual
+    notice delivery, independently bounded to one week. """
     acknowledge_after_seconds: int | Unset = UNSET
-    """OperationWorkflowPlaybookOutcomeDeadlinePolicy.acknowledge_after_seconds. Optional response window from
-    actual assigned escalation delivery; zero disables monitoring."""
+    """ OperationWorkflowPlaybookOutcomeDeadlinePolicy.acknowledge_after_seconds. Optional response window from
+    actual assigned escalation delivery; zero disables monitoring. """
     fallback_owner: str | Unset = UNSET
-    """OperationWorkflowPlaybookOutcomeDeadlinePolicy.fallback_owner. Optional distinct fallback team; requires a
-    response window and never overrides manual assignments."""
+    """ OperationWorkflowPlaybookOutcomeDeadlinePolicy.fallback_owner. Optional distinct fallback team; requires a
+    response window and never overrides manual assignments. """
     note: str | Unset = UNSET
-    """OperationWorkflowPlaybookOutcomeDeadlinePolicy.note. Optional initial plain-text follow-up note; subsequent
-    human notes are preserved."""
+    """ OperationWorkflowPlaybookOutcomeDeadlinePolicy.note. Optional initial plain-text follow-up note; subsequent
+    human notes are preserved. """
 
     def to_dict(self) -> dict[str, Any]:
         after_seconds = self.after_seconds

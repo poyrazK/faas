@@ -52,27 +52,27 @@ class JobRunResponse:
     dead_letter_count: int
     created_at: datetime.datetime
     occurrence_id: UUID | Unset = UNSET
-    """Durable scheduled-occurrence decision linked to this run."""
+    """ Durable scheduled-occurrence decision linked to this run. """
     start_deadline_at: datetime.datetime | Unset = UNSET
-    """Latest permitted first task start for this scheduled occurrence."""
+    """ Latest permitted first task start for this scheduled occurrence. """
     failure_rules: FailureRules | Unset = UNSET
-    """Versioned explicit classification policy for failed Job partitions, command-Cron executions, and HTTP Cron
-    outcome codes. HTTP status is not a business outcome matcher."""
+    """ Versioned explicit classification policy for failed Job partitions, command-Cron executions, and HTTP Cron
+    outcome codes. HTTP status is not a business outcome matcher. """
     env_overrides: JobRunResponseEnvOverrides | Unset = UNSET
     input_manifest_version: int | Unset = UNSET
-    """0 for numeric fan-out, 1 for an ordered inline or external input manifest."""
+    """ 0 for numeric fan-out, 1 for an ordered inline or external input manifest. """
     input_digest: str | Unset = UNSET
-    """SHA-256 of the canonical ordered input manifest."""
+    """ SHA-256 of the canonical ordered input manifest. """
     input_manifest_uri: str | Unset = UNSET
-    """Source obj:// URI for an external input manifest."""
+    """ Source obj:// URI for an external input manifest. """
     input_manifest_sha256: str | Unset = UNSET
-    """SHA-256 of the external manifest's exact bytes."""
+    """ SHA-256 of the external manifest's exact bytes. """
     eligible_at: datetime.datetime | Unset = UNSET
     latest_start_at: datetime.datetime | Unset = UNSET
     retry_max: int | Unset = UNSET
     task_timeout_sec: int | Unset = UNSET
     command: list[str] | Unset = UNSET
-    """Command captured at run creation."""
+    """ Command captured at run creation. """
     image_ref_snapshot: str | Unset = UNSET
     image_resolved_digest_snapshot: str | Unset = UNSET
     ram_mb_snapshot: int | Unset = UNSET

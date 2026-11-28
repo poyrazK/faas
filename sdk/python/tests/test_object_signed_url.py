@@ -4,9 +4,7 @@ import json
 from uuid import UUID
 
 import httpx
-
 from faas_sdk.preview.api.storage import create_object_multipart_upload, sign_bucket_object
-from faas_sdk.client import AuthenticatedClient
 from faas_sdk.preview.models import (
     CreateObjectMultipartUploadRequest,
     ObjectEncryption,
@@ -14,6 +12,8 @@ from faas_sdk.preview.models import (
     ObjectSignedRequest,
     ObjectSignRequest,
 )
+
+from faas_sdk.client import AuthenticatedClient
 
 
 def test_historical_read_and_public_version_pagination() -> None:

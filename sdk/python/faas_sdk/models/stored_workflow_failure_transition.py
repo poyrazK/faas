@@ -24,21 +24,21 @@ class StoredWorkflowFailureTransition:
     """Immutable bounded aggregate evidence for a failure guard transition."""
 
     generation: int
-    """Unique runtime transition generation for this stored workflow."""
+    """ Unique runtime transition generation for this stored workflow. """
     state: StoredWorkflowFailureTransitionState
-    """Failure guard state resulting from this transition."""
+    """ Failure guard state resulting from this transition. """
     reason: StoredWorkflowFailureTransitionReason
-    """Closed reason for the recorded transition."""
+    """ Closed reason for the recorded transition. """
     recorded_at: datetime.datetime
-    """Server timestamp of the pause or operator resume."""
+    """ Server timestamp of the pause or operator resume. """
     failures: int
-    """Observed failures recorded with this transition."""
+    """ Observed failures recorded with this transition. """
     completed_runs: int
-    """Observed completed sample count recorded with this transition."""
+    """ Observed completed sample count recorded with this transition. """
     policy_version: int
-    """Failure monitoring policy revision used for this transition."""
+    """ Failure monitoring policy revision used for this transition. """
     actor_account_id: str | Unset = UNSET
-    """Account that explicitly resumed; empty or omitted for an automatic pause."""
+    """ Account that explicitly resumed; empty or omitted for an automatic pause. """
 
     def to_dict(self) -> dict[str, Any]:
         generation = self.generation

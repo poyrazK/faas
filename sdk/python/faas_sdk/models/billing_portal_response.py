@@ -28,15 +28,15 @@ class BillingPortalResponse:
     """
 
     url: None | str | Unset = UNSET
-    """Short-lived provider session URL, or substituted operator URL when no provider session is available."""
+    """ Short-lived provider session URL, or substituted operator URL when no provider session is available. """
     payment_method: PaymentMethodSummary | Unset = UNSET
-    """Card-on-file summary. Provider-agnostic shape —
+    """ Card-on-file summary. Provider-agnostic shape —
     the same wire shape is returned whether the operator runs
     Stripe or Paddle. brand is the lowercase network label
     ("visa", "mastercard", "amex"); last4 is the last-4 of the
     PAN (no full PAN, no PCI surface); exp_month / exp_year are
     integer card-face expiry fields.
-    """
+     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

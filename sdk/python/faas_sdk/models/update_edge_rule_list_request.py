@@ -17,7 +17,7 @@ class UpdateEdgeRuleListRequest:
 
     description: str | Unset = UNSET
     items: list[str] | Unset = UNSET
-    """Replace every item. Cannot be combined with add or remove."""
+    """ Replace every item. Cannot be combined with add or remove. """
     add: list[str] | Unset = UNSET
     remove: list[str] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

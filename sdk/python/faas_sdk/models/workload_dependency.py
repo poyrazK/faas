@@ -17,9 +17,9 @@ class WorkloadDependency:
     """Dependency on another workload in the same deployment."""
 
     name: str
-    """Workload name: main or another sidecar name."""
+    """ Workload name: main or another sidecar name. """
     condition: WorkloadDependencyCondition | Unset = "started"
-    """Lifecycle condition required before the dependent workload starts."""
+    """ Lifecycle condition required before the dependent workload starts. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

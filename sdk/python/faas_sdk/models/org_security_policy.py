@@ -17,7 +17,7 @@ class OrgSecurityPolicy:
     """An organization's security policy."""
 
     require_mfa: bool
-    """Members without two-factor authentication are refused on the organization's routes."""
+    """ Members without two-factor authentication are refused on the organization's routes. """
     updated_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

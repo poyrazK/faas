@@ -21,13 +21,13 @@ class DiffChange:
     """
 
     field: str
-    """Human path: 'memory', 'concurrency', 'environment.<scope>.<key>', 'cron[<schedule> <path>]',
-    'edge_rule[<kind> <host><path>]'"""
+    """ Human path: 'memory', 'concurrency', 'environment.<scope>.<key>', 'cron[<schedule> <path>]',
+    'edge_rule[<kind> <host><path>]' """
     kind: DiffChangeKind
     before: Any | Unset = UNSET
-    """Primitive value (int / string / bool / []string) — JSON-encoded. Omitted on Add."""
+    """ Primitive value (int / string / bool / []string) — JSON-encoded. Omitted on Add. """
     after: Any | Unset = UNSET
-    """Primitive value — JSON-encoded. Omitted on Remove."""
+    """ Primitive value — JSON-encoded. Omitted on Remove. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

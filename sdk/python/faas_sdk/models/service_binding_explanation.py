@@ -32,30 +32,30 @@ class ServiceBindingExplanation:
 
     caller: str
     target: str
-    """Requested service name, which may differ from the resolved physical app slug."""
+    """ Requested service name, which may differ from the resolved physical app slug. """
     method: str
     path: str
-    """Decoded request path without query values."""
+    """ Decoded request path without query values. """
     result: ServiceBindingExplanationResult
     scope: str
-    """Environment of the exact caller deployment."""
+    """ Environment of the exact caller deployment. """
     checked_at: datetime.datetime
     checks: list[ServiceAuthorizationCheck]
     limitations: str
     caller_fingerprint: str | Unset = UNSET
-    """Observed app settings fingerprint; frozen environment policy may override these settings."""
+    """ Observed app settings fingerprint; frozen environment policy may override these settings. """
     target_fingerprint: str | Unset = UNSET
-    """Observed target app settings fingerprint; not a frozen release policy digest."""
+    """ Observed target app settings fingerprint; not a frozen release policy digest. """
     caller_deployment_id: UUID | Unset = UNSET
     target_app_id: UUID | Unset = UNSET
     target_deployment_id: UUID | Unset = UNSET
-    """Absent when the service route is unpinned or unavailable."""
+    """ Absent when the service route is unpinned or unavailable. """
     release_id: UUID | Unset = UNSET
-    """Resolved release, including retained project releases when permitted by the gateway."""
+    """ Resolved release, including retained project releases when permitted by the gateway. """
     policy_source: ServiceBindingExplanationPolicySource | Unset = UNSET
     canonical_transport: ServiceBindingTransport | Unset = UNSET
-    """Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private
-    `.internal` alias; `http` preserves the legacy `.svc.gregale` endpoint."""
+    """ Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private
+    `.internal` alias; `http` preserves the legacy `.svc.gregale` endpoint. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

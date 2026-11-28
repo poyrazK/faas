@@ -19,9 +19,9 @@ T = TypeVar("T", bound="WorkloadUsesBucketsItem")
 class WorkloadUsesBucketsItem:
     bucket: str
     app: str | Unset = UNSET
-    """Owning app (default self)."""
+    """ Owning app (default self). """
     prefix: str | Unset = UNSET
-    """Key prefix the grant is limited to."""
+    """ Key prefix the grant is limited to. """
     access: WorkloadUsesBucketsItemAccess | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

@@ -18,7 +18,7 @@ class SetAccountEgressAllowlistExtraRequest:
     """
 
     extra: int
-    """Requested additive budget, in CIDR count. 0 = clear the override; values above max_extra are rejected."""
+    """ Requested additive budget, in CIDR count. 0 = clear the override; values above max_extra are rejected. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

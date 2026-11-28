@@ -24,38 +24,38 @@ class CreateCronRequest:
     """
 
     app_id: str
-    """App id or slug."""
+    """ App id or slug. """
     schedule: str
     path: str | Unset = UNSET
-    """HTTP target path on the cron's own app; defaults to /, starts with a single /, may carry a query string, and
-    is mutually exclusive with command."""
+    """ HTTP target path on the cron's own app; defaults to /, starts with a single /, may carry a query string, and
+    is mutually exclusive with command. """
     command: list[str] | Unset = UNSET
-    """Direct command argv; mutually exclusive with path."""
+    """ Direct command argv; mutually exclusive with path. """
     command_shell: bool | Unset = False
-    """Interpret one command string through the app shell when true."""
+    """ Interpret one command string through the app shell when true. """
     timeout_seconds: int | Unset = UNSET
-    """Per-fire command deadline; zero uses the 600-second default."""
+    """ Per-fire command deadline; zero uses the 600-second default. """
     max_output_bytes: int | Unset = UNSET
-    """Combined stdout/stderr tail cap; zero uses the 1 MiB default."""
+    """ Combined stdout/stderr tail cap; zero uses the 1 MiB default. """
     enabled: bool | None | Unset = UNSET
     timezone: str | Unset = UNSET
-    """IANA timezone; defaults to UTC."""
+    """ IANA timezone; defaults to UTC. """
     skip_if_running: bool | None | Unset = UNSET
-    """Skip a scheduled fire when an earlier cron invocation is still running."""
+    """ Skip a scheduled fire when an earlier cron invocation is still running. """
     retry_max: int | Unset = UNSET
-    """Additional command attempts after failure or timeout; command crons only."""
+    """ Additional command attempts after failure or timeout; command crons only. """
     retry_backoff_seconds: int | Unset = UNSET
-    """Base retry delay in seconds; doubles per retry and is capped at 24 hours. Command crons only."""
+    """ Base retry delay in seconds; doubles per retry and is capped at 24 hours. Command crons only. """
     environment: str | Unset = UNSET
-    """Project environment the cron runs in; omitted or production is the app's production environment. Immutable
-    once created."""
+    """ Project environment the cron runs in; omitted or production is the app's production environment. Immutable
+    once created. """
     schedule_policy: SchedulePolicy | Unset = UNSET
-    """Versioned recurring-work scheduling policy for Jobs and both HTTP and command Crons. HTTP replace waits for
+    """ Versioned recurring-work scheduling policy for Jobs and both HTTP and command Crons. HTTP replace waits for
     a prior dispatched request to complete because the scheduler has no stop acknowledgement for a request already
-    delivered to the app."""
+    delivered to the app. """
     failure_rules: FailureRules | Unset = UNSET
-    """Versioned explicit classification policy for failed Job partitions, command-Cron executions, and HTTP Cron
-    outcome codes. HTTP status is not a business outcome matcher."""
+    """ Versioned explicit classification policy for failed Job partitions, command-Cron executions, and HTTP Cron
+    outcome codes. HTTP status is not a business outcome matcher. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

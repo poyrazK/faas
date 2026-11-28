@@ -24,13 +24,14 @@ class SchedulePolicy:
 
     version: SchedulePolicyVersion
     overlap: SchedulePolicyOverlap
-    """Allow concurrent occurrences, record-and-skip while one is active, or replace when previous work can be
-    stopped safely. HTTP Crons wait for a dispatched request to finish."""
+    """ Allow concurrent occurrences, record-and-skip while one is active, or replace when previous work can be
+    stopped safely. HTTP Crons wait for a dispatched request to finish. """
     missed_runs: SchedulePolicyMissedRuns
-    """On scheduler recovery, coalesce the due backlog into its latest occurrence or record stale occurrences as
-    skipped."""
+    """ On scheduler recovery, coalesce the due backlog into its latest occurrence or record stale occurrences as
+    skipped. """
     start_deadline_seconds: int | Unset = UNSET
-    """Maximum delay from the nominal schedule time to the first task start; zero or omitted disables the deadline."""
+    """ Maximum delay from the nominal schedule time to the first task start; zero or omitted disables the deadline.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

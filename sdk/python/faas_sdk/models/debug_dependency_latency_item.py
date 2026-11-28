@@ -35,18 +35,18 @@ class DebugDependencyLatencyItem:
     p95_ms: int
     p99_ms: int
     regression: bool
-    """True when both split-window samples meet the minimum call threshold and current p95 is at least 1.5x and
-    25ms above baseline."""
+    """ True when both split-window samples meet the minimum call threshold and current p95 is at least 1.5x and
+    25ms above baseline. """
     failure_regression: bool
-    """True when both split-window samples meet the minimum call threshold, the current side has at least 3 failed
-    calls, and the current error rate is at least 5 percentage points and 2x above baseline."""
+    """ True when both split-window samples meet the minimum call threshold, the current side has at least 3 failed
+    calls, and the current error rate is at least 5 percentage points and 2x above baseline. """
     kind: str | Unset = UNSET
     exclusive_p50_ms: int | Unset = UNSET
-    """Median (p50) wall time not covered by overlapping direct child spans."""
+    """ Median (p50) wall time not covered by overlapping direct child spans. """
     exclusive_p95_ms: int | Unset = UNSET
-    """p95 wall time not covered by overlapping direct child spans."""
+    """ p95 wall time not covered by overlapping direct child spans. """
     exclusive_p99_ms: int | Unset = UNSET
-    """p99 wall time not covered by overlapping direct child spans."""
+    """ p99 wall time not covered by overlapping direct child spans. """
     baseline_p95_ms: int | Unset = UNSET
     current_p95_ms: int | Unset = UNSET
     p95_delta_ms: int | Unset = UNSET
@@ -58,12 +58,12 @@ class DebugDependencyLatencyItem:
     current_error_rate_pct: float | Unset = UNSET
     error_rate_delta_pct: float | Unset = UNSET
     top_error_type: str | Unset = UNSET
-    """Most frequent span failure class, from the current side when it has failures."""
+    """ Most frequent span failure class, from the current side when it has failures. """
     queries: list[DebugDependencyQueryItem] | Unset = UNSET
-    """Database dependencies only: the dependency broken down by normalized query pattern (literals, placeholders,
-    IN lists and VALUES rows folded), regressions first."""
+    """ Database dependencies only: the dependency broken down by normalized query pattern (literals, placeholders,
+    IN lists and VALUES rows folded), regressions first. """
     queries_truncated: bool | Unset = UNSET
-    """True when more query patterns were seen than are returned."""
+    """ True when more query patterns were seen than are returned. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -21,12 +21,12 @@ class WorkflowRecoveryReportTotals:
     cancelled: int
     other_results: int
     without_observed_result: int
-    """Attempts without a result observed in this window; not a live unresolved-child count."""
+    """ Attempts without a result observed in this window; not a live unresolved-child count. """
     pauses: int
     timed_results: int
     mean_retry_result_seconds: float | Unset = UNSET
-    """Mean application-to-recorded-result time for matched child IDs with ordered timestamps; absent without
-    timing samples."""
+    """ Mean application-to-recorded-result time for matched child IDs with ordered timestamps; absent without
+    timing samples. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

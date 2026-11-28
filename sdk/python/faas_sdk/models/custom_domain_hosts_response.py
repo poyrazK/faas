@@ -16,7 +16,7 @@ class CustomDomainHostsResponse:
     domain: str
     names: list[str]
     restricted: bool
-    """False when no allowlist is set: every name below the wildcard may hold a certificate."""
+    """ False when no allowlist is set: every name below the wildcard may hold a certificate. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

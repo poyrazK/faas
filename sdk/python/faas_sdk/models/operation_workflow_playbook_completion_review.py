@@ -27,21 +27,24 @@ class OperationWorkflowPlaybookCompletionReview:
     """
 
     id: UUID
-    """OperationWorkflowPlaybookCompletionReview.id. Exact durable review identity."""
+    """ OperationWorkflowPlaybookCompletionReview.id. Exact durable review identity. """
     revision: int
-    """OperationWorkflowPlaybookCompletionReview.revision. Worker observation fence."""
+    """ OperationWorkflowPlaybookCompletionReview.revision. Worker observation fence. """
     owner: str
-    """OperationWorkflowPlaybookCompletionReview.owner. Coordination owner frozen at completion."""
+    """ OperationWorkflowPlaybookCompletionReview.owner. Coordination owner frozen at completion. """
     status: OperationWorkflowPlaybookCompletionReviewStatus
-    """OperationWorkflowPlaybookCompletionReview.status. Monitoring lifetime; expired reviews no longer publish."""
+    """ OperationWorkflowPlaybookCompletionReview.status. Monitoring lifetime; expired reviews no longer publish.
+    """
     expires_at: datetime.datetime
-    """OperationWorkflowPlaybookCompletionReview.expires_at. Original bounded window end from actual completion."""
+    """ OperationWorkflowPlaybookCompletionReview.expires_at. Original bounded window end from actual completion.
+    """
     state_revision: int
-    """OperationWorkflowPlaybookCompletionReview.state_revision. Highest comparable retained application revision."""
+    """ OperationWorkflowPlaybookCompletionReview.state_revision. Highest comparable retained application revision.
+    """
     current: OperationWorkflowPlaybookBusinessOutcome
-    """OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen
+    """ OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen
     playbook expectation. Independent of human completion and evidence satisfaction; changed guidance never silently
-    changes the expected outcome."""
+    changes the expected outcome. """
 
     def to_dict(self) -> dict[str, Any]:
         id = str(self.id)

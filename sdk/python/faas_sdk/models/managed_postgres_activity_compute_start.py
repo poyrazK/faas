@@ -23,7 +23,7 @@ class ManagedPostgresActivityComputeStart:
     started_at: datetime.datetime
     cause: ManagedPostgresActivityComputeStartCause
     suspended_at: datetime.datetime | Unset = UNSET
-    """Omitted while the compute runs or its suspend has not been read yet."""
+    """ Omitted while the compute runs or its suspend has not been read yet. """
     app_id: str | Unset = UNSET
     app_slug: str | Unset = UNSET
     detail: str | Unset = UNSET

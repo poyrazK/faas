@@ -26,26 +26,26 @@ class OperationWorkflowReadinessOutcomeEscalation:
     """
 
     watch_id: UUID
-    """OperationWorkflowReadinessOutcomeEscalation.watch_id. Retained coordination escalation policy or evidence;
-    business interpretation and execution remain application-owned."""
+    """ OperationWorkflowReadinessOutcomeEscalation.watch_id. Retained coordination escalation policy or evidence;
+    business interpretation and execution remain application-owned. """
     source_notification_id: UUID
-    """OperationWorkflowReadinessOutcomeEscalation.source_notification_id. Retained coordination escalation policy
-    or evidence; business interpretation and execution remain application-owned."""
+    """ OperationWorkflowReadinessOutcomeEscalation.source_notification_id. Retained coordination escalation policy
+    or evidence; business interpretation and execution remain application-owned. """
     source_sequence: int
-    """OperationWorkflowReadinessOutcomeEscalation.source_sequence. Retained coordination escalation policy or
-    evidence; business interpretation and execution remain application-owned."""
+    """ OperationWorkflowReadinessOutcomeEscalation.source_sequence. Retained coordination escalation policy or
+    evidence; business interpretation and execution remain application-owned. """
     current: OperationWorkflowReadinessBusinessOutcome
-    """Advisory comparison of the expected terminal outcome with a scoped retained application report. Missing
+    """ Advisory comparison of the expected terminal outcome with a scoped retained application report. Missing
     state, stale reports, contract changes, older revisions and terminal reports without outcome codes remain
     unknown. Explicit outcome codes do not imply causation or authorize execution. Completion snapshots are
-    immutable; current checks are live reads."""
+    immutable; current checks are live reads. """
     response: OperationWorkflowReadinessEscalationResponse | Unset = UNSET
-    """Optional acknowledgment response target on a retained assigned escalation. Human acknowledgment fulfills it;
+    """ Optional acknowledgment response target on a retained assigned escalation. Human acknowledgment fulfills it;
     completion or follow-up clearing stops it. A missed target emits one notice and optional guarded fallback.
-    Assignment history retains the latest 16 changes."""
+    Assignment history retains the latest 16 changes. """
     success_observed_at: datetime.datetime | Unset = UNSET
-    """OperationWorkflowReadinessOutcomeEscalation.success_observed_at. Retained coordination escalation policy or
-    evidence; business interpretation and execution remain application-owned."""
+    """ OperationWorkflowReadinessOutcomeEscalation.success_observed_at. Retained coordination escalation policy or
+    evidence; business interpretation and execution remain application-owned. """
 
     def to_dict(self) -> dict[str, Any]:
         watch_id = str(self.watch_id)

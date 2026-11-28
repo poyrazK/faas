@@ -24,15 +24,15 @@ class AdvanceCanaryRequest:
     """
 
     expected_step: int
-    """The canary_step the caller read before requesting the next stage."""
+    """ The canary_step the caller read before requesting the next stage. """
     profile_gate_rollback: bool | Unset = False
-    """Reserved for the lease-bound internal worker. Public requests reject true. Rollback intent cannot fall back
-    to promotion when gate context changes."""
+    """ Reserved for the lease-bound internal worker. Public requests reject true. Rollback intent cannot fall back
+    to promotion when gate context changes. """
     profile_gate_override: ProfileGateOverride | Unset = UNSET
-    """Audited customer exception bound to the current profiling policy revision."""
+    """ Audited customer exception bound to the current profiling policy revision. """
     decision: RolloutDecision | Unset = UNSET
-    """Evidence behind one decision about a rollout: why a canary stage advanced, is held, or was aborted.
-    Aggregates only; no request payloads, routes, URLs or customer text."""
+    """ Evidence behind one decision about a rollout: why a canary stage advanced, is held, or was aborted.
+    Aggregates only; no request payloads, routes, URLs or customer text. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

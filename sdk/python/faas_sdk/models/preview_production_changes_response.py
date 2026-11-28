@@ -24,9 +24,9 @@ class PreviewProductionChangesResponse:
 
     artifact_changed: bool
     preview_artifact: PreviewArtifactResponse
-    """Strongest available non-secret deployment artifact identity."""
+    """ Strongest available non-secret deployment artifact identity. """
     production_artifact: PreviewArtifactResponse
-    """Strongest available non-secret deployment artifact identity."""
+    """ Strongest available non-secret deployment artifact identity. """
     configuration_changed_groups: list[PreviewProductionChangesResponseConfigurationChangedGroupsItem]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

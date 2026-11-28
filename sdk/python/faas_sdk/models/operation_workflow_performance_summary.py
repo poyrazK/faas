@@ -27,72 +27,72 @@ class OperationWorkflowPerformanceSummary:
     """Completed and ongoing workflow cohorts with bounded sampling, history coverage and duration distributions."""
 
     cohort_token: str
-    """Opaque selector-bound token for opening consistent contributor views."""
+    """ Opaque selector-bound token for opening consistent contributor views. """
     evaluated_at: datetime.datetime
     workflow: str
     cohort_limit: int
     completed: OperationWorkflowPerformanceCohort
-    """Counts distinguish all matches from the latest retained sample and complete eligible histories. Every
+    """ Counts distinguish all matches from the latest retained sample and complete eligible histories. Every
     duration excludes incomplete histories. Groups are ranked by total duration descending with stable identity
     ties. Overall distributions include eligible zero-duration instances; group distributions include only instances
     that reported that group. Overlapping blockers and verification waits are counted separately in their groups.
-   """
+    """
     ongoing: OperationWorkflowPerformanceCohort
-    """Counts distinguish all matches from the latest retained sample and complete eligible histories. Every
+    """ Counts distinguish all matches from the latest retained sample and complete eligible histories. Every
     duration excludes incomplete histories. Groups are ranked by total duration descending with stable identity
     ties. Overall distributions include eligible zero-duration instances; group distributions include only instances
     that reported that group. Overlapping blockers and verification waits are counted separately in their groups.
-   """
+    """
     new_missing_progress: OperationWorkflowNewMissingConditionProgress | Unset = UNSET
-    """Optional baseline_token comparison explaining current missing reports relative to retained baseline
+    """ Optional baseline_token comparison explaining current missing reports relative to retained baseline
     expectations in today's completed and ongoing sample. Current terminal workflows produce no active gaps.
     Publication visibility, retained immutable baseline definitions, continuous baseline report history, conflict
     and evidence limits match missing_progress. Workflows with no retained baseline are not invented as new gaps,
     and unavailable definitions are excluded. This is not original cohort membership or total historical backlog.
-    All current missing status counts precede preview caps; missing evidence is not failed verification."""
+    All current missing status counts precede preview caps; missing evidence is not failed verification. """
     missing_progress: OperationWorkflowMissingConditionProgress | Unset = UNSET
-    """Optional baseline_token comparison of missing expectations reconstructed from retained reports and the
+    """ Optional baseline_token comparison of missing expectations reconstructed from retained reports and the
     baseline reporting Operation's immutable definition in today's completed and ongoing samples. Publication
     timestamps determine baseline visibility. This does not store original cohort membership or prove backlog
     resolution. Missing historical definitions, incomplete report history, conflicts and evidence limits are
     explicitly excluded. Baseline histories must be continuous within one contract; current contract boundaries
     permit contract_changed classification. Prior terminal reports do not create baseline gaps. Counts precede
     change preview limits. Conditions leaving the current state's expectation set, changed declarations and terminal
-    workflows do not imply successful verification."""
+    workflows do not imply successful verification. """
     condition_coverage: OperationWorkflowConditionCoverage | Unset = UNSET
-    """Reporting coverage for current states in the bounded ongoing sample. Expectations come only from the latest
+    """ Reporting coverage for current states in the bounded ongoing sample. Expectations come only from the latest
     reporting Operation's immutable definition, not a global registry or every Operation in the workflow. Missing
     means no matching evidence in latest explicit contexts, not a failed check or proof it was never reported
     historically. Full continuous retained history is required. Conflicting results and over-limit evidence are
     excluded. Reported includes overdue, so expected equals reported plus missing and overdue is a subset of
     reported. Counts precede the per-workflow preview cap. No expectations is unconfigured coverage, not
-    completeness."""
+    completeness. """
     refresh_progress: OperationWorkflowConditionRefreshProgress | Unset = UNSET
-    """Report freshness progress reconstructed at baseline_token evaluation time using publication visibility in
+    """ Report freshness progress reconstructed at baseline_token evaluation time using publication visibility in
     current retained completed and ongoing cohorts. This is not a stored baseline cohort, a total historical
     backlog, or business verification. Only continuous retained report history qualifies; contract boundaries are
     permitted for explicit contract_changed classification without relaxing existing duration or active-summary
     eligibility. Unknown history and conflicting or over-limit evidence are excluded. Status totals include all
     baseline overdue identities before per-workflow preview limits. Completed workflows remain visible as terminal
-    reports without implying cleared verification."""
+    reports without implying cleared verification. """
     active_conditions: OperationWorkflowActiveConditionSummary | Unset = UNSET
-    """Latest explicit condition snapshots in the ongoing sample with complete retained history. The latest reason
+    """ Latest explicit condition snapshots in the ongoing sample with complete retained history. The latest reason
     and latest nonempty selected-path snapshot provide independent contexts; a path without a fact clears that path
     context. Metadata-only reports preserve evidence. Explicit decision omission removes older conditions. Contract
     changes reset contexts. Conflicting results for an exact identity exclude the workflow. Missing conditions
     remain unreported. At most 256 contexts and 256 final condition identities per workflow qualify. Groups overlap;
-    no present business truth or causation is inferred."""
+    no present business truth or causation is inferred. """
     condition_outcomes: OperationWorkflowConditionOutcomeSummary | Unset = UNSET
-    """Observed condition/result associations with latest reported outcomes in the completed performance sample.
+    """ Observed condition/result associations with latest reported outcomes in the completed performance sample.
     Only complete histories with a reported outcome and at most 256 exact condition identities qualify. Reasons and
     selected-path decision facts at or before the first terminal report supply explicit results. Missing conditions
-    are unreported; unknown is explicit. Groups overlap and do not establish causation."""
+    are unreported; unknown is explicit. Groups overlap and do not establish causation. """
     decision_outcomes: OperationWorkflowDecisionOutcomeSummary | Unset = UNSET
-    """Observed decision and path associations with latest reported outcomes in the completed performance cohort.
+    """ Observed decision and path associations with latest reported outcomes in the completed performance cohort.
     Only complete histories with a reported outcome qualify. Repeated decision or path identities count once per
     workflow and group. Groups overlap; their counts must not be summed. Classification uses reasons and selections
     reported at or before the first terminal report. Sequence does not establish causation. Groups retain the first
-    64 canonical identities in ascending order."""
+    64 canonical identities in ascending order. """
 
     def to_dict(self) -> dict[str, Any]:
         cohort_token = self.cohort_token

@@ -25,16 +25,16 @@ class AppHealthCheck:
     code: AppHealthCheckCode
     status: AppHealthCheckStatus
     detail: str
-    """Safe explanation without raw backend errors or probe output."""
+    """ Safe explanation without raw backend errors or probe output. """
     reason: AppHealthCheckReason | Unset = UNSET
-    """Stable diagnostic reason, when available."""
+    """ Stable diagnostic reason, when available. """
     action: AppHealthCheckAction | Unset = UNSET
     deployment_id: str | Unset = UNSET
     findings: list[AppHealthFinding] | Unset = UNSET
-    """Independent replica readiness failures and missing evidence, with failures first and stable target order
-    within severity."""
+    """ Independent replica readiness failures and missing evidence, with failures first and stable target order
+    within severity. """
     findings_truncated: bool | Unset = UNSET
-    """Additional findings were omitted; capacity counts still cover the complete bounded instance scan."""
+    """ Additional findings were omitted; capacity counts still cover the complete bounded instance scan. """
 
     def to_dict(self) -> dict[str, Any]:
         code: str = self.code

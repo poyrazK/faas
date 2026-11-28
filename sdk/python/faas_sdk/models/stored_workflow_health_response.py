@@ -29,28 +29,29 @@ class StoredWorkflowHealthResponse:
     run_count: int
     completed_run_count: int
     active_run_count: int
-    """Current non-terminal runs that have started, including retries and parked waits; independent of the
-    requested health window."""
+    """ Current non-terminal runs that have started, including retries and parked waits; independent of the
+    requested health window. """
     queued_run_count: int
-    """Current pending runs that have not started; independent of the requested health window."""
+    """ Current pending runs that have not started; independent of the requested health window. """
     success_rate: float
-    """Succeeded runs divided by succeeded, failed and dead runs; zero when none completed."""
+    """ Succeeded runs divided by succeeded, failed and dead runs; zero when none completed. """
     status_counts: StoredWorkflowHealthResponseStatusCounts
     failed_steps: list[StoredWorkflowHealthStepFailure]
     queue: StoredWorkflowQueueHealth | Unset = UNSET
-    """Current app-owned queue diagnostics independent of the historical health window. Each waiting run has one
+    """ Current app-owned queue diagnostics independent of the historical health window. Each waiting run has one
     primary reason; future wakes take precedence followed by app, tenant and workflow capacity. No payloads or
-    tenant identities, global worker occupancy or completion estimates are returned."""
+    tenant identities, global worker occupancy or completion estimates are returned. """
     p50_duration_ms: int | Unset = UNSET
-    """Median duration of completed runs with start and finish timestamps; omitted when no samples exist."""
+    """ Median duration of completed runs with start and finish timestamps; omitted when no samples exist. """
     p95_duration_ms: int | Unset = UNSET
-    """95th percentile duration of completed runs with start and finish timestamps; omitted when no samples exist."""
+    """ 95th percentile duration of completed runs with start and finish timestamps; omitted when no samples exist.
+    """
     last_run: StoredWorkflowHealthRun | Unset = UNSET
-    """Safe recent-run identity and timestamps; workflow input, output and error text are omitted."""
+    """ Safe recent-run identity and timestamps; workflow input, output and error text are omitted. """
     last_success: StoredWorkflowHealthRun | Unset = UNSET
-    """Safe recent-run identity and timestamps; workflow input, output and error text are omitted."""
+    """ Safe recent-run identity and timestamps; workflow input, output and error text are omitted. """
     last_failure: StoredWorkflowHealthRun | Unset = UNSET
-    """Safe recent-run identity and timestamps; workflow input, output and error text are omitted."""
+    """ Safe recent-run identity and timestamps; workflow input, output and error text are omitted. """
 
     def to_dict(self) -> dict[str, Any]:
         app_slug = self.app_slug

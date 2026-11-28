@@ -19,26 +19,26 @@ class SetMCPReadinessPagerDutyAcknowledgementsRequest:
     """Version-fenced replacement of a PagerDuty acknowledgement webhook binding and write-only signing secret."""
 
     expected_version: int
-    """Current selected destination acknowledgement policy version; zero denotes unconfigured."""
+    """ Current selected destination acknowledgement policy version; zero denotes unconfigured. """
     enabled: bool
-    """Enable signed inbound acknowledgements or immediately revoke the current signing secret."""
+    """ Enable signed inbound acknowledgements or immediately revoke the current signing secret. """
     sync_unacknowledgements: bool | Unset = False
-    """Opt in to signed incident.unacknowledged events for this destination. Only tracked provider acknowledgements
-    can be released; other destination and manual acknowledgements remain protected."""
+    """ Opt in to signed incident.unacknowledged events for this destination. Only tracked provider acknowledgements
+    can be released; other destination and manual acknowledgements remain protected. """
     destination: SetMCPReadinessPagerDutyAcknowledgementsRequestDestination | Unset = UNSET
-    """Native PagerDuty receiver to bind or disable. Enabling defaults to primary; disabling without a destination
-    selects the original callback binding."""
+    """ Native PagerDuty receiver to bind or disable. Enabling defaults to primary; disabling without a destination
+    selects the original callback binding. """
     expected_fallback_version: int | Unset = UNSET
-    """Required for fallback binding instead of expected_pagerduty_version; must match an enabled native PagerDuty
-    fallback."""
+    """ Required for fallback binding instead of expected_pagerduty_version; must match an enabled native PagerDuty
+    fallback. """
     expected_pagerduty_version: int | Unset = UNSET
-    """Current enabled native primary PagerDuty version; required for primary binding. Omit for fallback or
-    disabled policies."""
+    """ Current enabled native primary PagerDuty version; required for primary binding. Omit for fallback or
+    disabled policies. """
     service_id: str | Unset = UNSET
-    """PagerDuty service selected by the webhook subscription filter; required only when enabling."""
+    """ PagerDuty service selected by the webhook subscription filter; required only when enabling. """
     signing_secret: str | Unset = UNSET
-    """Exact ASCII v3 webhook subscription signing secret from PagerDuty; required when enabling and omitted when
-    disabling."""
+    """ Exact ASCII v3 webhook subscription signing secret from PagerDuty; required when enabling and omitted when
+    disabling. """
 
     def to_dict(self) -> dict[str, Any]:
         expected_version = self.expected_version

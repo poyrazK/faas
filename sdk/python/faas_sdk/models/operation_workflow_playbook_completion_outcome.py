@@ -29,20 +29,20 @@ class OperationWorkflowPlaybookCompletionOutcome:
     """
 
     resolution: OperationWorkflowPlaybookCompletionOutcomeResolution
-    """OperationWorkflowPlaybookCompletionOutcome.resolution. Human business disposition, distinct from application
-    reports."""
+    """ OperationWorkflowPlaybookCompletionOutcome.resolution. Human business disposition, distinct from application
+    reports. """
     alignment: OperationWorkflowPlaybookCompletionOutcomeAlignment
-    """OperationWorkflowPlaybookCompletionOutcome.alignment. Expected success matches achieved; accepted
+    """ OperationWorkflowPlaybookCompletionOutcome.alignment. Expected success matches achieved; accepted
     alternative matches a different terminal result permitted by an explicit pinned policy (legacy absence permits
     reviewer acceptance); cancellation makes no business assertion. Nonterminal evidence mismatches; incomparable
-    evidence is unavailable."""
+    evidence is unavailable. """
     explanation: str
-    """OperationWorkflowPlaybookCompletionOutcome.explanation. Server explanation of disposition alignment; does
-    not prevent human closure."""
+    """ OperationWorkflowPlaybookCompletionOutcome.explanation. Server explanation of disposition alignment; does
+    not prevent human closure. """
     observation: OperationWorkflowPlaybookBusinessOutcome
-    """OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen
+    """ OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen
     playbook expectation. Independent of human completion and evidence satisfaction; changed guidance never silently
-    changes the expected outcome."""
+    changes the expected outcome. """
 
     def to_dict(self) -> dict[str, Any]:
         resolution: str = self.resolution

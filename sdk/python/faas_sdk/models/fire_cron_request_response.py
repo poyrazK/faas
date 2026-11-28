@@ -29,9 +29,9 @@ class FireCronRequestResponse:
     finished_at: datetime.datetime | None | Unset = UNSET
     invocation_id: None | Unset | UUID = UNSET
     operation_id: None | Unset | UUID = UNSET
-    """Managed exclusive operation admitted by this fire-now request."""
+    """ Managed exclusive operation admitted by this fire-now request. """
     task_id: None | Unset | UUID = UNSET
-    """Command task created by this request; absent for HTTP crons or before queueing."""
+    """ Command task created by this request; absent for HTTP crons or before queueing. """
     error: None | str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

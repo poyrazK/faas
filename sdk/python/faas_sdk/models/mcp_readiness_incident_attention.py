@@ -43,30 +43,30 @@ class MCPReadinessIncidentAttention:
     version: int
     state: MCPReadinessIncidentAttentionState
     reminder_policy: MCPReadinessReminderPolicy
-    """Per-incident lifetime creation budget. Both zero disables; otherwise interval is 60–86400 seconds and budget
-    is 1–10. Reconfiguration never resets the count."""
+    """ Per-incident lifetime creation budget. Both zero disables; otherwise interval is 60–86400 seconds and budget
+    is 1–10. Reconfiguration never resets the count. """
     reminders_created: int
     provider_acknowledgements: list[MCPReadinessPagerDutyAcknowledgementHold] | Unset = UNSET
-    """Active tracked PagerDuty acknowledgements in primary then fallback order. Every remaining acknowledgement
-    prevents automatic reminder resumption."""
+    """ Active tracked PagerDuty acknowledgements in primary then fallback order. Every remaining acknowledgement
+    prevents automatic reminder resumption. """
     reminder_policy_source: MCPReadinessIncidentAttentionReminderPolicySource | Unset = UNSET
-    """Whether the current incident policy was inherited or explicitly overridden; legacy denotes unavailable pre-
-    upgrade provenance."""
+    """ Whether the current incident policy was inherited or explicitly overridden; legacy denotes unavailable pre-
+    upgrade provenance. """
     reminder_defaults_version: int | Unset = UNSET
-    """Rule defaults version captured at incident opening; retained after an incident override and absent for older
-    incidents."""
+    """ Rule defaults version captured at incident opening; retained after an incident override and absent for older
+    incidents. """
     mcp_readiness_scope: str | Unset = UNSET
-    """Incident environment; omission covers every environment."""
+    """ Incident environment; omission covers every environment. """
     resolved_at: datetime.datetime | Unset = UNSET
     acknowledgement: MCPReadinessAcknowledgement | Unset = UNSET
-    """Retained acknowledgement metadata independent of readiness state."""
+    """ Retained acknowledgement metadata independent of readiness state. """
     next_reminder_at: datetime.datetime | Unset = UNSET
-    """Earliest eligibility subject to fresh evidence and queue state."""
+    """ Earliest eligibility subject to fresh evidence and queue state. """
     last_observed_at: datetime.datetime | Unset = UNSET
     last_unhealthy_at: datetime.datetime | Unset = UNSET
-    """Latest matching unhealthy evidence; omitted after healthy or coverage-changed observations."""
+    """ Latest matching unhealthy evidence; omitted after healthy or coverage-changed observations. """
     last_action: MCPReadinessAttentionReceipt | Unset = UNSET
-    """Immutable attention decision retained transactionally with the incident state change."""
+    """ Immutable attention decision retained transactionally with the incident state change. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

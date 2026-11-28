@@ -5,8 +5,6 @@ from pathlib import Path
 from uuid import uuid4
 
 import httpx
-
-from faas_sdk import JobContext
 from faas_sdk._typed_jobs import JobCheckpoint, JobItemOutcome, JobProgress
 from faas_sdk.job_runtime import JobContract, job_bytes, job_hash, prepare_job_input
 from faas_sdk.preview import (
@@ -23,6 +21,8 @@ from faas_sdk.preview._pipeline_compensation_protocol import SQL
 from faas_sdk.preview.pipeline_compensation_state import compensation_contracts
 from faas_sdk.preview.pipeline_gates import PipelineGateRecord
 from faas_sdk.workflows import run_workflow_invocation
+
+from faas_sdk import JobContext
 
 ROOT = Path(__file__).resolve().parents[1] / "request-contracts"
 if not ROOT.exists():

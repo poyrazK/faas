@@ -13,11 +13,11 @@ class OperationWorkflowReadinessImpactOwner:
     """OperationWorkflowReadinessImpactOwner. Effective queue ownership within a retained business impact group."""
 
     owner: str
-    """OperationWorkflowReadinessImpactOwner.owner. Current inbox owner label; empty means unassigned."""
+    """ OperationWorkflowReadinessImpactOwner.owner. Current inbox owner label; empty means unassigned. """
     task_count: int
-    """OperationWorkflowReadinessImpactOwner.task_count. Matching retained inbox delivery tasks for this owner."""
+    """ OperationWorkflowReadinessImpactOwner.task_count. Matching retained inbox delivery tasks for this owner. """
     overdue_count: int
-    """OperationWorkflowReadinessImpactOwner.overdue_count. Matching tasks with overdue queue attention."""
+    """ OperationWorkflowReadinessImpactOwner.overdue_count. Matching tasks with overdue queue attention. """
 
     def to_dict(self) -> dict[str, Any]:
         owner = self.owner

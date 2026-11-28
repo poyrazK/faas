@@ -68,6 +68,31 @@ type SmokeResult struct {
 	// candidate (ADR-20261122220000); absent when the app has no contract or
 	// the capability is not released to it.
 	VerificationContract *verifycontract.Report `json:"verification_contract,omitempty"`
+	// MCPContract is the tool contract gate's check of a listed MCP
+	// server's candidate (ADR-20261127191645); absent for other apps.
+	MCPContract *MCPContractReport `json:"mcp_contract,omitempty"`
+}
+
+// MCPContractReport is a candidate's comparison with the MCP tool contract
+// its listing promised.
+type MCPContractReport struct {
+	Verdict        string              `json:"verdict"`
+	BaselineSHA256 string              `json:"baseline_sha256"`
+	ContractSHA256 string              `json:"contract_sha256,omitempty"`
+	Overridden     bool                `json:"overridden,omitempty"`
+	Changes        []MCPContractChange `json:"changes,omitempty"`
+}
+
+// MCPContractChange is one mcphosting.ContractChange (same JSON shape).
+type MCPContractChange struct {
+	Tool             string `json:"tool,omitempty"`
+	Resource         string `json:"resource,omitempty"`
+	ResourceTemplate string `json:"resource_template,omitempty"`
+	Prompt           string `json:"prompt,omitempty"`
+	Capability       string `json:"capability,omitempty"`
+	Path             string `json:"path"`
+	Kind             string `json:"kind"`
+	Severity         string `json:"severity"`
 }
 
 // APIRouteProbe is a bounded, read-only request selected from an app's

@@ -19,13 +19,13 @@ class ReleaseFreezeWeekly:
     """
 
     days: list[ReleaseFreezeWeeklyDaysItem]
-    """Weekdays the window opens on."""
+    """ Weekdays the window opens on. """
     start: str
-    """Local opening time, HH:MM."""
+    """ Local opening time, HH:MM. """
     duration_minutes: int
-    """How long each window lasts."""
+    """ How long each window lasts. """
     time_zone: str
-    """IANA time zone, such as Europe/Istanbul or UTC."""
+    """ IANA time zone, such as Europe/Istanbul or UTC. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

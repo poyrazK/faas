@@ -35,6 +35,7 @@ func (m *MemStore) enqueueDeploymentLifecycleWebhooksLocked(dep Deployment) {
 	switch dep.Status {
 	case DeployLive:
 		m.enqueueRoutePolicyChecksLocked(dep.AppID)
+		m.acceptMCPContractCheckLocked(dep)
 		event = AppWebhookEventDeploymentLive
 		payload = api.DeploymentLiveWebhookPayload{
 			AppID: dep.AppID, DeploymentID: dep.ID, Status: string(DeployLive),

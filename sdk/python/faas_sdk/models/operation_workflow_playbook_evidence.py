@@ -19,11 +19,11 @@ class OperationWorkflowPlaybookEvidence:
     """
 
     operation_id: UUID
-    """OperationWorkflowPlaybookEvidence.operation_id. Operation checked against exact customer, application,
-    environment and business subject."""
+    """ OperationWorkflowPlaybookEvidence.operation_id. Operation checked against exact customer, application,
+    environment and business subject. """
     milestone_id: str | Unset = UNSET
-    """OperationWorkflowPlaybookEvidence.milestone_id. Optional retained fact additionally checked against pinned
-    workflow, instance and contract version."""
+    """ OperationWorkflowPlaybookEvidence.milestone_id. Optional retained fact additionally checked against pinned
+    workflow, instance and contract version. """
 
     def to_dict(self) -> dict[str, Any]:
         operation_id = str(self.operation_id)

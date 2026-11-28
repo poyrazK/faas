@@ -34,13 +34,13 @@ class OperationWorkflowRevisionComparison:
     changes: list[OperationWorkflowRevisionChange]
     evidence: list[OperationWorkflowRevisionEvidence]
     condition_comparison: OperationWorkflowConditionComparison | Unset = UNSET
-    """Condition changes in explicit decision snapshots between consecutive retained revisions in the same tenant
+    """ Condition changes in explicit decision snapshots between consecutive retained revisions in the same tenant
     and workflow run and pinned contract. Shares history comparison statuses; missing decisions on metadata reports
-    do not clear conditions. No causal inference."""
+    do not clear conditions. No causal inference. """
     change_reason: OperationWorkflowChangeReason | Unset = UNSET
-    """Optional application-reported explanation tied to a business decision fact in the same transaction and
+    """ Optional application-reported explanation tied to a business decision fact in the same transaction and
     Operation and workflow instance and pinned version. It describes application reasoning and grants no authority.
-   """
+    """
     previous_report_id: UUID | Unset = UNSET
     previous_operation_id: UUID | Unset = UNSET
     previous_revision: int | Unset = UNSET

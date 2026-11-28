@@ -22,11 +22,11 @@ class DeploymentRelease:
     """A deployment's release command run."""
 
     status: DeploymentReleaseStatus
-    """The release task's status; pending before the image service has admitted the task."""
+    """ The release task's status; pending before the image service has admitted the task. """
     started_at: datetime.datetime | Unset = UNSET
     finished_at: datetime.datetime | Unset = UNSET
     migration_databases: list[ReleaseDatabaseRef] | Unset = UNSET
-    """Managed PostgreSQL databases whose migration binding the release task receives."""
+    """ Managed PostgreSQL databases whose migration binding the release task receives. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

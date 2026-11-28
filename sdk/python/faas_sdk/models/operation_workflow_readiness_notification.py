@@ -68,123 +68,124 @@ class OperationWorkflowReadinessNotification:
     """Durable advisory readiness notification containing a bounded comparison and reporting Operation identities."""
 
     id: UUID
-    """OperationWorkflowReadinessNotification.id. Stable notification UUID."""
+    """ OperationWorkflowReadinessNotification.id. Stable notification UUID. """
     sequence: int
-    """OperationWorkflowReadinessNotification.sequence. Monotonic subscription-local delivery cursor."""
+    """ OperationWorkflowReadinessNotification.sequence. Monotonic subscription-local delivery cursor. """
     kind: OperationWorkflowReadinessNotificationKind
-    """OperationWorkflowReadinessNotification.kind. Matched subscription notification kind."""
+    """ OperationWorkflowReadinessNotification.kind. Matched subscription notification kind. """
     created_at: datetime.datetime
-    """OperationWorkflowReadinessNotification.created_at. Time the observation was converted into a notification."""
+    """ OperationWorkflowReadinessNotification.created_at. Time the observation was converted into a notification.
+    """
     explanation: str
-    """OperationWorkflowReadinessNotification.explanation. Human-readable change or unavailable-evaluation
-    explanation."""
+    """ OperationWorkflowReadinessNotification.explanation. Human-readable change or unavailable-evaluation
+    explanation. """
     fulfillment_review_escalation: OperationWorkflowFulfillmentReviewEscalation | Unset = UNSET
-    """Immutable destination delivery receipt for an unresolved review after its actual overdue reminder and
+    """ Immutable destination delivery receipt for an unresolved review after its actual overdue reminder and
     configured grace period. Reassignment after that reminder cancels escalation for that deadline, including
     reverting an owner change; a new deadline starts a new window. Reaffirmation, reopening, supersession and
     changed policy/deadline suppress stale delivery. Delivery preserves review ownership and original fulfillment
-    and does not execute application work."""
+    and does not execute application work. """
     fulfillment_review_reminder: OperationWorkflowFulfillmentReviewReminder | Unset = UNSET
-    """Immutable atomic inbox-delivery receipt for one review work-item and deadline. Includes the saved owner,
+    """ Immutable atomic inbox-delivery receipt for one review work-item and deadline. Includes the saved owner,
     reasons, case and evidence context. Identical deadlines do not repeat within the same review cycle; a new
     deadline or review cycle is independently eligible. Delivery does not complete or reopen the original work,
-    change its owner, or assert fresh application evidence."""
+    change its owner, or assert fresh application evidence. """
     fulfillment_review: OperationWorkflowObligationFulfillmentReview | Unset = UNSET
-    """Bounded independent observation of the latest fulfilled case/cycle and its original or reaffirmed proof.
+    """ Bounded independent observation of the latest fulfilled case/cycle and its original or reaffirmed proof.
     Flags remain latched until explicit reaffirmation or reopening; normal workflow progress is not invalidation.
     Reasons describe retained coverage, not inferred business failure. Identical semantic observations suppress
-    owner notices."""
+    owner notices. """
     obligation_reopening: OperationWorkflowObligationReopening | Unset = UNSET
-    """Immutable human decision to restore one current-source case/cycle to work, retaining the original
+    """ Immutable human decision to restore one current-source case/cycle to work, retaining the original
     fulfillment and its application evidence. Owner notices are delivered by the worker, with durable duplicate
-    suppression. A subsequent fulfillment requires a report published after this reopening."""
+    suppression. A subsequent fulfillment requires a report published after this reopening. """
     target_assessment: OperationWorkflowObligationAssessment | Unset = UNSET
-    """Coordination assessment for one displayed outstanding source action. Human reviews, ownership acceptance and
+    """ Coordination assessment for one displayed outstanding source action. Human reviews, ownership acceptance and
     worker checks are distinct from executing application transitions. Free-form response/coordinator plans remain
     fulfillment_unassessed without a declared binding. Deadlines and histories never create dependency guards or
-    authorize actions."""
+    authorize actions. """
     obligation_receipts: list[OperationWorkflowObligationEvent] | Unset = UNSET
-    """Server-written obligation-linked lifecycle receipts saved atomically with this source mutation; bounded
-    history is not a complete audit log."""
+    """ Server-written obligation-linked lifecycle receipts saved atomically with this source mutation; bounded
+    history is not a complete audit log. """
     obligation_receipts_truncated: bool | Unset = UNSET
-    """Older obligation receipts have been pruned from this source record."""
+    """ Older obligation receipts have been pruned from this source record. """
     next_action_digest: OperationWorkflowNextActionDigest | Unset = UNSET
-    """One bounded changed-item team digest. Items are advisory snapshots, not application authorization; source
+    """ One bounded changed-item team digest. Items are advisory snapshots, not application authorization; source
     state may change before reading or publication. Fingerprints exclude polling timestamps and are recorded
-    atomically with delivery under the subscription lease. Acknowledgment changes no source obligation."""
+    atomically with delivery under the subscription lease. Acknowledgment changes no source obligation. """
     handoff_reassignment: OperationWorkflowReviewResponseHandoffReassignmentEvent | Unset = UNSET
-    """Historical handoff notice to the assigned team. Check current ownership before accepting; the original
-    review deadline remains unchanged."""
+    """ Historical handoff notice to the assigned team. Check current ownership before accepting; the original
+    review deadline remains unchanged. """
     handoff_decline: OperationWorkflowReviewResponseHandoffDeclineEvent | Unset = UNSET
-    """One historical decline notification routed to the previous owner, without automatic reassignment or deadline
-    changes. Consult current response ownership before acting."""
+    """ One historical decline notification routed to the previous owner, without automatic reassignment or deadline
+    changes. Consult current response ownership before acting. """
     decision_review: OperationWorkflowReviewResponseDecisionReviewEvent | Unset = UNSET
-    """One durable revalidation alert per explicit decision, routed to the current response owner without changing
-    intent, deadlines or application execution."""
+    """ One durable revalidation alert per explicit decision, routed to the current response owner without changing
+    intent, deadlines or application execution. """
     review_blockage: OperationWorkflowReviewResponseBlockageEvent | Unset = UNSET
-    """Sampled blocker changes and positively verified recoveries for a linked response plan. Recovery does not
-    resolve the response or establish a business result."""
+    """ Sampled blocker changes and positively verified recoveries for a linked response plan. Recovery does not
+    resolve the response or establish a business result. """
     review_check_in: OperationWorkflowReviewResponseCheckInEvent | Unset = UNSET
-    """OperationWorkflowReviewResponseCheckInEvent. Frozen response plan, linked reviews and routing at one missed
-    check-in, separate from business outcome and alert acknowledgment."""
+    """ OperationWorkflowReviewResponseCheckInEvent. Frozen response plan, linked reviews and routing at one missed
+    check-in, separate from business outcome and alert acknowledgment. """
     review_response: OperationWorkflowReviewResponse | Unset = UNSET
-    """OperationWorkflowReviewResponse. Human accountability record under the notification coordination revision
-    fence, independent of business workflow success."""
+    """ OperationWorkflowReviewResponse. Human accountability record under the notification coordination revision
+    fence, independent of business workflow success. """
     business_impact: OperationWorkflowReadinessImpactEvent | Unset = UNSET
-    """OperationWorkflowReadinessImpactEvent. Protected business result monitoring of retained unresolved human
-    reviews in a scoped application environment; advisory confidence only."""
+    """ OperationWorkflowReadinessImpactEvent. Protected business result monitoring of retained unresolved human
+    reviews in a scoped application environment; advisory confidence only. """
     dependency_recovery: OperationWorkflowPlaybookDependencyRecovery | Unset = UNSET
-    """OperationWorkflowPlaybookDependencyRecovery. Durable sampled waiting-to-ready observation for previously
+    """ OperationWorkflowPlaybookDependencyRecovery. Durable sampled waiting-to-ready observation for previously
     regressed steps, linked to the latest regression notice. Original reviews, queue assignments and clocks remain
-    unchanged."""
+    unchanged. """
     dependency_regression: OperationWorkflowPlaybookDependencyRegression | Unset = UNSET
-    """OperationWorkflowPlaybookDependencyRegression. Durable sampled dependency regression grouped by affected
-    checklist owner. Existing queue assignments, reviews and clocks remain unchanged."""
+    """ OperationWorkflowPlaybookDependencyRegression. Durable sampled dependency regression grouped by affected
+    checklist owner. Existing queue assignments, reviews and clocks remain unchanged. """
     playbook_step: OperationWorkflowPlaybookStepAssignment | Unset = UNSET
-    """OperationWorkflowPlaybookStepAssignment. Assigned step attention in the existing inbox and follow-up queue.
-    Polling preserves manual coordination and bounded ownership history."""
+    """ OperationWorkflowPlaybookStepAssignment. Assigned step attention in the existing inbox and follow-up queue.
+    Polling preserves manual coordination and bounded ownership history. """
     playbook_review: OperationWorkflowPlaybookCompletionReview | Unset = UNSET
-    """OperationWorkflowPlaybookCompletionReview. Bounded retained post-completion monitoring; updates never reopen
-    or rewrite the original closure."""
+    """ OperationWorkflowPlaybookCompletionReview. Bounded retained post-completion monitoring; updates never reopen
+    or rewrite the original closure. """
     playbook_review_event: OperationWorkflowPlaybookCompletionReviewEvent | Unset = UNSET
-    """OperationWorkflowPlaybookCompletionReviewEvent. Durable result change linked to the original closed
-    escalation; conveys no application execution authority."""
+    """ OperationWorkflowPlaybookCompletionReviewEvent. Durable result change linked to the original closed
+    escalation; conveys no application execution authority. """
     playbook_escalation: OperationWorkflowPlaybookOutcomeEscalation | Unset = UNSET
-    """OperationWorkflowPlaybookOutcomeEscalation. Retained assigned deadline follow-up evidence. Polling refreshes
+    """ OperationWorkflowPlaybookOutcomeEscalation. Retained assigned deadline follow-up evidence. Polling refreshes
     current observations and the first observed success only; acknowledgment, owner, notes, due times, reminders and
-    completion remain human coordination."""
+    completion remain human coordination. """
     playbook_evidence: OperationWorkflowPlaybookEvidenceEvent | Unset = UNSET
-    """OperationWorkflowPlaybookEvidenceEvent. Opt-in durable checklist evidence monitoring; advisory observations
-    preserve human reviews and application business authority."""
+    """ OperationWorkflowPlaybookEvidenceEvent. Opt-in durable checklist evidence monitoring; advisory observations
+    preserve human reviews and application business authority. """
     escalation_response: OperationWorkflowReadinessEscalationResponseEvent | Unset = UNSET
-    """Single durable acknowledgment-deadline notice for an assigned escalation, with exact scoped source identity.
-    Does not automatically schedule a second follow-up or indicate business failure."""
+    """ Single durable acknowledgment-deadline notice for an assigned escalation, with exact scoped source identity.
+    Does not automatically schedule a second follow-up or indicate business failure. """
     outcome_escalation: OperationWorkflowReadinessOutcomeEscalation | Unset = UNSET
-    """Live evidence for an assigned outcome escalation, separate from immutable deadline delivery evidence and
+    """ Live evidence for an assigned outcome escalation, separate from immutable deadline delivery evidence and
     human coordination. First observed application success is retained as a flag; it never automatically
-    acknowledges or completes work. Monitoring ends with source retention."""
+    acknowledges or completes work. Monitoring ends with source retention. """
     business_outcome_watch: OperationWorkflowReadinessBusinessOutcomeWatch | Unset = UNSET
-    """Retained opt-in watch for one source completion business criterion. Current observations remain advisory;
+    """ Retained opt-in watch for one source completion business criterion. Current observations remain advisory;
     deadlines are notified once and unchanged status is suppressed. Source inbox retention and subscription deletion
-    end monitoring."""
+    end monitoring. """
     business_outcome: OperationWorkflowReadinessBusinessOutcomeEvent | Unset = UNSET
-    """Self-contained observed business result or deadline notice for a source completion. Reports never establish
-    causation, business failure or execution authority. Source links may expire from inbox retention."""
+    """ Self-contained observed business result or deadline notice for a source completion. Reports never establish
+    causation, business failure or execution authority. Source links may expire from inbox retention. """
     verification_watch: OperationWorkflowReadinessVerificationWatch | Unset = UNSET
-    """Opt-in watch of captured resolution identities. Verified proofs remain observed for later loss or explicit
-    blocker reopening; partial coverage and source inbox retention remain explicit."""
+    """ Opt-in watch of captured resolution identities. Verified proofs remain observed for later loss or explicit
+    blocker reopening; partial coverage and source inbox retention remain explicit. """
     verification: OperationWorkflowReadinessVerificationEvent | Unset = UNSET
-    """Durable in-app notification linked to its original completion watch. Source describes the original
-    notification edge; verified does not imply workflow readiness or execution authority."""
+    """ Durable in-app notification linked to its original completion watch. Source describes the original
+    notification edge; verified does not imply workflow readiness or execution authority. """
     coordination: OperationWorkflowReadinessCoordination | Unset = UNSET
-    """OperationWorkflowReadinessCoordination. Shared inbox coordination with optimistic revision checks; omission
-    of a follow-up time clears it."""
+    """ OperationWorkflowReadinessCoordination. Shared inbox coordination with optimistic revision checks; omission
+    of a follow-up time clears it. """
     change: OperationWorkflowReadinessChange | Unset = UNSET
-    """Readiness comparison of the saved edge with fresh retained evidence. Contract and state boundaries are
-    explicit."""
+    """ Readiness comparison of the saved edge with fresh retained evidence. Contract and state boundaries are
+    explicit. """
     reminder: OperationWorkflowReadinessDueReminder | Unset = UNSET
-    """One durable in-app reminder marker for the original notification and follow-up deadline; rescheduling or
-    clearing retires it. Does not authorize execution."""
+    """ One durable in-app reminder marker for the original notification and follow-up deadline; rescheduling or
+    clearing retires it. Does not authorize execution. """
 
     def to_dict(self) -> dict[str, Any]:
         id = str(self.id)

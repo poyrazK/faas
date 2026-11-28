@@ -24,15 +24,15 @@ class MCPReadinessNotificationAction:
     """Version-fenced decision against a receiver head or the oldest event using an app-scoped idempotency key."""
 
     request_id: UUID
-    """Reuse this UUID and the identical request body when retrying the same decision."""
+    """ Reuse this UUID and the identical request body when retrying the same decision. """
     event_id: UUID
     action: MCPReadinessNotificationActionAction
     expected_version: int
-    """Current head delivery_version from queue inspection."""
+    """ Current head delivery_version from queue inspection. """
     reason: str
-    """Nonblank operator explanation limited to 500 UTF-8 bytes."""
+    """ Nonblank operator explanation limited to 500 UTF-8 bytes. """
     destination: MCPReadinessNotificationActionDestination | Unset = UNSET
-    """Selected receiver queue; omitted for an event-wide decision."""
+    """ Selected receiver queue; omitted for an event-wide decision. """
 
     def to_dict(self) -> dict[str, Any]:
         request_id = str(self.request_id)

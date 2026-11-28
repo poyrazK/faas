@@ -19,28 +19,28 @@ class RequestAnalyticsRouteDeploymentObservation:
     """
 
     deployment_id: str
-    """Stable UUID identifying the immutable revision that served this route."""
+    """ Stable UUID identifying the immutable revision that served this route. """
     requests: int
     request_share_pct: float
-    """This route/deployment cell's share of all observed app requests in the window."""
+    """ This route/deployment cell's share of all observed app requests in the window. """
     estimated_compute_cost_millicents: int
-    """Estimated raw RAM-hour value allocated to this route/deployment cell by request share; not an invoice
-    amount."""
+    """ Estimated raw RAM-hour value allocated to this route/deployment cell by request share; not an invoice
+    amount. """
     guest_cpu_measured_requests: int
     guest_cpu_regression: bool
-    """True when measured guest CPU/request rose by at least 25% from the preceding comparable revision."""
+    """ True when measured guest CPU/request rose by at least 25% from the preceding comparable revision. """
     commit_sha: str | Unset = UNSET
     deployment_tag: str | Unset = UNSET
     deployment_created_at: str | Unset = UNSET
-    """RFC 3339 timestamp used to order same-route CPU comparisons."""
+    """ RFC 3339 timestamp used to order same-route CPU comparisons. """
     guest_cpu_avg_ms: int | Unset = UNSET
-    """Request-weighted mean measured guest CPU time for this route under this deployment; supported Linux one-shot
-    runtimes only."""
+    """ Request-weighted mean measured guest CPU time for this route under this deployment; supported Linux one-shot
+    runtimes only. """
     guest_cpu_change_pct: float | Unset = UNSET
-    """Change in measured mean guest CPU/request from the preceding comparable deployment for this same
-    route/method."""
+    """ Change in measured mean guest CPU/request from the preceding comparable deployment for this same
+    route/method. """
     guest_cpu_compared_to: str | Unset = UNSET
-    """Tag, commit SHA, or deployment UUID of the preceding comparable revision."""
+    """ Tag, commit SHA, or deployment UUID of the preceding comparable revision. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

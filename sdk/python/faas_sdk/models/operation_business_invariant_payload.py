@@ -23,8 +23,8 @@ class OperationBusinessInvariantPayload:
 
     kind: OperationBusinessInvariantPayloadKind
     invariant: OperationBusinessInvariant
-    """Application-evaluated business condition. String limits are UTF-8 bytes; instance, version, and description
-    must be nonempty without control characters."""
+    """ Application-evaluated business condition. String limits are UTF-8 bytes; instance, version, and description
+    must be nonempty without control characters. """
 
     def to_dict(self) -> dict[str, Any]:
         kind: str = self.kind

@@ -56,17 +56,17 @@ class Problem:
     title: str
     status: int
     code: str
-    """Stable machine-readable error code. See StatusForCode."""
+    """ Stable machine-readable error code. See StatusForCode. """
     active_operation_id: UUID | Unset = UNSET
-    """The running project rollback identified by a project rollback start conflict."""
+    """ The running project rollback identified by a project rollback start conflict. """
     run_budget: RunBudgetRefusal | Unset = UNSET
-    """Budget limit that prevented admission and the current usage against it."""
+    """ Budget limit that prevented admission and the current usage against it. """
     current_sequence: int | Unset = UNSET
-    """Observed channel head on realtime_sequence_conflict."""
+    """ Observed channel head on realtime_sequence_conflict. """
     agent_approval: AgentApprovalPendingInfo | Unset = UNSET
-    """The approval request behind an approval_required, approval_denied or approval_expired problem. On
+    """ The approval request behind an approval_required, approval_denied or approval_expired problem. On
     approval_required a person opens review_url to decide, then the agent repeats the same request once; on the
-    other two the agent should stop repeating it."""
+    other two the agent should stop repeating it. """
     condition_field: str | Unset = UNSET
     condition_index: int | Unset = UNSET
     field_exists: bool | Unset = UNSET
@@ -76,75 +76,75 @@ class Problem:
     entity_exists: bool | Unset = UNSET
     message_index: int | Unset = UNSET
     expected_sequence: int | Unset = UNSET
-    """Requested channel head precondition."""
+    """ Requested channel head precondition. """
     bindings_check: BindingCheckReport | Unset = UNSET
-    """Safe preflight findings for the declared policy at checked_at. Coverage may be complete, partial or none; a
+    """ Safe preflight findings for the declared policy at checked_at. Coverage may be complete, partial or none; a
     passed report does not independently establish application readiness or credential use. Optional application
-    acknowledgements are version-bound self-attestations."""
+    acknowledgements are version-bound self-attestations. """
     crossed_releases: list[RollbackCrossedRelease] | Unset = UNSET
-    """rollback_crosses_release: release commands the rollback would not undo."""
+    """ rollback_crosses_release: release commands the rollback would not undo. """
     restore_points: list[ReleaseRestorePoint] | Unset = UNSET
-    """rollback_crosses_release: how to restore each managed PostgreSQL database to before those releases."""
+    """ rollback_crosses_release: how to restore each managed PostgreSQL database to before those releases. """
     freezes: list[ReleaseFreeze] | Unset = UNSET
-    """release_frozen: the freezes refusing the release."""
+    """ release_frozen: the freezes refusing the release. """
     release_approval: ReleaseApprovalStatus | Unset = UNSET
-    """A release's approval state."""
+    """ A release's approval state. """
     type_: str | Unset = UNSET
     instance: str | Unset = UNSET
-    """URI reference identifying this problem occurrence when supplied by the caller."""
+    """ URI reference identifying this problem occurrence when supplied by the caller. """
     detail: str | Unset = UNSET
     limit: int | None | Unset = UNSET
     observed: int | None | Unset = UNSET
     limit_bytes: int | None | Unset = UNSET
-    """Explicit byte limit for request-body and other byte-oriented errors."""
+    """ Explicit byte limit for request-body and other byte-oriented errors. """
     observed_bytes: int | None | Unset = UNSET
-    """Observed byte count for request-body and other byte-oriented errors."""
+    """ Observed byte count for request-body and other byte-oriented errors. """
     docs_url: str | Unset = UNSET
     retry_after_seconds: int | Unset = UNSET
-    """Retry delay promoted from the HTTP Retry-After header by SDK clients when the header uses delta-seconds."""
+    """ Retry delay promoted from the HTTP Retry-After header by SDK clients when the header uses delta-seconds. """
     checkout_url: str | Unset = UNSET
-    """Provider-neutral hosted checkout URL on a `payment_required`
+    """ Provider-neutral hosted checkout URL on a `payment_required`
     402 when a paid plan upgrade requires a new subscription.
-    """
+     """
     upgrade_url: str | Unset = UNSET
-    """On a `consumer_plan_limit_exceeded` 429, the API's hosted page
+    """ On a `consumer_plan_limit_exceeded` 429, the API's hosted page
     where the consumer moves to another plan.
-    """
+     """
     billing_portal_url: str | Unset = UNSET
     paddle_checkout_url: str | Unset = UNSET
-    """Legacy Paddle-hosted checkout URL on a `payment_required`
+    """ Legacy Paddle-hosted checkout URL on a `payment_required`
     402. Prefer the provider-neutral `checkout_url` field.
-    """
+     """
     tx_id: str | Unset = UNSET
-    """Paddle transaction handle (`txn_…`) on a `payment_required`
+    """ Paddle transaction handle (`txn_…`) on a `payment_required`
     402. Empty on the Stripe path. The dashboard renders this as
     a confirmation id after the customer completes checkout.
-    """
+     """
     errors: list[FieldError] | Unset = UNSET
-    """Per-field validation detail. Populated by 422 sites that
+    """ Per-field validation detail. Populated by 422 sites that
     emit a list of field-level failures. Each entry is a
     `FieldError` (Cloudflare / Stripe shape: field + expected
     + got) so an SDK can drive form-field UI without parsing
     prose.
-    """
+     """
     secret_findings: list[SecretFinding] | Unset = UNSET
-    """Per-line secret-scan detail. Populated by 422 sites with
+    """ Per-line secret-scan detail. Populated by 422 sites with
     `code: secret_scan_strict` (the server-side scan rejection,
     and the CLI's `--secret-scan=strict` client-side rejection). The shape
     is shared with the on-disk `SecretScanResult` so a
     programmatic consumer can render the same UI for both
     rejection paths. Optional + omitempty.
-    """
+     """
     secret_hint: str | Unset = UNSET
-    """Customer-facing remediation nudge attached to a
+    """ Customer-facing remediation nudge attached to a
     `code: secret_scan_strict` 422 envelope (e.g. "move
     detected secrets to `gregale secrets set`"). Mirrors
     the `FieldError` shape's prose pattern so the dashboard
     / SDK can render the hint as a one-line footer without
     parsing prose. Optional + omitempty.
-    """
+     """
     hint: str | Unset = UNSET
-    """Single short next-action line lifted from the
+    """ Single short next-action line lifted from the
     error-explanation catalog. Populated by the 9 cluster-
     owned RFC 7807 codes (app_not_listening,
     app_loopback_bound, app_arch_mismatch,
@@ -155,42 +155,42 @@ class Problem:
     error shape (`hint: <hint>`). Optional + omitempty
     so every other problem+json site keeps its existing
     3-line shape unchanged.
-    """
+     """
     why: str | Unset = UNSET
-    """Human-readable cause with the observed value templated
+    """ Human-readable cause with the observed value templated
     in (error-explanations cluster).
     Distinct from `detail`: `detail` is the platform's
     machine-stable message; `why` is the customer-facing
     explanation. Multi-line (≤512 bytes per catalog row). Optional + omitempty.
-    """
+     """
     fix: str | Unset = UNSET
-    """Prescriptive remediation (1-3 lines, error-explanations
+    """ Prescriptive remediation (1-3 lines, error-explanations
     cluster). Distinct from `hint`:
     `hint` is a single line, `fix` is the bulleted
     remediation list. The CLI renders this as
     `→ fix: <fix>` with literal newlines preserved so the
     multi-line shape survives. Optional + omitempty.
-    """
+     """
     relevant_logs: list[LogExcerpt] | Unset = UNSET
-    """Per-line log excerpts that explain the failure (error-
+    """ Per-line log excerpts that explain the failure (error-
     explanations cluster). The
     detection site attaches the last N log lines that
     caused the failure (capped at 20 entries × 512 bytes
     each per CLI tripwire). The CLI renders the first 5
     inline as a fenced block. Optional + omitempty.
-    """
+     """
     fix_commands: list[str] | Unset = UNSET
-    """The runnable commands quoted in `fix`, in order, with this
+    """ The runnable commands quoted in `fix`, in order, with this
     failure's values (app, deployment) filled in. A command that
     still needs a value nobody knew is left out rather than shown
     with a placeholder. Omitted when there are none.
-    """
+     """
     retryable: bool | Unset = UNSET
-    """Whether repeating the same request can succeed without a
+    """ Whether repeating the same request can succeed without a
     change: true for rate limits, a Retry-After and transient
     platform errors; false when the request or the app must
     change. Absent when unknown.
-    """
+     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -17,7 +17,7 @@ class ObjectTaggingRequest:
     """Complete replacement object tag set, including an empty set to clear all tags."""
 
     tags: ObjectTaggingRequestTags
-    """Complete replacement set. Empty removes all tags. Keys and values use the portable UTF-8 byte limits."""
+    """ Complete replacement set. Empty removes all tags. Keys and values use the portable UTF-8 byte limits. """
 
     def to_dict(self) -> dict[str, Any]:
         tags = self.tags.to_dict()

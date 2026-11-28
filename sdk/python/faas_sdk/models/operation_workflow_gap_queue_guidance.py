@@ -23,10 +23,10 @@ class OperationWorkflowGapQueueGuidance:
 
     status: OperationWorkflowGapQueueGuidanceStatus
     expectation: OperationWorkflowConditionCoverageEntry
-    """One condition expected in the current state. Match the declaring workflow step and exact condition ID and
+    """ One condition expected in the current state. Match the declaring workflow step and exact condition ID and
     description within the current contract and latest explicit contexts. Evidence keeps the source report pinned
     age budget and decision identity. Reported includes any application result and may have no freshness budget;
-    overdue is evidence past its budget. Missing has no evidence. This grants no authorization or verification."""
+    overdue is evidence past its budget. Missing has no evidence. This grants no authorization or verification. """
 
     def to_dict(self) -> dict[str, Any]:
         status: str = self.status

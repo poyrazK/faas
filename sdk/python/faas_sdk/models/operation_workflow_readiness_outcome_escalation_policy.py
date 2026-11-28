@@ -18,21 +18,21 @@ class OperationWorkflowReadinessOutcomeEscalationPolicy:
     """
 
     owner: str
-    """OperationWorkflowReadinessOutcomeEscalationPolicy.owner. Retained coordination escalation policy or
-    evidence; business interpretation and execution remain application-owned."""
+    """ OperationWorkflowReadinessOutcomeEscalationPolicy.owner. Retained coordination escalation policy or
+    evidence; business interpretation and execution remain application-owned. """
     follow_up_after_seconds: int
-    """OperationWorkflowReadinessOutcomeEscalationPolicy.follow_up_after_seconds. Retained coordination escalation
-    policy or evidence; business interpretation and execution remain application-owned."""
+    """ OperationWorkflowReadinessOutcomeEscalationPolicy.follow_up_after_seconds. Retained coordination escalation
+    policy or evidence; business interpretation and execution remain application-owned. """
     acknowledge_after_seconds: int | Unset = UNSET
-    """OperationWorkflowReadinessOutcomeEscalationPolicy.acknowledge_after_seconds. Optional positive response
-    target from escalation delivery; zero or omission disables it. Bounded to one week."""
+    """ OperationWorkflowReadinessOutcomeEscalationPolicy.acknowledge_after_seconds. Optional positive response
+    target from escalation delivery; zero or omission disables it. Bounded to one week. """
     fallback_owner: str | Unset = UNSET
-    """OperationWorkflowReadinessOutcomeEscalationPolicy.fallback_owner. Optional different owner label requiring a
+    """ OperationWorkflowReadinessOutcomeEscalationPolicy.fallback_owner. Optional different owner label requiring a
     response target. Applied once only to open unacknowledged escalation with unchanged original ownership and no
-    assignment history."""
+    assignment history. """
     note: str | Unset = UNSET
-    """OperationWorkflowReadinessOutcomeEscalationPolicy.note. Retained coordination escalation policy or evidence;
-    business interpretation and execution remain application-owned."""
+    """ OperationWorkflowReadinessOutcomeEscalationPolicy.note. Retained coordination escalation policy or evidence;
+    business interpretation and execution remain application-owned. """
 
     def to_dict(self) -> dict[str, Any]:
         owner = self.owner

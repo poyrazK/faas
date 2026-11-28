@@ -20,7 +20,7 @@ class DeploymentResponseCheckResult:
     instance_id: str
     http_status: int
     body: str
-    """UTF-8 response preview bounded to 4096 bytes."""
+    """ UTF-8 response preview bounded to 4096 bytes. """
     body_truncated: bool
     project_id: str | Unset = UNSET
     environment_id: str | Unset = UNSET

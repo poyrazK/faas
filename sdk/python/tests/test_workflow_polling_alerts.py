@@ -1,5 +1,4 @@
 import pytest
-
 from faas_sdk.preview.models.workflow_recovery_polling_notification import WorkflowRecoveryPollingNotification
 
 

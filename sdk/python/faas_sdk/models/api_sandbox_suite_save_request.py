@@ -17,11 +17,11 @@ class APISandboxSuiteSaveRequest:
     """Ordered scenario selection and revision precondition for saving a suite."""
 
     expected_revision: str
-    """Use the current suite revision or the empty string to create the suite."""
+    """ Use the current suite revision or the empty string to create the suite. """
     scenario_ids: list[UUID]
     run_before_approval: bool | Unset = UNSET
-    """Enable or disable automatic advisory suites. An omitted value keeps the existing setting and an empty
-    scenario list disables it."""
+    """ Enable or disable automatic advisory suites. An omitted value keeps the existing setting and an empty
+    scenario list disables it. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

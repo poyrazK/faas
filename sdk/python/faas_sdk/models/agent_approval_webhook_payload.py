@@ -29,30 +29,30 @@ class AgentApprovalWebhookPayload:
     """
 
     approval_id: UUID
-    """The approval request this event is about."""
+    """ The approval request this event is about. """
     key_id: UUID
-    """The agent key that made the request."""
+    """ The agent key that made the request. """
     category: AgentApprovalWebhookPayloadCategory
-    """Which kind of risky action the agent asked to take; budget when it would go past its monthly budget, undo
-    when it undoes its own changes."""
+    """ Which kind of risky action the agent asked to take; budget when it would go past its monthly budget, undo
+    when it undoes its own changes. """
     method: str
-    """HTTP method of the agent's request."""
+    """ HTTP method of the agent's request. """
     path: str
-    """Path and query of the agent's request."""
+    """ Path and query of the agent's request. """
     status: AgentApprovalWebhookPayloadStatus
-    """The request's status when the event was recorded."""
+    """ The request's status when the event was recorded. """
     expires_at: datetime.datetime
-    """When the request stops being approvable or usable."""
+    """ When the request stops being approvable or usable. """
     org_id: UUID | Unset = UNSET
-    """The organization the key acts in"""
+    """ The organization the key acts in """
     review_url: str | Unset = UNSET
-    """On agent.approval.requested: the page where a member who may decide opens it."""
+    """ On agent.approval.requested: the page where a member who may decide opens it. """
     decided_at: datetime.datetime | Unset = UNSET
-    """When the person approved or denied the request."""
+    """ When the person approved or denied the request. """
     note: str | Unset = UNSET
-    """On agent.approval.denied: the reason the person gave the agent, if any."""
+    """ On agent.approval.denied: the reason the person gave the agent, if any. """
     reason: str | Unset = UNSET
-    """The agent's own account of what the request is for, if it gave one. Untrusted agent text."""
+    """ The agent's own account of what the request is for, if it gave one. Untrusted agent text. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

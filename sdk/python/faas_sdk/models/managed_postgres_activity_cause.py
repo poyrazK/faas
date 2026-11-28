@@ -27,7 +27,7 @@ class ManagedPostgresActivityCause:
     app_id: str | Unset = UNSET
     app_slug: str | Unset = UNSET
     detail: str | Unset = UNSET
-    """The cron's path for a cron cause."""
+    """ The cron's path for a cron cause. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

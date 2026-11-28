@@ -57,37 +57,37 @@ class EdgeRuleCacheAction:
     """
 
     max_age_seconds: int = 60
-    """Fresh window in seconds. 0 = inherit the API-side default
+    """ Fresh window in seconds. 0 = inherit the API-side default
     (60s). Values above the platform cap
     (3600s = 1 hour) are rejected with 422.
-    """
+     """
     stale_if_error_seconds: int = 300
-    """Stale-on-error window in seconds. 0 = no stale-on-error
+    """ Stale-on-error window in seconds. 0 = no stale-on-error
     (errors return 502/504 directly). Values above the
     platform cap (300s = 5 minutes) are rejected with 422.
-    """
+     """
     stale_while_revalidate_seconds: int | Unset = 0
-    """After the fresh window, serve stale for this many seconds
+    """ After the fresh window, serve stale for this many seconds
     while a single coalesced background request refreshes the
     cache key. 0 disables stale-while-revalidate.
-    """
+     """
     vary_on: list[EdgeRuleCacheActionVaryOnItem] | Unset = UNSET
-    """Non-credential request headers that participate in the
+    """ Non-credential request headers that participate in the
     cache key. Closed vocabulary:
       - `Accept-Language`
       - `Accept-Encoding`
     Empty array (default) collapses to no extra key
     dimensions; the URL path + query alone drives cache
     identity.
-    """
+     """
     methods: list[EdgeRuleCacheActionMethodsItem] | Unset = UNSET
-    """HTTP methods eligible for caching. Closed vocabulary:
+    """ HTTP methods eligible for caching. Closed vocabulary:
       - `GET`
       - `HEAD`
     Empty array (default) collapses to the runtime's
     cacheability predicate (GET + HEAD). POST/PUT/PATCH/DELETE
     are deliberately absent.
-    """
+     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

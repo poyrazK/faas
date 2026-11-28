@@ -28,14 +28,14 @@ class EdgeRuleAsyncAction:
     """
 
     on_success: UUID | Unset = UNSET
-    """Optional app webhook subscription ID for successful invocations."""
+    """ Optional app webhook subscription ID for successful invocations. """
     on_failure: UUID | Unset = UNSET
-    """Optional app webhook subscription ID for failed or dead-lettered invocations."""
+    """ Optional app webhook subscription ID for failed or dead-lettered invocations. """
     retry_policy: EdgeRuleAsyncActionRetryPolicy | Unset = UNSET
-    """Optional per-route retry override; attempts are capped by the account plan."""
+    """ Optional per-route retry override; attempts are capped by the account plan. """
     max_age_seconds: int | Unset = UNSET
-    """Maximum lifetime from acceptance; 0 or omission inherits the account-plan default, and lower plan ceilings
-    clamp this value."""
+    """ Maximum lifetime from acceptance; 0 or omission inherits the account-plan default, and lower plan ceilings
+    clamp this value. """
 
     def to_dict(self) -> dict[str, Any]:
         on_success: str | Unset = UNSET

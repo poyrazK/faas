@@ -22,7 +22,7 @@ class APISandboxScenarioResponse:
 
     scenario: APISandboxScenario | None
     source_request_id: UUID | Unset = UNSET
-    """Private Debugger provenance, present when the saved scenario originated from a retained request."""
+    """ Private Debugger provenance, present when the saved scenario originated from a retained request. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

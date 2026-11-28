@@ -19,12 +19,12 @@ class ProjectDeploymentCheckWorkload:
     """Planned workload and provided key names used by metadata-only deployment readiness checks."""
 
     workload: PlanWorkload
-    """One discovered unit of work. Mirrors reposcan.Workload."""
+    """ One discovered unit of work. Mirrors reposcan.Workload. """
     command_shell: bool | Unset = UNSET
     release_command: list[str] | Unset = UNSET
     release_command_shell: bool | Unset = UNSET
     provided_keys: list[str] | Unset = UNSET
-    """Key names proposed by a separate secrets input; values are never included."""
+    """ Key names proposed by a separate secrets input; values are never included. """
 
     def to_dict(self) -> dict[str, Any]:
         workload = self.workload.to_dict()

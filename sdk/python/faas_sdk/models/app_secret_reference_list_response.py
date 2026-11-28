@@ -27,11 +27,11 @@ class AppSecretReferenceListResponse:
     environment: str
     references: AppSecretReferenceListResponseReferences
     count: int
-    """Shared variable/reference quota usage across all environments."""
+    """ Shared variable/reference quota usage across all environments. """
     quota: int
     suppressed_keys: list[str] | Unset = UNSET
-    """Destinations excluded from primary workload secret delivery until an explicit PUT reference re-enables them.
-    Omitted by older servers; consumes no variable slots."""
+    """ Destinations excluded from primary workload secret delivery until an explicit PUT reference re-enables them.
+    Omitted by older servers; consumes no variable slots. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

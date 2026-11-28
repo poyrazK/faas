@@ -29,12 +29,13 @@ class StoredWorkflowLiveVerification:
     published_version: int
     created_at: datetime.datetime
     outdated: bool
-    """True when the saved case, published revision, or current default deployment differs from the frozen target."""
+    """ True when the saved case, published revision, or current default deployment differs from the frozen target.
+    """
     report_current: bool
-    """True when the report still matches this run status, resume count and update time; also require
-    outdated=false for current-target evidence."""
+    """ True when the report still matches this run status, resume count and update time; also require
+    outdated=false for current-target evidence. """
     report: StoredWorkflowLiveReport | Unset = UNSET
-    """Payload-free verdict for the frozen live assertions at one terminal run state."""
+    """ Payload-free verdict for the frozen live assertions at one terminal run state. """
 
     def to_dict(self) -> dict[str, Any]:
         run_id = str(self.run_id)

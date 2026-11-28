@@ -15,11 +15,11 @@ class AgentBudgetRequest:
     """Sets an agent connection's budget: exactly one of monthly_cents, unlimited or default."""
 
     monthly_cents: int | Unset = UNSET
-    """A monthly budget in cents."""
+    """ A monthly budget in cents. """
     unlimited: bool | Unset = UNSET
-    """No budget of its own; the organization's ceiling still applies."""
+    """ No budget of its own; the organization's ceiling still applies. """
     default: bool | Unset = UNSET
-    """Return to the plan's default budget."""
+    """ Return to the plan's default budget. """
 
     def to_dict(self) -> dict[str, Any]:
         monthly_cents = self.monthly_cents

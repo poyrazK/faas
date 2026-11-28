@@ -35,13 +35,13 @@ class CreateOutboundIntegrationRequest:
     allowed_methods: list[CreateOutboundIntegrationRequestAllowedMethodsItem]
     allowed_path_prefixes: list[str]
     daily_request_limit: int | None | Unset = UNSET
-    """Optional per-integration daily admitted-request limit; account plan ceilings may be lower."""
+    """ Optional per-integration daily admitted-request limit; account plan ceilings may be lower. """
     request_policy: OutboundRequestPolicy | Unset = UNSET
-    """Effective customer-selected per-integration policy, bounded by the account plan."""
+    """ Effective customer-selected per-integration policy, bounded by the account plan. """
     ai_provider: CreateOutboundIntegrationRequestAiProvider | Unset = UNSET
-    """Optional AI gateway mode. Enables token usage extraction for that provider's response format."""
+    """ Optional AI gateway mode. Enables token usage extraction for that provider's response format. """
     ai_daily_token_limit: int | None | Unset = UNSET
-    """Optional UTC-day input plus output token limit. Requires ai_provider."""
+    """ Optional UTC-day input plus output token limit. Requires ai_provider. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

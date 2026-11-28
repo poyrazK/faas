@@ -29,35 +29,35 @@ class OperationWorkflowReadinessFollowUpsResponse:
     """
 
     items: list[OperationWorkflowReadinessFollowUp]
-    """OperationWorkflowReadinessFollowUpsResponse.items. Pending follow-ups ordered by due time, subscription UUID
-    and sequence."""
+    """ OperationWorkflowReadinessFollowUpsResponse.items. Pending follow-ups ordered by due time, subscription UUID
+    and sequence. """
     evaluated_at: datetime.datetime
-    """OperationWorkflowReadinessFollowUpsResponse.evaluated_at. Shared clock for overdue classification."""
+    """ OperationWorkflowReadinessFollowUpsResponse.evaluated_at. Shared clock for overdue classification. """
     total_count: int
-    """OperationWorkflowReadinessFollowUpsResponse.total_count. Count or continuation offset within the selected
-    retained follow-ups."""
+    """ OperationWorkflowReadinessFollowUpsResponse.total_count. Count or continuation offset within the selected
+    retained follow-ups. """
     overdue_count: int
-    """OperationWorkflowReadinessFollowUpsResponse.overdue_count. Count or continuation offset within the selected
-    retained follow-ups."""
+    """ OperationWorkflowReadinessFollowUpsResponse.overdue_count. Count or continuation offset within the selected
+    retained follow-ups. """
     next_offset: int
-    """OperationWorkflowReadinessFollowUpsResponse.next_offset. Count or continuation offset within the selected
-    retained follow-ups."""
+    """ OperationWorkflowReadinessFollowUpsResponse.next_offset. Count or continuation offset within the selected
+    retained follow-ups. """
     has_more: bool
-    """OperationWorkflowReadinessFollowUpsResponse.has_more. More matching retained rows follow this live page."""
+    """ OperationWorkflowReadinessFollowUpsResponse.has_more. More matching retained rows follow this live page. """
     retention_limited: bool
-    """OperationWorkflowReadinessFollowUpsResponse.retention_limited. True: coordination only survives within each
-    subscription latest-100 notification window; this is not an exhaustive task inventory."""
+    """ OperationWorkflowReadinessFollowUpsResponse.retention_limited. True: coordination only survives within each
+    subscription latest-100 notification window; this is not an exhaustive task inventory. """
     due_reminder_count: int
-    """OperationWorkflowReadinessFollowUpsResponse.due_reminder_count. Active published reminders across all
-    matching retained rows, before pagination. Overdue work may await the next bounded publisher pass."""
+    """ OperationWorkflowReadinessFollowUpsResponse.due_reminder_count. Active published reminders across all
+    matching retained rows, before pagination. Overdue work may await the next bounded publisher pass. """
     view: OperationWorkflowReadinessFollowUpsResponseView | Unset = UNSET
-    """Present for the next-action view; items remains empty and pagination/counts describe next_actions."""
+    """ Present for the next-action view; items remains empty and pagination/counts describe next_actions. """
     next_actions: list[OperationWorkflowNextActionQueueItem] | Unset = UNSET
     business_impact_summary: list[OperationWorkflowReadinessImpactSummary] | Unset = UNSET
-    """OperationWorkflowReadinessFollowUpsResponse.business_impact_summary. Matching retained unresolved review
+    """ OperationWorkflowReadinessFollowUpsResponse.business_impact_summary. Matching retained unresolved review
     tasks grouped by workflow and protected result before pagination. Unique obligations and cases are deduplicated
     across inbox deliveries; owner counts describe queue tasks. Ordered by critical overdue reviews, critical
-    reviews, total unique reviews and stable group identity. Existing filters and candidate-window limits apply."""
+    reviews, total unique reviews and stable group identity. Existing filters and candidate-window limits apply. """
 
     def to_dict(self) -> dict[str, Any]:
         items = []

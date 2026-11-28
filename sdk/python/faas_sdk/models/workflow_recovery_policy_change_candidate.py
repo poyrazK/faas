@@ -24,8 +24,8 @@ class WorkflowRecoveryPolicyChangeCandidate:
 
     job_id: UUID
     decision: WorkflowRecoveryPolicyDecision
-    """Frozen per-target explanation including eligibility refusals and policy suppression. The resume count
-    identifies the reviewed admitted generation."""
+    """ Frozen per-target explanation including eligibility refusals and policy suppression. The resume count
+    identifies the reviewed admitted generation. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

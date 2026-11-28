@@ -24,15 +24,15 @@ class PreAuthFailedResponseLimit:
     """
 
     failures_per_minute: int
-    """Continuous token refill per minute; no greater than the parent route's requests_per_second times 60."""
+    """ Continuous token refill per minute; no greater than the parent route's requests_per_second times 60. """
     burst: int
-    """Maximum consecutive failed responses; no greater than the parent route's burst."""
+    """ Maximum consecutive failed responses; no greater than the parent route's burst. """
     coordination: PreAuthFailedResponseLimitCoordination | Unset = "local"
-    """Optional shared failed-response budget across gateway replicas. Defaults to local. Central mode checks one
+    """ Optional shared failed-response budget across gateway replicas. Defaults to local. Central mode checks one
     of 1,024 opaque source shards before compute and records selected application failures afterward. Concurrent
-    failures can incur bounded debt. On database errors the replica-local bucket remains active."""
+    failures can incur bounded debt. On database errors the replica-local bucket remains active. """
     statuses: list[int] | Unset = UNSET
-    """Selected application response statuses. Defaults to [401, 403]. Only 4xx codes except 429 are supported."""
+    """ Selected application response statuses. Defaults to [401, 403]. Only 4xx codes except 429 are supported. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

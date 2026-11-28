@@ -136,11 +136,15 @@ def test_recovery_review_completion_snapshot_roundtrip():
 
 def test_automatic_policy_limits_pause_and_receipt_roundtrip():
     from faas_sdk.preview.models.workflow_recovery_policy import WorkflowRecoveryPolicy
-    from faas_sdk.preview.models.workflow_recovery_policy_automatic_execution import WorkflowRecoveryPolicyAutomaticExecution
+    from faas_sdk.preview.models.workflow_recovery_policy_automatic_execution import (
+        WorkflowRecoveryPolicyAutomaticExecution,
+    )
     from faas_sdk.preview.models.workflow_recovery_policy_paused_webhook_payload import (
         WorkflowRecoveryPolicyPausedWebhookPayload,
     )
-    from faas_sdk.preview.models.workflow_recovery_review_automatic_execution import WorkflowRecoveryReviewAutomaticExecution
+    from faas_sdk.preview.models.workflow_recovery_review_automatic_execution import (
+        WorkflowRecoveryReviewAutomaticExecution,
+    )
 
     policy = {
         "enabled": True,

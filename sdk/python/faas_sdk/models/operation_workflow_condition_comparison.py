@@ -27,10 +27,10 @@ class OperationWorkflowConditionComparison:
 
     status: OperationWorkflowConditionComparisonStatus
     changes: list[OperationWorkflowConditionChange]
-    """Reason conditions first then path groups then condition IDs in lexical order. Unchanged conditions are
-    omitted. Contributor evidence carries changes for the entire qualifying report."""
+    """ Reason conditions first then path groups then condition IDs in lexical order. Unchanged conditions are
+    omitted. Contributor evidence carries changes for the entire qualifying report. """
     truncated: bool
-    """More condition changes exist than the 64 retained entries."""
+    """ More condition changes exist than the 64 retained entries. """
 
     def to_dict(self) -> dict[str, Any]:
         status: str = self.status

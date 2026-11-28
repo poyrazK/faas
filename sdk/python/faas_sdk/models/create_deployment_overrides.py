@@ -44,26 +44,27 @@ class CreateDeploymentOverrides:
     """
 
     entrypoint: list[str] | Unset = UNSET
-    """Replaces the OCI image's ENTRYPOINT/CMD argv. Each element must be non-empty."""
+    """ Replaces the OCI image's ENTRYPOINT/CMD argv. Each element must be non-empty. """
     cmd: list[str] | Unset = UNSET
-    """Appended to entrypoint at exec time (OCI runtime contract). Each element must be non-empty."""
+    """ Appended to entrypoint at exec time (OCI runtime contract). Each element must be non-empty. """
     env: CreateDeploymentOverridesEnv | Unset = UNSET
-    """Plaintext env map applied at boot. Keys: `^[A-Z][A-Z0-9_]*$`. Per-value byte cap = plan EnvValueMaxBytes."""
+    """ Plaintext env map applied at boot. Keys: `^[A-Z][A-Z0-9_]*$`. Per-value byte cap = plan EnvValueMaxBytes.
+    """
     env_secrets: CreateDeploymentOverridesEnvSecrets | Unset = UNSET
-    """Sealed-secret-ref env map. Each VALUE is `secret:NAME`; the runtime resolver looks up `NAME` against
-    `app_secrets` at wake. Counts against the shared `EnvVarsMax` cap with `env`."""
+    """ Sealed-secret-ref env map. Each VALUE is `secret:NAME`; the runtime resolver looks up `NAME` against
+    `app_secrets` at wake. Counts against the shared `EnvVarsMax` cap with `env`. """
     port: int | Unset = UNSET
-    """Listen port; 0 = absent / fall back to image default (today 8080)."""
+    """ Listen port; 0 = absent / fall back to image default (today 8080). """
     healthcheck: DeploymentHealthcheck | None | Unset = UNSET
-    """Startup readiness-probe shape. The selected action gates instance startup before it becomes available."""
+    """ Startup readiness-probe shape. The selected action gates instance startup before it becomes available. """
     readiness_probe: DeploymentReadinessProbe | None | Unset = UNSET
-    """Optional recurring primary-app traffic gate. Failed probes withdraw a running instance from routing;
-    successful probes restore it without restarting the VM."""
+    """ Optional recurring primary-app traffic gate. Failed probes withdraw a running instance from routing;
+    successful probes restore it without restarting the VM. """
     main_depends_on: list[WorkloadDependency] | Unset = UNSET
-    """Companions that must reach the specified lifecycle condition before the primary workload starts. Targets
-    must be declared long-running companions; init companions already gate startup."""
+    """ Companions that must reach the specified lifecycle condition before the primary workload starts. Targets
+    must be declared long-running companions; init companions already gate startup. """
     liveness_probe: DeploymentLivenessProbe | None | Unset = UNSET
-    """Liveness-probe override. The host
+    """ Liveness-probe override. The host
     polls the guest's vsock 1028 STREAM on every `interval_s`; after
     `consecutive_failures` consecutive non-2xx (or timeout / conn-refused)
     responses, the VM is destroyed and the scheduler cold-boots it from rootfs
@@ -76,10 +77,10 @@ class CreateDeploymentOverrides:
     Pro, Scale inherit the 5 s / 3 consecutive / 60 s cooldown / 3 in 300 s
     defaults. Pro and Scale may select standard gRPC health.v1 Check
     on the runtime port; Free and Hobby remain HTTP-only for liveness.
-    """
+     """
     scope: None | str | Unset = UNSET
-    """Override-object per-deployment env scope. Lowercase alnum + dash, 1..40 chars, no leading/trailing dash.
-    nil/omitted = inherit top-level scope or `default`."""
+    """ Override-object per-deployment env scope. Lowercase alnum + dash, 1..40 chars, no leading/trailing dash.
+    nil/omitted = inherit top-level scope or `default`. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

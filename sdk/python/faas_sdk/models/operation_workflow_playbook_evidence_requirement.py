@@ -24,35 +24,35 @@ class OperationWorkflowPlaybookEvidenceRequirement:
     """
 
     label: str
-    """OperationWorkflowPlaybookEvidenceRequirement.label. Exact label from required_evidence; unique within
-    evidence_requirements."""
+    """ OperationWorkflowPlaybookEvidenceRequirement.label. Exact label from required_evidence; unique within
+    evidence_requirements. """
     kind: OperationWorkflowPlaybookEvidenceRequirementKind
-    """OperationWorkflowPlaybookEvidenceRequirement.kind. Selector category; invalid combinations of fields are
-    rejected."""
+    """ OperationWorkflowPlaybookEvidenceRequirement.kind. Selector category; invalid combinations of fields are
+    rejected. """
     operation: str
-    """OperationWorkflowPlaybookEvidenceRequirement.operation. Declared milestone producer, prerequisite transition
-    operation, or blocker-resolution operation name."""
+    """ OperationWorkflowPlaybookEvidenceRequirement.operation. Declared milestone producer, prerequisite transition
+    operation, or blocker-resolution operation name. """
     milestone: str | Unset = UNSET
-    """OperationWorkflowPlaybookEvidenceRequirement.milestone. Required milestone name for milestone and
-    prerequisite kinds; omitted for verification."""
+    """ OperationWorkflowPlaybookEvidenceRequirement.milestone. Required milestone name for milestone and
+    prerequisite kinds; omitted for verification. """
     prerequisite_operation: str | Unset = UNSET
-    """OperationWorkflowPlaybookEvidenceRequirement.prerequisite_operation. Required fact producer name for
-    prerequisite kind only."""
+    """ OperationWorkflowPlaybookEvidenceRequirement.prerequisite_operation. Required fact producer name for
+    prerequisite kind only. """
     from_state: str | Unset = UNSET
-    """OperationWorkflowPlaybookEvidenceRequirement.from_state. Required exact transition source for prerequisite
-    kind only."""
+    """ OperationWorkflowPlaybookEvidenceRequirement.from_state. Required exact transition source for prerequisite
+    kind only. """
     to_state: str | Unset = UNSET
-    """OperationWorkflowPlaybookEvidenceRequirement.to_state. Required exact transition destination for
-    prerequisite kind only."""
+    """ OperationWorkflowPlaybookEvidenceRequirement.to_state. Required exact transition destination for
+    prerequisite kind only. """
     group_id: str | Unset = UNSET
-    """OperationWorkflowPlaybookEvidenceRequirement.group_id. Optional prerequisite alternative group. Without a
-    group, selects mandatory retained facts."""
+    """ OperationWorkflowPlaybookEvidenceRequirement.group_id. Optional prerequisite alternative group. Without a
+    group, selects mandatory retained facts. """
     path_id: str | Unset = UNSET
-    """OperationWorkflowPlaybookEvidenceRequirement.path_id. Optional named prerequisite path; requires group_id.
-    Evaluates the selected fact, not the whole path or its decision."""
+    """ OperationWorkflowPlaybookEvidenceRequirement.path_id. Optional named prerequisite path; requires group_id.
+    Evaluates the selected fact, not the whole path or its decision. """
     blocker_code: str | Unset = UNSET
-    """OperationWorkflowPlaybookEvidenceRequirement.blocker_code. Required blocker code for verification kind only;
-    all matching obligations on the current report must be verified."""
+    """ OperationWorkflowPlaybookEvidenceRequirement.blocker_code. Required blocker code for verification kind only;
+    all matching obligations on the current report must be verified. """
 
     def to_dict(self) -> dict[str, Any]:
         label = self.label

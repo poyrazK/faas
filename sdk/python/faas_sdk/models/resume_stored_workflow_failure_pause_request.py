@@ -13,7 +13,7 @@ class ResumeStoredWorkflowFailurePauseRequest:
     """Explicit failure guard resume guarded by its current generation."""
 
     expected_generation: int
-    """Positive pause generation reviewed by the caller."""
+    """ Positive pause generation reviewed by the caller. """
 
     def to_dict(self) -> dict[str, Any]:
         expected_generation = self.expected_generation

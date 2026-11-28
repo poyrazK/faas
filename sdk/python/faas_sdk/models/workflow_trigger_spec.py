@@ -32,33 +32,33 @@ class WorkflowTriggerSpec:
 
     type_: WorkflowTriggerSpecType
     schedule: str | Unset = UNSET
-    """Five-field cron expression, required for schedule triggers."""
+    """ Five-field cron expression, required for schedule triggers. """
     timezone: str | Unset = UNSET
-    """IANA timezone for schedule triggers; defaults to UTC."""
+    """ IANA timezone for schedule triggers; defaults to UTC. """
     input_: Any | Unset = UNSET
-    """Fixed JSON input for scheduled runs, bounded by the workflow run-input limit."""
+    """ Fixed JSON input for scheduled runs, bounded by the workflow run-input limit. """
     overlap: WorkflowTriggerSpecOverlap | Unset = UNSET
-    """Skip a minute while any run of this workflow is active, or allow overlap subject to the app run quota.
-    Defaults to skip."""
+    """ Skip a minute while any run of this workflow is active, or allow overlap subject to the app run quota.
+    Defaults to skip. """
     catch_up: WorkflowTriggerSpecCatchUp | Unset = UNSET
-    """Schedule-only recovery policy; defaults to skip. Latest coalesces missed fires into at most one run inside
-    the recovery window; a current-minute fire takes precedence. Quota and overlap skips consume the interval."""
+    """ Schedule-only recovery policy; defaults to skip. Latest coalesces missed fires into at most one run inside
+    the recovery window; a current-minute fire takes precedence. Quota and overlap skips consume the interval. """
     catch_up_window: str | Unset = UNSET
-    """Schedule-only duration used with catch_up latest, between 1m and 24h. Defaults to 1h; fires exactly at the
-    age limit are included. Other policies reject this field."""
+    """ Schedule-only duration used with catch_up latest, between 1m and 24h. Defaults to 1h; fires exactly at the
+    age limit are included. Other policies reject this field. """
     enabled: bool | Unset = UNSET
-    """Whether the automatic trigger is enabled; defaults to true. Already accepted events and existing runs
-    continue after disabling."""
+    """ Whether the automatic trigger is enabled; defaults to true. Already accepted events and existing runs
+    continue after disabling. """
     tenant_configurable: bool | Unset = UNSET
-    """For schedule triggers, allow each linked platform tenant to manage its own schedule, timezone, overlap
-    behavior, and enabled state. Workflow input and definition remain app-owned."""
+    """ For schedule triggers, allow each linked platform tenant to manage its own schedule, timezone, overlap
+    behavior, and enabled state. Workflow input and definition remain app-owned. """
     source: str | Unset = UNSET
-    """Required for event triggers; exact source or edge wildcard pattern."""
+    """ Required for event triggers; exact source or edge wildcard pattern. """
     event_type: str | Unset = UNSET
-    """Required for event triggers; exact event type or edge wildcard pattern."""
+    """ Required for event triggers; exact event type or edge wildcard pattern. """
     filter_: WorkflowTriggerSpecFilter | Unset = UNSET
-    """Optional JSON predicate evaluated against the CloudEvents envelope. Event triggers reject schedule,
-    timezone, input, overlap, and catch-up options."""
+    """ Optional JSON predicate evaluated against the CloudEvents envelope. Event triggers reject schedule,
+    timezone, input, overlap, and catch-up options. """
 
     def to_dict(self) -> dict[str, Any]:
         type_: str = self.type_

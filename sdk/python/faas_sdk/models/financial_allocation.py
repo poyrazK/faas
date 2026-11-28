@@ -18,7 +18,7 @@ class FinancialAllocation:
     """Exact quantity-share allocation; row amounts and account totals reconcile."""
 
     attribution: FinancialAttribution
-    """Workload identity retained at first observation, surviving rename and deletion."""
+    """ Workload identity retained at first observation, surviving rename and deletion. """
     quantity: int
     gross_millicents: int
     allowance_millicents: int

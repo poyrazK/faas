@@ -33,8 +33,8 @@ class OperationWorkflowPrerequisiteRecovery:
     milestone: str
     steps: list[OperationWorkflowPrerequisiteRecoveryStepsItem]
     after_occurred_at: datetime.datetime | Unset = UNSET
-    """Exclusive occurrence threshold from the invalidating fact or expired prerequisite. Never fabricate an
-    occurrence time to satisfy this threshold."""
+    """ Exclusive occurrence threshold from the invalidating fact or expired prerequisite. Never fabricate an
+    occurrence time to satisfy this threshold. """
 
     def to_dict(self) -> dict[str, Any]:
         reason: str = self.reason

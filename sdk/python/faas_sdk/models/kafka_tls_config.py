@@ -23,19 +23,19 @@ class KafkaTLSConfig:
     """
 
     ca_cert: str | Unset = UNSET
-    """PEM-encoded CA bundle. Optional; if omitted the system trust store is used."""
+    """ PEM-encoded CA bundle. Optional; if omitted the system trust store is used. """
     client_cert: str | Unset = UNSET
-    """PEM-encoded client cert for mTLS."""
+    """ PEM-encoded client cert for mTLS. """
     client_key: str | Unset = UNSET
-    """PEM-encoded client key for mTLS, accepted only on writes. Omit inside a supplied TLS block to preserve the
-    stored key."""
+    """ PEM-encoded client key for mTLS, accepted only on writes. Omit inside a supplied TLS block to preserve the
+    stored key. """
     client_key_set: bool | Unset = UNSET
-    """Response-only marker indicating that a client key is configured; no credential material is returned."""
+    """ Response-only marker indicating that a client key is configured; no credential material is returned. """
     skip_verify: bool | Unset = False
-    """Skip TLS verification. Hobby plan rejects this
+    """ Skip TLS verification. Hobby plan rejects this
     (TLSSkipVerifyAllowed=false);
     Pro and Scale accept it for self-signed brokers.
-    """
+     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

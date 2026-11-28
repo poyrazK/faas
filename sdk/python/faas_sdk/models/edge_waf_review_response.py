@@ -19,12 +19,12 @@ class EdgeWAFReviewResponse:
     """An app's sampled kind=waf detections grouped for a false-positive review."""
 
     since: datetime.datetime
-    """Start of the reviewed window"""
+    """ Start of the reviewed window """
     scanned: int
-    """Detection events read."""
+    """ Detection events read. """
     truncated: bool
-    """The window held more detections than a review reads (5,000 per outcome, newest first), so the oldest were
-    left out."""
+    """ The window held more detections than a review reads (5,000 per outcome, newest first), so the oldest were
+    left out. """
     groups: list[EdgeWAFReviewGroup]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

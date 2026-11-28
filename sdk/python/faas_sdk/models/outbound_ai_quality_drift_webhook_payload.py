@@ -30,10 +30,10 @@ class OutboundAIQualityDriftWebhookPayload:
     model: str
     metric: OutboundAIQualityDriftWebhookPayloadMetric
     current_value: int
-    """Basis points of answered (or rated) calls; hundredths of a point for evaluation_score."""
+    """ Basis points of answered (or rated) calls; hundredths of a point for evaluation_score. """
     baseline_value: int
     current_count: int
-    """Calls the current value was taken over."""
+    """ Calls the current value was taken over. """
     baseline_count: int
     detected_at: datetime.datetime
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

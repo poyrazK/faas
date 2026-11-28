@@ -25,28 +25,28 @@ class CreateManagedExecutionWorkflowStep:
 
     label: str
     depends_on: list[str] | Unset = UNSET
-    """Earlier step labels that must succeed before this step is admitted."""
+    """ Earlier step labels that must succeed before this step is admitted. """
     input_from_previous_result: bool | Unset = False
-    """Use the immediately preceding successful Run's JSON result as this step's input; adds that step as a
-    dependency."""
+    """ Use the immediately preceding successful Run's JSON result as this step's input; adds that step as a
+    dependency. """
     include_dependency_results: bool | Unset = False
-    """Set input to a JSON object keyed by dependency label, with each dependency's terminal status and successful
-    JSON result when available."""
+    """ Set input to a JSON object keyed by dependency label, with each dependency's terminal status and successful
+    JSON result when available. """
     artifact_inputs: list[ManagedExecutionWorkflowArtifactInput] | Unset = UNSET
-    """Artifacts from earlier successful steps to stage in this Run's fresh ephemeral files bundle; each producer
-    becomes an implicit dependency."""
+    """ Artifacts from earlier successful steps to stage in this Run's fresh ephemeral files bundle; each producer
+    becomes an implicit dependency. """
     result_schema: bool | CreateManagedExecutionWorkflowStepResultSchemaType0 | Unset = UNSET
-    """Optional JSON Schema Draft 2020-12 contract for this Run's JSON result. The control plane enforces it before
+    """ Optional JSON Schema Draft 2020-12 contract for this Run's JSON result. The control plane enforces it before
     dependents can consume the result. Local fragment references are supported; external resources are not loaded.
-    Each schema is limited to 64 KiB and all schemas in a workflow together are limited to 1 MiB."""
+    Each schema is limited to 64 KiB and all schemas in a workflow together are limited to 1 MiB. """
     task: InvokeExecutionTaskRequest | Unset = UNSET
-    """Task selection, invocation input and optional file or completion configuration."""
+    """ Task selection, invocation input and optional file or completion configuration. """
     retry: ExecutionRetryPolicy | Unset = UNSET
-    """Multiple attempts require safe_to_repeat=true. Only restore_failed, execution_transport_failed and
+    """ Multiple attempts require safe_to_repeat=true. Only restore_failed, execution_transport_failed and
     lease_expired are retried. Each attempt has a separate Run and budget reservation; external side effects may
-    repeat."""
+    repeat. """
     request: Any | Unset = UNSET
-    """Source and JSON input for one disposable execution. Send either the
+    """ Source and JSON input for one disposable execution. Send either the
     legacy `source` string or an ephemeral `files` bundle with an
     `entrypoint`. `artifact_inputs` may add files from successful runs in
     the same key family for Runs-only credentials, or from the same account
@@ -60,7 +60,7 @@ class CreateManagedExecutionWorkflowStep:
     v1 supports only the listed interpreter runtimes and
     `network.mode=none`; dependencies, secrets, environment injection, and
     persistent disks are not part of this contract.
-    """
+     """
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.create_managed_execution_workflow_step_result_schema_type_0 import (

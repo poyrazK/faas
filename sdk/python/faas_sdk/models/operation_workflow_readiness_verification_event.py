@@ -23,22 +23,23 @@ class OperationWorkflowReadinessVerificationEvent:
     """
 
     watch_id: UUID
-    """OperationWorkflowReadinessVerificationEvent.watch_id. Server-managed advisory verification observation for
-    the retained source completion."""
+    """ OperationWorkflowReadinessVerificationEvent.watch_id. Server-managed advisory verification observation for
+    the retained source completion. """
     source_notification_id: UUID
-    """OperationWorkflowReadinessVerificationEvent.source_notification_id. Server-managed advisory verification
-    observation for the retained source completion."""
+    """ OperationWorkflowReadinessVerificationEvent.source_notification_id. Server-managed advisory verification
+    observation for the retained source completion. """
     source_sequence: int
-    """OperationWorkflowReadinessVerificationEvent.source_sequence. Server-managed advisory verification
-    observation for the retained source completion."""
+    """ OperationWorkflowReadinessVerificationEvent.source_sequence. Server-managed advisory verification
+    observation for the retained source completion. """
     checked_at: datetime.datetime
-    """OperationWorkflowReadinessVerificationEvent.checked_at. Server-managed advisory verification observation for
-    the retained source completion."""
+    """ OperationWorkflowReadinessVerificationEvent.checked_at. Server-managed advisory verification observation for
+    the retained source completion. """
     source: OperationWorkflowReadinessSnapshotEntry
-    """One saved transition identity and stable evidence summaries for comparison within the same ownership scope."""
+    """ One saved transition identity and stable evidence summaries for comparison within the same ownership scope.
+    """
     changes: list[OperationWorkflowReadinessVerificationChange]
-    """OperationWorkflowReadinessVerificationEvent.changes. Server-managed advisory verification observation for
-    the retained source completion."""
+    """ OperationWorkflowReadinessVerificationEvent.changes. Server-managed advisory verification observation for
+    the retained source completion. """
 
     def to_dict(self) -> dict[str, Any]:
         watch_id = str(self.watch_id)

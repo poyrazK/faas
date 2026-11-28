@@ -18,10 +18,10 @@ class MCPReadinessReminderDefaults:
     """Versioned reminder policy captured when a new readiness webhook incident opens."""
 
     version: int
-    """Zero means no defaults have been configured for this rule."""
+    """ Zero means no defaults have been configured for this rule. """
     reminder_policy: MCPReadinessReminderPolicy
-    """Per-incident lifetime creation budget. Both zero disables; otherwise interval is 60–86400 seconds and budget
-    is 1–10. Reconfiguration never resets the count."""
+    """ Per-incident lifetime creation budget. Both zero disables; otherwise interval is 60–86400 seconds and budget
+    is 1–10. Reconfiguration never resets the count. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -26,18 +26,18 @@ class DiffResponse:
     """
 
     diff: DiffPayload
-    """Inner diff object the engine produces. Slug + Plan +
+    """ Inner diff object the engine produces. Slug + Plan +
     Changes + Breaks. Wrapped by [DiffResponse] so a CI
     consumer reading `.diff.changes` and a CLI consumer
     reading the top-level keys agree.
-    """
+     """
     blocking: bool
-    """True if any break has severity "error". The exit-1
+    """ True if any break has severity "error". The exit-1
     input for CI gates.
-    """
+     """
     slug: str
     plan: DiffResponsePlan | Unset = UNSET
-    """Echoed at top level too — kept in sync with diff.plan."""
+    """ Echoed at top level too — kept in sync with diff.plan. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

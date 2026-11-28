@@ -23,13 +23,13 @@ class OperationWorkflowReadinessEvidenceChange:
     """Individual comparison; absence is unavailable unless complete inventories establish blocker clearance."""
 
     kind: OperationWorkflowReadinessEvidenceChangeKind
-    """Evidence change classification."""
+    """ Evidence change classification. """
     before: OperationWorkflowReadinessEvidence | Unset = UNSET
-    """Compact app-reported evidence observation preserving prerequisite group/path or verification obligation
-    identity."""
+    """ Compact app-reported evidence observation preserving prerequisite group/path or verification obligation
+    identity. """
     after: OperationWorkflowReadinessEvidence | Unset = UNSET
-    """Compact app-reported evidence observation preserving prerequisite group/path or verification obligation
-    identity."""
+    """ Compact app-reported evidence observation preserving prerequisite group/path or verification obligation
+    identity. """
 
     def to_dict(self) -> dict[str, Any]:
         kind: str = self.kind

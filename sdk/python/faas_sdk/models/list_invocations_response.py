@@ -24,7 +24,7 @@ class ListInvocationsResponse:
 
     invocations: list[Invocation]
     next_before: str | Unset = UNSET
-    """ID cursor for the next older page; omitted when this page contains fewer rows than requested."""
+    """ ID cursor for the next older page; omitted when this page contains fewer rows than requested. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

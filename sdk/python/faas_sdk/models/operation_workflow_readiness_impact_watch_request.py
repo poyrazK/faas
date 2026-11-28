@@ -22,21 +22,21 @@ class OperationWorkflowReadinessImpactWatchRequest:
     """
 
     workflow: str
-    """OperationWorkflowReadinessImpactWatchRequest.workflow. Exact workflow identity."""
+    """ OperationWorkflowReadinessImpactWatchRequest.workflow. Exact workflow identity. """
     kind: OperationWorkflowReadinessImpactWatchRequestKind
-    """OperationWorkflowReadinessImpactWatchRequest.kind. Protected result category."""
+    """ OperationWorkflowReadinessImpactWatchRequest.kind. Protected result category. """
     code: str
-    """OperationWorkflowReadinessImpactWatchRequest.code. Exact protected result slug."""
+    """ OperationWorkflowReadinessImpactWatchRequest.code. Exact protected result slug. """
     acknowledge_after_seconds: int | Unset = UNSET
-    """OperationWorkflowReadinessImpactWatchRequest.acknowledge_after_seconds. Optional response window from
+    """ OperationWorkflowReadinessImpactWatchRequest.acknowledge_after_seconds. Optional response window from
     delivery of critical or overdue impact alerts, requires a nonempty owner. Zero omits the target; clearance
-    notices have no target. Acknowledgment is independent of resolving source review obligations."""
+    notices have no target. Acknowledgment is independent of resolving source review obligations. """
     fallback_owner: str | Unset = UNSET
-    """OperationWorkflowReadinessImpactWatchRequest.fallback_owner. Optional distinct fallback team, requires a
-    positive response window. Guarded handoff preserves manual assignment history and the original deadline."""
+    """ OperationWorkflowReadinessImpactWatchRequest.fallback_owner. Optional distinct fallback team, requires a
+    positive response window. Guarded handoff preserves manual assignment history and the original deadline. """
     owner: str | Unset = UNSET
-    """OperationWorkflowReadinessImpactWatchRequest.owner. Optional team assigned new impact notifications; does
-    not filter review queue source owners."""
+    """ OperationWorkflowReadinessImpactWatchRequest.owner. Optional team assigned new impact notifications; does
+    not filter review queue source owners. """
 
     def to_dict(self) -> dict[str, Any]:
         workflow = self.workflow

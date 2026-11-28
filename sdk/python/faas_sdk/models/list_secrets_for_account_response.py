@@ -26,7 +26,7 @@ class ListSecretsForAccountResponse:
 
     secrets: list[AccountAppSecretResponse]
     next_before: None | str | Unset = UNSET
-    """Cursor in the form `<slug>|<key>`. Empty / null at the end."""
+    """ Cursor in the form `<slug>|<key>`. Empty / null at the end. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

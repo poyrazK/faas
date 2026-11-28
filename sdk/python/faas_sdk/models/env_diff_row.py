@@ -21,11 +21,11 @@ class EnvDiffRow:
 
     key: str
     kind: EnvDiffKind
-    """Discriminator for an env-diff matrix row. 'secret' rows carry {present, value_hash}; 'env' rows carry
-    {present, value}. The cell shape is uniform but the field population is kind-aware."""
+    """ Discriminator for an env-diff matrix row. 'secret' rows carry {present, value_hash}; 'env' rows carry
+    {present, value}. The cell shape is uniform but the field population is kind-aware. """
     cells: EnvDiffRowCells
-    """scope → cell. The handler populates the unioned set of scopes; consumers iterate EnvDiffResponse.Scopes for
-    the canonical order."""
+    """ scope → cell. The handler populates the unioned set of scopes; consumers iterate EnvDiffResponse.Scopes for
+    the canonical order. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

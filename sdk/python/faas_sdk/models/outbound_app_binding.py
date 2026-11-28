@@ -22,25 +22,25 @@ class OutboundAppBinding:
     """An app's attachment to a managed integration."""
 
     integration: OutboundIntegrationOffer
-    """Account-owned managed integration metadata; never contains a provider key or gateway token."""
+    """ Account-owned managed integration metadata; never contains a provider key or gateway token. """
     app_id: UUID
     allowed_methods: list[str]
-    """App-specific methods, bounded by the integration ceiling."""
+    """ App-specific methods, bounded by the integration ceiling. """
     allowed_path_prefixes: list[str]
-    """App-specific path prefixes, bounded by the integration ceiling."""
+    """ App-specific path prefixes, bounded by the integration ceiling. """
     daily_request_limit: int | None
-    """Optional per-binding daily admitted-request limit."""
+    """ Optional per-binding daily admitted-request limit. """
     created_at: datetime.datetime
     ai_daily_token_limit: int | None | Unset = UNSET
-    """This app's own UTC-day AI input plus output token limit on an AI integration."""
+    """ This app's own UTC-day AI input plus output token limit on an AI integration. """
     ai_requests_per_minute: int | None | Unset = UNSET
-    """Admitted calls per UTC minute for this app."""
+    """ Admitted calls per UTC minute for this app. """
     ai_tokens_per_minute: int | None | Unset = UNSET
-    """Settled tokens plus live reservations per UTC minute for this app."""
+    """ Settled tokens plus live reservations per UTC minute for this app. """
     ai_allowed_models: list[str] | None | Unset = UNSET
-    """Exact model names or prefixes ending in "*" this app may call; null allows every model."""
+    """ Exact model names or prefixes ending in "*" this app may call; null allows every model. """
     ai_max_output_tokens: int | None | Unset = UNSET
-    """Per-request output-token ceiling; added to requests that name none."""
+    """ Per-request output-token ceiling; added to requests that name none. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

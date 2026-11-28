@@ -16,17 +16,17 @@ class MFAConfirmRequest:
     """Body for /confirm — a TOTP code and the existing password, if set."""
 
     totp: str
-    """6-digit rotating code from the authenticator app."""
+    """ 6-digit rotating code from the authenticator app. """
     current_password: str | Unset = UNSET
-    """Required when the account already has a password; authorizes the new factor."""
+    """ Required when the account already has a password; authorizes the new factor. """
     csrf_token: str | Unset = UNSET
-    """Dashboard CSRF token. The dashboard sets a
+    """ Dashboard CSRF token. The dashboard sets a
     `faas_csrf` cookie on every authenticated response; the
     same value rides in this JSON-body field so the
     server can compare them.
     The token is opaque to the wire (sealed session
     reference); size matches the cookie value.
-    """
+     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

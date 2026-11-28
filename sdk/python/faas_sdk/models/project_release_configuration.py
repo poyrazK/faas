@@ -24,7 +24,7 @@ class ProjectReleaseConfiguration:
     target_hash: str
     environment_hash: str
     secrets: ProjectReleaseSecretConfiguration | Unset = UNSET
-    """Candidate and baseline immutable secret version references bound to an atomic release."""
+    """ Candidate and baseline immutable secret version references bound to an atomic release. """
     request_hash: str | Unset = UNSET
     target_version: int | Unset = UNSET
     restored_version: int | Unset = UNSET

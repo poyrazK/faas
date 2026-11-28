@@ -23,12 +23,12 @@ class AlertObservedIncident:
 
     opened_at: datetime.datetime
     eligible_notifications: int
-    """Notification opportunities for this incident under the rule's cooldown."""
+    """ Notification opportunities for this incident under the rule's cooldown. """
     last_eligible_at: datetime.datetime
     opening_evidence: AlertObservedIncidentOpeningEvidence | Unset = UNSET
-    """Values captured at the first breach of a live observed incident."""
+    """ Values captured at the first breach of a live observed incident. """
     environment_scope: str | Unset = UNSET
-    """Environment of this observation when scoped."""
+    """ Environment of this observation when scoped. """
     ended_at: datetime.datetime | Unset = UNSET
     outcome: AlertObservedIncidentOutcome | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

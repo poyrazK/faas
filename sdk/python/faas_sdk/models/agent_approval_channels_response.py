@@ -14,7 +14,7 @@ class AgentApprovalChannelsResponse:
     """The notification channels that get the account's agents' approval requests."""
 
     channels: list[str]
-    """Channel names, in alphabetical order."""
+    """ Channel names, in alphabetical order. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

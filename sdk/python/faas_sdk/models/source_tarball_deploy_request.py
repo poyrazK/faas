@@ -31,7 +31,7 @@ class SourceTarballDeployRequest:
     """
 
     healthcheck: DeploymentHealthcheck | Unset = UNSET
-    """Startup healthcheck shape on the deploy-time override object. Exactly one of `path` (HTTP) or `grpc`
+    """ Startup healthcheck shape on the deploy-time override object. Exactly one of `path` (HTTP) or `grpc`
     (standard gRPC health
     Check) selects the startup admission action. The gRPC probe uses the
     app's published port; an empty service checks overall server health.
@@ -46,50 +46,51 @@ class SourceTarballDeployRequest:
 
     OCI `test` argv and `start_period_s` remain deploy metadata; the host
     readiness gate uses only the selected HTTP path or gRPC health RPC.
-    """
+     """
     repo: None | str | Unset = UNSET
-    """`owner/repo` from the customer's git remote, parsed by the CLI. nil when the sidecar is omitted entirely."""
+    """ `owner/repo` from the customer's git remote, parsed by the CLI. nil when the sidecar is omitted entirely.
+    """
     ref: None | str | Unset = UNSET
-    """40-char lowercase SHA from `git rev-parse HEAD`. Informational only; the build pipeline does NOT pin to this
-    SHA."""
+    """ 40-char lowercase SHA from `git rev-parse HEAD`. Informational only; the build pipeline does NOT pin to this
+    SHA. """
     no_triggers: bool | Unset = UNSET
-    """Skip reconciling trigger declarations from the uploaded gregale manifest; app defaults and event
-    subscriptions remain unchanged by this flag."""
+    """ Skip reconciling trigger declarations from the uploaded gregale manifest; app defaults and event
+    subscriptions remain unchanged by this flag. """
     environment: str | Unset = UNSET
-    """Registered project environment to target for this local tarball deployment."""
+    """ Registered project environment to target for this local tarball deployment. """
     reason: str | Unset = UNSET
-    """Free-form operator note on the tarball deploy request (≤280 chars). Example: 'Emergency rollback after
-    payment provider incident'."""
+    """ Free-form operator note on the tarball deploy request (≤280 chars). Example: 'Emergency rollback after
+    payment provider incident'. """
     tag: SourceTarballDeployRequestTag | Unset = UNSET
-    """Closed-set annotation tag on the tarball deploy request for grouping/filtering."""
+    """ Closed-set annotation tag on the tarball deploy request for grouping/filtering. """
     deployed_by: str | Unset = UNSET
-    """Human-readable actor label on the tarball deploy request. CLI auto-captures from `git config user.name`; the
-    GitHub integration stamps pusher.name; the GitHub Action defaults to ${{ github.actor }}."""
+    """ Human-readable actor label on the tarball deploy request. CLI auto-captures from `git config user.name`; the
+    GitHub integration stamps pusher.name; the GitHub Action defaults to ${{ github.actor }}. """
     pr_number: int | Unset = UNSET
-    """Pull-request number that drove this tarball deploy request (the GitHub integration pull_request.number;
-    Action ${{ github.event.pull_request.number }}). NULL for push-to-main with no inferred PR."""
+    """ Pull-request number that drove this tarball deploy request (the GitHub integration pull_request.number;
+    Action ${{ github.event.pull_request.number }}). NULL for push-to-main with no inferred PR. """
     traffic_percent: int | None | Unset = UNSET
-    """Explicit initial traffic weight for this source-tarball deployment. Omitted uses the normal stable rollout;
-    zero stages a dark live revision."""
+    """ Explicit initial traffic weight for this source-tarball deployment. Omitted uses the normal stable rollout;
+    zero stages a dark live revision. """
     canary: CanaryPresetSpec | None | Unset = UNSET
-    """Canary rollout policy for this source-tarball deployment. Mutually exclusive with traffic_percent."""
+    """ Canary rollout policy for this source-tarball deployment. Mutually exclusive with traffic_percent. """
     rollback_on_5xx: bool | None | Unset = UNSET
-    """Source-tarball deployment opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null
-    defaulting to false."""
+    """ Source-tarball deployment opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null
+    defaulting to false. """
     mcp_task_migration_override: bool | Unset = UNSET
-    """One-use operator override to allow this deployment to cut over while queued MCP tasks still need handler
-    versions it does not provide."""
+    """ One-use operator override to allow this deployment to cut over while queued MCP tasks still need handler
+    versions it does not provide. """
     override_freeze: str | Unset = UNSET
-    """Release this source tarball to production while a deploy freeze is active; the reason is audited."""
+    """ Release this source tarball to production while a deploy freeze is active; the reason is audited. """
     release_at: datetime.datetime | Unset = UNSET
-    """Build this source tarball now, keep it live without traffic, and start its production rollout at this time;
-    deploy freezes are checked at that time."""
+    """ Build this source tarball now, keep it live without traffic, and start its production rollout at this time;
+    deploy freezes are checked at that time. """
     release_notify: list[str] | Unset = UNSET
-    """Slack or email notification channels told when this source tarball, scheduled with release_at, starts or
-    cannot start."""
+    """ Slack or email notification channels told when this source tarball, scheduled with release_at, starts or
+    cannot start. """
     disable_startup_cpu_boost: bool | None | Unset = UNSET
-    """Opt this source-tarball deployment out of temporary startup CPU headroom. Omitted or null preserves the
-    default boost."""
+    """ Opt this source-tarball deployment out of temporary startup CPU headroom. Omitted or null preserves the
+    default boost. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

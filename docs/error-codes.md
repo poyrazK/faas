@@ -2484,6 +2484,12 @@ HTTP 403 Forbidden · Plan doesn't allow private-registry credentials for jobs
 
 See [Registry credentials](registry-credentials.md).
 
+### `plan_limit_app_tasks`
+
+HTTP 429 Too Many Requests · App task limit reached
+
+See [Apps](apps.md#task-history).
+
 ### `plan_limit_apps`
 
 HTTP 403 Forbidden · App limit reached; Environment branch limit reached; PR preview environment too large
@@ -3756,7 +3762,7 @@ Grype found CVEs at or above the plan's severity threshold
 
 ### `stage_snapshot_prepare_timeout`
 
-HTTP 422 Unprocessable Entity · Snapshot prime exceeded the scheduler deadline
+HTTP 422 Unprocessable Entity · Snapshot capture exceeded its budget; Snapshot prime exceeded the scheduler deadline
 
 The snapshot_prepare stage exceeded the scheduler's wall-clock ceiling
 

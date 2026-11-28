@@ -25,27 +25,27 @@ class SimulateStoredWorkflowRequest:
     """Sample workflow data and mocked action, event/callback payload or timeout outcomes for a stateless simulation."""
 
     definition: WorkflowSpec
-    """A named workflow DAG submitted with a deployment. max_concurrent_runs caps active run instances for this
+    """ A named workflow DAG submitted with a deployment. max_concurrent_runs caps active run instances for this
     workflow; excess admitted runs remain pending until a slot opens, subject to the app plan's run quota.
     max_concurrent_actions caps active executor steps across runs of this workflow; steps wait in the scheduler
-    queue while all action slots are occupied."""
+    queue while all action slots are occupied. """
     input_: Any | Unset = UNSET
-    """Workflow input as any JSON value; omission is equivalent to null."""
+    """ Workflow input as any JSON value; omission is equivalent to null. """
     mock_outputs: SimulateStoredWorkflowRequestMockOutputs | Unset = UNSET
-    """Successful action outputs keyed by root step name; explicit null is a supplied result."""
+    """ Successful action outputs keyed by root step name; explicit null is a supplied result. """
     mock_item_outputs: SimulateStoredWorkflowRequestMockItemOutputs | Unset = UNSET
-    """Ordered successful output prefix keyed by for_each root name; waits and controls cannot be mocked."""
+    """ Ordered successful output prefix keyed by for_each root name; waits and controls cannot be mocked. """
     mock_item_attempts: SimulateStoredWorkflowRequestMockItemAttempts | Unset = UNSET
-    """Per-item attempt outcomes keyed by for_each root name and canonical zero-based item index (0..127). Sparse
+    """ Per-item attempt outcomes keyed by for_each root name and canonical zero-based item index (0..127). Sparse
     indexes are allowed but must exist in the materialized collection. Cannot be combined with mock_item_outputs for
     the same loop. Item timeouts require an action timeout and follow its retry policy. Terminal item failures stop
     later items unless on_item_failure is continue; the loop remains failed or dead, with null placeholders for
-    failed items when continuing."""
+    failed items when continuing. """
     mock_attempts: SimulateStoredWorkflowRequestMockAttempts | Unset = UNSET
-    """Ordered per-attempt outcomes keyed by action or wait name. Event and callback waits accept exactly one
+    """ Ordered per-attempt outcomes keyed by action or wait name. Event and callback waits accept exactly one
     success with the received payload as output, or one timeout with a configured timeout and on_timeout route.
     Other waits accept timeout only. Successful wait payloads cannot be the reserved timeout sentinel. Action
-    timeouts require on_timeout. Cannot be combined with mock_outputs for the same step."""
+    timeouts require on_timeout. Cannot be combined with mock_outputs for the same step. """
 
     def to_dict(self) -> dict[str, Any]:
         definition = self.definition.to_dict()

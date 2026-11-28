@@ -23,11 +23,11 @@ class ReleaseApprovalDecision:
 
     approver: str
     role: ReleaseApprovalDecisionRole
-    """The approver's organization role when they decided; personal for an app outside an organization."""
+    """ The approver's organization role when they decided; personal for an app outside an organization. """
     decision: ReleaseApprovalDecisionDecision
     counted: bool
-    """Whether the approval counts toward the policy; the deployer's own approval does not unless self-approval is
-    allowed."""
+    """ Whether the approval counts toward the policy; the deployer's own approval does not unless self-approval is
+    allowed. """
     decided_at: datetime.datetime
     comment: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

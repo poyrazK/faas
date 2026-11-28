@@ -17,12 +17,12 @@ class SimulateStoredWorkflowResponse:
     """Definition validity, submitted-definition SHA-256 and deterministic simulated data flow."""
 
     definition_valid: bool
-    """Whether the definition and managed integration bindings passed validation."""
+    """ Whether the definition and managed integration bindings passed validation. """
     definition_hash: str
-    """SHA-256 of the JSON-serialized submitted definition, independent of samples; not a publication revision."""
+    """ SHA-256 of the JSON-serialized submitted definition, independent of samples; not a publication revision. """
     complete: bool
-    """Every root reached a known terminal outcome under these mocks; false for missing results, unresolved
-    retries, waits or evaluation errors."""
+    """ Every root reached a known terminal outcome under these mocks; false for missing results, unresolved
+    retries, waits or evaluation errors. """
     issues: list[str]
     warnings: list[str]
     step_order: list[str]

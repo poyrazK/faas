@@ -18,13 +18,13 @@ class ExecutionUsageSummaryResponse:
 
     runs: int
     wall_time_ms: int
-    """Sum of host-measured wall time across terminal runs."""
+    """ Sum of host-measured wall time across terminal runs. """
     cpu_time_ms: int
-    """Sum of host-measured CPU time across terminal runs."""
+    """ Sum of host-measured CPU time across terminal runs. """
     peak_memory_mb: int
-    """Maximum host-measured peak memory across terminal runs."""
+    """ Maximum host-measured peak memory across terminal runs. """
     output_bytes: int
-    """Sum of result, stdout, and stderr bytes across terminal runs."""
+    """ Sum of result, stdout, and stderr bytes across terminal runs. """
     succeeded: int
     failed: int
     timed_out: int

@@ -21,29 +21,29 @@ class StoredWorkflowFailurePolicyResponse:
     """Failure guard state, monitoring configuration and advisory retained-work preview."""
 
     policy: StoredWorkflowFailurePolicy
-    """Opt-in thresholds for scheduler-enforced failure admission pausing."""
+    """ Opt-in thresholds for scheduler-enforced failure admission pausing. """
     paused: bool
-    """Whether automatic admissions are blocked by the durable failure guard."""
+    """ Whether automatic admissions are blocked by the durable failure guard. """
     generation: int
-    """Current guard generation; resume requires this value."""
+    """ Current guard generation; resume requires this value. """
     observed_failures: int
-    """Failed and dead runs completed in the current bounded observation window."""
+    """ Failed and dead runs completed in the current bounded observation window. """
     observed_completed_runs: int
-    """Succeeded, failed and dead runs completed in the current observation window."""
+    """ Succeeded, failed and dead runs completed in the current observation window. """
     pending_runs: int
-    """Existing pending runs that continue despite a failure admission pause."""
+    """ Existing pending runs that continue despite a failure admission pause. """
     running_runs: int
-    """Already running workflows unaffected by admission pausing."""
+    """ Already running workflows unaffected by admission pausing. """
     waiting_runs: int
-    """Existing workflows parked on timers or external events."""
+    """ Existing workflows parked on timers or external events. """
     retained_events: int
-    """Advisory count of unadmitted retained event recipients for this stored workflow."""
+    """ Advisory count of unadmitted retained event recipients for this stored workflow. """
     history: list[StoredWorkflowFailureTransition]
-    """Latest pause and resume transitions in descending generation order."""
+    """ Latest pause and resume transitions in descending generation order. """
     monitoring_since: datetime.datetime | Unset = UNSET
-    """Start of the fresh monitoring epoch; absent before configuration."""
+    """ Start of the fresh monitoring epoch; absent before configuration. """
     paused_at: datetime.datetime | Unset = UNSET
-    """Time the current failure pause was latched; absent while unpaused."""
+    """ Time the current failure pause was latched; absent while unpaused. """
 
     def to_dict(self) -> dict[str, Any]:
         policy = self.policy.to_dict()

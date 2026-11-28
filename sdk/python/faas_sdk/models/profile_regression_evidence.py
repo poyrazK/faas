@@ -30,9 +30,9 @@ class ProfileRegressionEvidence:
     kind: ProfileRegressionEvidenceKind
     frames: list[ProfileCallPathFrame]
     metric: ProfileRegressionMetric
-    """Observed sampled CPU/s comparison, optionally with CPU seconds per weighted observed request.
+    """ Observed sampled CPU/s comparison, optionally with CPU seconds per weighted observed request.
     exceeds_threshold and relative_increase_percent use the metric selected by options. The relative percentage is
-    absent when that metric's baseline is zero."""
+    absent when that metric's baseline is zero. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

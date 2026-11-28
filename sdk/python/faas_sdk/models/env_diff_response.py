@@ -25,13 +25,13 @@ class EnvDiffResponse:
     """
 
     app_slug: str
-    """Echoes the URL path parameter so the dashboard can render a header without re-parsing the URL."""
+    """ Echoes the URL path parameter so the dashboard can render a header without re-parsing the URL. """
     scopes: list[str]
-    """Sorted ASC list of scopes present in the matrix. Consumers iterate this list for column ordering."""
+    """ Sorted ASC list of scopes present in the matrix. Consumers iterate this list for column ordering. """
     rows: list[EnvDiffRow]
-    """Sorted ASC (by key) list of env-diff rows."""
+    """ Sorted ASC (by key) list of env-diff rows. """
     generated_at: datetime.datetime
-    """RFC3339Nano timestamp the response was built. Dashboards use this to display stale badges."""
+    """ RFC3339Nano timestamp the response was built. Dashboards use this to display stale badges. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

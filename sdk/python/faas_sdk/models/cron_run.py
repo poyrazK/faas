@@ -22,25 +22,25 @@ class CronRun:
     """
 
     id: str
-    """Invocation id for HTTP crons or task UUID for command crons."""
+    """ Invocation id for HTTP crons or task UUID for command crons. """
     started_at: datetime.datetime
-    """When the cron fired (the invocation/task creation time), not when the app began executing."""
+    """ When the cron fired (the invocation/task creation time), not when the app began executing. """
     outcome: CronRunOutcome
-    """Normalized result. `timeout` means the dispatch exceeded its deadline; `dead_letter` means the retry budget
+    """ Normalized result. `timeout` means the dispatch exceeded its deadline; `dead_letter` means the retry budget
     was exhausted; `running` means the run has not reached a terminal state yet; `uncertain` means delivery may have
-    reached the app without a completion receipt. Branch on this, never on `error`."""
+    reached the app without a completion receipt. Branch on this, never on `error`. """
     attempts: int
-    """Dispatch attempts for this run; greater than 1 means it was retried."""
+    """ Dispatch attempts for this run; greater than 1 means it was retried. """
     completed_at: datetime.datetime | None | Unset = UNSET
-    """When the run reached a terminal state; null while still in flight."""
+    """ When the run reached a terminal state; null while still in flight. """
     duration_ms: int | None | Unset = UNSET
-    """completed_at - started_at in milliseconds, computed server-side. Null while the run is still in flight."""
+    """ completed_at - started_at in milliseconds, computed server-side. Null while the run is still in flight. """
     instance_id: None | str | Unset = UNSET
-    """The instance that served the run; null if the fire never reached one."""
+    """ The instance that served the run; null if the fire never reached one. """
     task_id: UUID | Unset = UNSET
-    """Deployment-attached app-task receipt for command crons."""
+    """ Deployment-attached app-task receipt for command crons. """
     error: None | str | Unset = UNSET
-    """Operator-facing failure text. Unstructured and unversioned — do not parse it."""
+    """ Operator-facing failure text. Unstructured and unversioned — do not parse it. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

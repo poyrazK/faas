@@ -24,9 +24,9 @@ class WorkflowRecoveryExecutionAttentionWebhookPayload:
     app_id: UUID
     observed_at: datetime.datetime
     attention: WorkflowRecoveryExecutionAttention
-    """Generation-fenced advisory execution monitoring. Capacity and scheduled wait counters describe underlying
+    """ Generation-fenced advisory execution monitoring. Capacity and scheduled wait counters describe underlying
     waits and may overlap deadline exceeded counts. Only the first attention event per job is captured. Detection
-    never cancels or retries work."""
+    never cancels or retries work. """
     items_url: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

@@ -21,7 +21,7 @@ class DomainReadiness:
     ownership: DomainReadinessOwnership
     routing: DomainReadinessRouting
     tls: str
-    """Certificate state, independently of ownership and routing."""
+    """ Certificate state, independently of ownership and routing. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

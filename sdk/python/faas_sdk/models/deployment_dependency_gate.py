@@ -32,7 +32,7 @@ class DeploymentDependencyGate:
     started_at: datetime.datetime | Unset = UNSET
     deadline_at: datetime.datetime | Unset = UNSET
     blocker: str | Unset = UNSET
-    """The dependency or deadline currently blocking release."""
+    """ The dependency or deadline currently blocking release. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

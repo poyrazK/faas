@@ -22,28 +22,28 @@ class StoredWorkflowRevisionResponse:
     """Immutable published stored workflow definition with actor and rollout provenance."""
 
     version: int
-    """Immutable published revision identifier."""
+    """ Immutable published revision identifier. """
     definition: WorkflowSpec
-    """A named workflow DAG submitted with a deployment. max_concurrent_runs caps active run instances for this
+    """ A named workflow DAG submitted with a deployment. max_concurrent_runs caps active run instances for this
     workflow; excess admitted runs remain pending until a slot opens, subject to the app plan's run quota.
     max_concurrent_actions caps active executor steps across runs of this workflow; steps wait in the scheduler
-    queue while all action slots are occupied."""
+    queue while all action slots are occupied. """
     definition_hash: str
-    """SHA-256 of the canonical JSON encoding of definition."""
+    """ SHA-256 of the canonical JSON encoding of definition. """
     recorded_at: datetime.datetime
-    """When this immutable history record was stored; for legacy snapshots this is the migration time."""
+    """ When this immutable history record was stored; for legacy snapshots this is the migration time. """
     legacy_snapshot: bool
-    """True for the one current publication copied into history during rollout; older history was not retained."""
+    """ True for the one current publication copied into history during rollout; older history was not retained. """
     published_by_account_id: UUID
-    """Account that published this revision, or owned the legacy snapshot at rollout."""
+    """ Account that published this revision, or owned the legacy snapshot at rollout. """
     check_evidence: StoredWorkflowCheckEvidence | Unset = UNSET
-    """Simulation check metadata. server_verified is set only for server-issued publishing receipts; legacy or
+    """ Simulation check metadata. server_verified is set only for server-issued publishing receipts; legacy or
     plain client evidence is unverified. Bound to the saved draft hash and version. Contains metadata only; no
     sample inputs, outputs, or failure text. Checked time must be within the past day (five minutes of future clock
-    skew allowed)."""
+    skew allowed). """
     published_by_api_key_id: UUID | Unset = UNSET
-    """API key used for the publish when the request used key authentication; omitted for session authentication
-    and legacy snapshots."""
+    """ API key used for the publish when the request used key authentication; omitted for session authentication
+    and legacy snapshots. """
 
     def to_dict(self) -> dict[str, Any]:
         version = self.version

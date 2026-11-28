@@ -14,7 +14,7 @@ class SetCustomDomainHostsRequest:
     """Replaces a wildcard custom domain's host allowlist; DELETE the allowlist to allow every name again."""
 
     names: list[str]
-    """Names below the wildcard (or full hosts) that may hold certificates."""
+    """ Names below the wildcard (or full hosts) that may hold certificates. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

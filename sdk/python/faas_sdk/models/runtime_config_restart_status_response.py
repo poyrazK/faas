@@ -28,10 +28,10 @@ class RuntimeConfigRestartStatusResponse:
     wake_id: UUID
     status: RuntimeConfigRestartStatusResponseStatus
     attempts: int
-    """Number of scheduler handling attempts so far."""
+    """ Number of scheduler handling attempts so far. """
     requested_at: datetime.datetime
     failure_reason: RuntimeConfigRestartStatusResponseFailureReason | Unset = UNSET
-    """Stable safe reason from the most recent unsuccessful attempt, when available."""
+    """ Stable safe reason from the most recent unsuccessful attempt, when available. """
     completed_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

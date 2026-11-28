@@ -27,19 +27,19 @@ class FinancialBudgetRuntime:
 
     alerts: list[FinancialBudgetAlert]
     compute: FinancialComputeBalance | Unset = UNSET
-    """Conservative admission ledger. App/job budgets cap gross compute. Account budgets share included quantities;
+    """ Conservative admission ledger. App/job budgets cap gross compute. Account budgets share included quantities;
     with meters compute and egress the monetary totals sum both meters under one paid limit and egress shows its
     contribution. Byte credits include framing and unused credits commit after physical retirement; these upper
     bounds can exceed invoice charges. Expired funding stays reserved until physical retirement. Subscriptions,
     storage, builds, object-storage delivery and taxes are excluded. Independent job attempts share account funding
-    with apps."""
+    with apps. """
     evaluation: FinancialBudgetEvaluation | Unset = UNSET
-    """Retained evidence boundary; an absent known_millicents means evaluation unavailable, never zero. Partial
-    known costs can trigger labelled notifications; stale observations cannot create new alerts."""
+    """ Retained evidence boundary; an absent known_millicents means evaluation unavailable, never zero. Partial
+    known costs can trigger labelled notifications; stale observations cannot create new alerts. """
     projection: FinancialBudgetAlert | Unset = UNSET
-    """One threshold event per policy revision and UTC month. Edits re-evaluate monthly spending. Delivery is at
+    """ One threshold event per policy revision and UTC month. Edits re-evaluate monthly spending. Delivery is at
     least once with a stable transport idempotency key; delivered means accepted by the configured transport, not
-    confirmed inbox receipt."""
+    confirmed inbox receipt. """
     stops: list[FinancialBudgetStop] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

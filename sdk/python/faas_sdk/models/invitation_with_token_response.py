@@ -24,7 +24,7 @@ class InvitationWithTokenResponse:
     """
 
     id: str
-    """32-hex opaque invitation id (NOT canonical UUID)."""
+    """ 32-hex opaque invitation id (NOT canonical UUID). """
     org_id: str
     org_slug: str
     email: str
@@ -33,11 +33,11 @@ class InvitationWithTokenResponse:
     expires_at: datetime.datetime
     created_at: datetime.datetime
     token: str
-    """32-byte plaintext token, base64url-encoded (44 chars).
+    """ 32-byte plaintext token, base64url-encoded (44 chars).
     Returned ONCE; never re-served. SHA-256 hash is what's
     stored. Treat as a secret — anyone with this token
     can accept the invitation.
-    """
+     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

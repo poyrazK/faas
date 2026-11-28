@@ -12,9 +12,9 @@ T = TypeVar("T", bound="EdgeProtectionResponsePreAuth")
 @_attrs_define
 class EdgeProtectionResponsePreAuth:
     blocked: int
-    """Requests the pre-auth source limit rejected in enforce mode."""
+    """ Requests the pre-auth source limit rejected in enforce mode. """
     would_block: int
-    """Requests observe mode would have rejected."""
+    """ Requests observe mode would have rejected. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

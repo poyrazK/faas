@@ -20,7 +20,7 @@ class WorkflowRecoveryReportGroup:
     workflow: str
     policy_version: int
     totals: WorkflowRecoveryReportTotals
-    """Observed event-window counts and matched retry timing, without causal or live-state inference."""
+    """ Observed event-window counts and matched retry timing, without causal or live-state inference. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

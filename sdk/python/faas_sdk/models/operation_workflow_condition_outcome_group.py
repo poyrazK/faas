@@ -31,18 +31,18 @@ class OperationWorkflowConditionOutcomeGroup:
     rule_version: str
     condition_id: str
     condition_description: str
-    """Public condition vocabulary included in the exact grouping identity; UTF-8 byte bound without controls."""
+    """ Public condition vocabulary included in the exact grouping identity; UTF-8 byte bound without controls. """
     condition_result: OperationWorkflowConditionOutcomeGroupConditionResult
     outcome_code: str
     changing_result_workflow_count: int
-    """Contributors reporting more than one result for this exact condition identity before or at the first
-    terminal report."""
+    """ Contributors reporting more than one result for this exact condition identity before or at the first
+    terminal report. """
     completion_time: OperationWorkflowDurationDistribution
-    """One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
-    zero."""
+    """ One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
+    zero. """
     blocked_time: OperationWorkflowDurationDistribution
-    """One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
-    zero."""
+    """ One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
+    zero. """
 
     def to_dict(self) -> dict[str, Any]:
         contract_version = self.contract_version

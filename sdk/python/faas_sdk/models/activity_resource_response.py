@@ -17,9 +17,9 @@ class ActivityResourceResponse:
 
     type_: str
     label: str
-    """Resource name captured when the activity occurred."""
+    """ Resource name captured when the activity occurred. """
     id: str | Unset = UNSET
-    """Stable resource identifier, when one exists."""
+    """ Stable resource identifier, when one exists. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

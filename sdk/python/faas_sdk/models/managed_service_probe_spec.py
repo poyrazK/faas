@@ -21,20 +21,20 @@ class ManagedServiceProbeSpec:
     """
 
     version: int
-    """Managed probe contract version; currently 1."""
+    """ Managed probe contract version; currently 1. """
     caller_deployment_id: UUID
     scope: str
     service: str
-    """Logical frozen service workload."""
+    """ Logical frozen service workload. """
     binding: str
-    """Frozen environment key, including custom keys."""
+    """ Frozen environment key, including custom keys. """
     target_app_id: UUID
     target_deployment_id: UUID
     release_id: UUID
     context_revision: str
     transport: ServiceBindingTransport | Unset = UNSET
-    """Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private
-    `.internal` alias; `http` preserves the legacy `.svc.gregale` endpoint."""
+    """ Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private
+    `.internal` alias; `http` preserves the legacy `.svc.gregale` endpoint. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

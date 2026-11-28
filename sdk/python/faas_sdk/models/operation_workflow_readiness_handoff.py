@@ -16,15 +16,17 @@ class OperationWorkflowReadinessHandoff:
     """Advisory handoff context for the same checked workflow observation; scheduling-time evidence is not retained."""
 
     summary: str
-    """OperationWorkflowReadinessHandoff.summary. Explanation of the current observation or unavailable evidence."""
+    """ OperationWorkflowReadinessHandoff.summary. Explanation of the current observation or unavailable evidence.
+    """
     comparable: bool
-    """OperationWorkflowReadinessHandoff.comparable. Whether current requirements can be shown without crossing a
-    comparison boundary."""
+    """ OperationWorkflowReadinessHandoff.comparable. Whether current requirements can be shown without crossing a
+    comparison boundary. """
     limitations: list[str]
-    """OperationWorkflowReadinessHandoff.limitations. Explicit retained-evidence and advisory authority
-    limitations."""
+    """ OperationWorkflowReadinessHandoff.limitations. Explicit retained-evidence and advisory authority
+    limitations. """
     baseline_evaluated_at: datetime.datetime | Unset = UNSET
-    """OperationWorkflowReadinessHandoff.baseline_evaluated_at. Original notification comparison observation time."""
+    """ OperationWorkflowReadinessHandoff.baseline_evaluated_at. Original notification comparison observation time.
+    """
 
     def to_dict(self) -> dict[str, Any]:
         summary = self.summary

@@ -4,13 +4,13 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import faas_sdk.preview as sdk
 import httpx
 import pytest
-
-import faas_sdk.preview as sdk
-from faas_sdk.client import Client
 from faas_sdk.preview.models.binding_verification_review import BindingVerificationReview
 from faas_sdk.preview.models.project_binding_verification_review import ProjectBindingVerificationReview
+
+from faas_sdk.client import Client
 
 TEMPLATE = json.loads((Path(__file__).resolve().parents[2] / "binding-runner-tests/creation.json").read_text())
 

@@ -1,8 +1,8 @@
 """Receiver evidence preserves unknown values and compatibility with older servers."""
 
 import pytest
-
 from faas_sdk.preview.models.obs_notification_health import ObsNotificationHealth
+
 from faas_sdk.types import UNSET
 
 

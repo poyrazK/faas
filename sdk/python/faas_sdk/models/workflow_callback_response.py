@@ -20,7 +20,7 @@ class WorkflowCallbackResponse:
     id: UUID
     step_name: str
     expires_at: datetime.datetime | Unset = UNSET
-    """Present after the wait activates."""
+    """ Present after the wait activates. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

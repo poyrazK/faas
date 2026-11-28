@@ -15,16 +15,16 @@ class CreateOrgObjectBucketBody:
     name: str
     scope: str | Unset = "default"
     region: str | Unset = UNSET
-    """Create a bucket for an organization application. Gregale region, not upstream signing region. Omit to use
-    the configured default."""
+    """ Create a bucket for an organization application. Gregale region, not upstream signing region. Omit to use
+    the configured default. """
     public: bool | Unset = False
-    """Create a bucket for an organization application. Serve objects anonymously on the app hostname."""
+    """ Create a bucket for an organization application. Serve objects anonymously on the app hostname. """
     serve_at: str | Unset = UNSET
-    """Create a bucket for an organization application. Immutable app path mounted when public is true."""
+    """ Create a bucket for an organization application. Immutable app path mounted when public is true. """
     object_lock: bool | Unset = False
-    """Create a bucket for an organization application. Create the bucket with Object Lock. Permanent; the bucket
+    """ Create a bucket for an organization application. Create the bucket with Object Lock. Permanent; the bucket
     keeps every object version. Some storage accepts Object Lock only when the bucket is created, so choose it here.
-   """
+    """
 
     def to_dict(self) -> dict[str, Any]:
         name = self.name

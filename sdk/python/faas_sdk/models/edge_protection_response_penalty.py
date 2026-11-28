@@ -14,9 +14,9 @@ class EdgeProtectionResponsePenalty:
     """Penalty boxes; refusals also appear in rejections under gate penalty."""
 
     boxed: int
-    """Clients a rule's penalty boxed."""
+    """ Clients a rule's penalty boxed. """
     rejected: int
-    """Requests refused from boxed clients."""
+    """ Requests refused from boxed clients. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

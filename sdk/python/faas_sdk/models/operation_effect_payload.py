@@ -22,7 +22,7 @@ class OperationEffectPayload:
     name: str
     type_: str
     data: Any
-    """Handler-supplied business event data."""
+    """ Handler-supplied business event data. """
     platform_tenant_id: UUID | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

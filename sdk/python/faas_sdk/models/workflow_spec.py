@@ -30,16 +30,16 @@ class WorkflowSpec:
     steps: list[WorkflowStepSpec]
     trigger: None | Unset | WorkflowTriggerSpec = UNSET
     max_concurrent_runs: int | Unset = 0
-    """Maximum active run instances for this workflow. Omit or set 0 to rely only on the app plan limit. Pending
-    runs that have not started are queued and do not consume a slot."""
+    """ Maximum active run instances for this workflow. Omit or set 0 to rely only on the app plan limit. Pending
+    runs that have not started are queued and do not consume a slot. """
     max_concurrent_actions: int | Unset = 0
-    """Maximum running action and condition-check steps across runs of this workflow. Omit or set 0 for no
+    """ Maximum running action and condition-check steps across runs of this workflow. Omit or set 0 for no
     additional per-workflow action cap. Event, callback, and duration waits do not consume an action slot. Runs use
-    the value from their immutable definition snapshot."""
+    the value from their immutable definition snapshot. """
     code: WorkflowCodeSpec | Unset = UNSET
-    """A code-first workflow's entry handler. Exactly one of run or path. Gregale POSTs the run's journal to it at
+    """ A code-first workflow's entry handler. Exactly one of run or path. Gregale POSTs the run's journal to it at
     every durable boundary; the SDKs (@gregale/sdk-node/workflows, faas_sdk.workflows) answer with the operations
-    the code reaches next. A code workflow has an empty steps list."""
+    the code reaches next. A code workflow has an empty steps list. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

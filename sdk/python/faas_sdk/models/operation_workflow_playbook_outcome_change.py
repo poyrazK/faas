@@ -22,16 +22,16 @@ class OperationWorkflowPlaybookOutcomeChange:
     """
 
     before_status: str
-    """OperationWorkflowPlaybookOutcomeChange.before_status. Prior observed playbook business-result status."""
+    """ OperationWorkflowPlaybookOutcomeChange.before_status. Prior observed playbook business-result status. """
     before_reason: str
-    """OperationWorkflowPlaybookOutcomeChange.before_reason. Prior comparison reason."""
+    """ OperationWorkflowPlaybookOutcomeChange.before_reason. Prior comparison reason. """
     after: OperationWorkflowPlaybookBusinessOutcome
-    """OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen
+    """ OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen
     playbook expectation. Independent of human completion and evidence satisfaction; changed guidance never silently
-    changes the expected outcome."""
+    changes the expected outcome. """
     before_reported_outcome_code: str | Unset = UNSET
-    """OperationWorkflowPlaybookOutcomeChange.before_reported_outcome_code. Prior retained reported code, including
-    diagnostic codes when comparability was unavailable."""
+    """ OperationWorkflowPlaybookOutcomeChange.before_reported_outcome_code. Prior retained reported code, including
+    diagnostic codes when comparability was unavailable. """
 
     def to_dict(self) -> dict[str, Any]:
         before_status = self.before_status

@@ -24,16 +24,16 @@ class OrgActivityResponse:
     """One safe, display-ready organization activity fact."""
 
     id: str
-    """Monotonic bigint row id encoded as a string."""
+    """ Monotonic bigint row id encoded as a string. """
     occurred_at: datetime.datetime
     kind: str
     summary: str
     actor: ActivityActorResponse
-    """Captured identity responsible for an activity item."""
+    """ Captured identity responsible for an activity item. """
     resource: ActivityResourceResponse
-    """Primary infrastructure object affected by an activity item."""
+    """ Primary infrastructure object affected by an activity item. """
     data: OrgActivityResponseData
-    """Kind-specific non-secret display metadata."""
+    """ Kind-specific non-secret display metadata. """
     app_id: UUID | Unset = UNSET
     project_id: UUID | Unset = UNSET
     deployment_id: UUID | Unset = UNSET

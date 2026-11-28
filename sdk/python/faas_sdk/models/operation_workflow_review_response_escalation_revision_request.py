@@ -28,9 +28,9 @@ class OperationWorkflowReviewResponseEscalationRevisionRequest:
     review_at: datetime.datetime
     due_at: datetime.datetime
     coordinator: str
-    """Nonblank trimmed control-free UTF-8 coordinator label, at most 256 bytes."""
+    """ Nonblank trimmed control-free UTF-8 coordinator label, at most 256 bytes. """
     plan: str
-    """Nonblank revised action plan, at most 1024 UTF-8 bytes; line breaks and tabs allowed."""
+    """ Nonblank revised action plan, at most 1024 UTF-8 bytes; line breaks and tabs allowed. """
 
     def to_dict(self) -> dict[str, Any]:
         decision_at = self.decision_at.isoformat()

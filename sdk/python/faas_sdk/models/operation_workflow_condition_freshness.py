@@ -27,11 +27,11 @@ class OperationWorkflowConditionFreshness:
 
     status: OperationWorkflowConditionFreshnessStatus
     refresh_owner: str | Unset = UNSET
-    """Public refresh owner copied from the selected fact milestone on its reporting Operation pinned definition.
-    UTF-8 byte bound; no controls or surrounding whitespace. Omission is unassigned."""
+    """ Public refresh owner copied from the selected fact milestone on its reporting Operation pinned definition.
+    UTF-8 byte bound; no controls or surrounding whitespace. Omission is unassigned. """
     refresh_instructions: str | Unset = UNSET
-    """Application-declared refresh instructions copied from the selected fact pinned condition definition. UTF-8
-    byte bound; no controls or surrounding whitespace. Displayed as text and never executed."""
+    """ Application-declared refresh instructions copied from the selected fact pinned condition definition. UTF-8
+    byte bound; no controls or surrounding whitespace. Displayed as text and never executed. """
     evidence_max_age_seconds: int | Unset = UNSET
     refresh_due_at: datetime.datetime | Unset = UNSET
     overdue_seconds: int | Unset = UNSET

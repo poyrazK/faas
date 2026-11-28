@@ -2,13 +2,12 @@ import asyncio
 import copy
 
 import pytest
-from outbound_action_fixture import F, Fixture
-
 from faas_sdk.preview.outbound_action_mcp import OutboundActionMCP
 from faas_sdk.preview.outbound_action_state import OutboundActionError
 from faas_sdk.preview.outbound_actions import OutboundActionResponse
 from faas_sdk.preview.pipeline_tool_mcp import PipelineToolMCPError
 from faas_sdk.preview.stripe_refund_actions import stripe_refund_contract
+from outbound_action_fixture import F, Fixture
 
 
 async def approved():

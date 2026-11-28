@@ -1,15 +1,15 @@
 import json
 
 import httpx
-
 from faas_sdk.preview.api.workflows import (
     get_stored_workflow_failure_policy,
     resume_stored_workflow_failure_pause,
     set_stored_workflow_failure_policy,
 )
-from faas_sdk.client import AuthenticatedClient
 from faas_sdk.preview.models.resume_stored_workflow_failure_pause_request import ResumeStoredWorkflowFailurePauseRequest
 from faas_sdk.preview.models.set_stored_workflow_failure_policy_request import SetStoredWorkflowFailurePolicyRequest
+
+from faas_sdk.client import AuthenticatedClient
 
 
 def test_failure_policy_wire_preserves_false_and_generation():
@@ -57,7 +57,10 @@ def test_failure_policy_wire_preserves_false_and_generation():
     )
     assert not updated.policy.enabled and updated.paused
     resumed = resume_stored_workflow_failure_pause.sync(
-        slug="billing", name="invoice", client=client, body=ResumeStoredWorkflowFailurePauseRequest(expected_generation=7)
+        slug="billing",
+        name="invoice",
+        client=client,
+        body=ResumeStoredWorkflowFailurePauseRequest(expected_generation=7),
     )
     assert not resumed.paused and resumed.generation == 8
     assert calls == ["GET", "PUT", "POST"]

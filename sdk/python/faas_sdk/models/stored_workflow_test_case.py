@@ -22,10 +22,10 @@ class StoredWorkflowTestCase:
 
     name: str
     simulation: StoredWorkflowTestInputs
-    """Saved test data — Explicitly saved synthetic inputs and mocks. Runs always bind the current saved draft."""
+    """ Saved test data — Explicitly saved synthetic inputs and mocks. Runs always bind the current saved draft. """
     expectations: list[StoredWorkflowCheckExpectation]
     live: None | StoredWorkflowLiveTest | Unset = UNSET
-    """Optional live assertions saved with this case; null disables its live test."""
+    """ Optional live assertions saved with this case; null disables its live test. """
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.stored_workflow_live_test import StoredWorkflowLiveTest

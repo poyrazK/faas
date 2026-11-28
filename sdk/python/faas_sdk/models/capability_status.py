@@ -32,16 +32,16 @@ class CapabilityStatus:
     plans: list[CapabilityStatusPlansItem]
     docs_url: str
     acceptance: str
-    """Stable acceptance-test handle for this capability."""
+    """ Stable acceptance-test handle for this capability. """
     enabled: bool
-    """Whether the calling account is entitled and the capability passes its existing runtime availability gate.
-    This is not a fleet health guarantee."""
+    """ Whether the calling account is entitled and the capability passes its existing runtime availability gate.
+    This is not a fleet health guarantee. """
     unavailable_reason: CapabilityStatusUnavailableReason | Unset = UNSET
-    """Stable reason when enabled is false. Plan restrictions take precedence when both gates deny access. Omitted
-    when enabled; older servers may omit it."""
+    """ Stable reason when enabled is false. Plan restrictions take precedence when both gates deny access. Omitted
+    when enabled; older servers may omit it. """
     unavailable_detail: str | Unset = UNSET
-    """Customer-safe explanation and next action when enabled is false. Display text only; use unavailable_reason
-    for stored workflow. Omitted when enabled; older servers may omit it."""
+    """ Customer-safe explanation and next action when enabled is false. Display text only; use unavailable_reason
+    for stored workflow. Omitted when enabled; older servers may omit it. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

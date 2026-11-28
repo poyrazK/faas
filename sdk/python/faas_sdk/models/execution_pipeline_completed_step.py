@@ -35,7 +35,7 @@ class ExecutionPipelineCompletedStep:
     reused_run_id: UUID | Unset = UNSET
     output_sha256: str | Unset = UNSET
     task: ExecutionTaskRef | Unset = UNSET
-    """Identity of a published executable task version."""
+    """ Identity of a published executable task version. """
     result_validation: ExecutionPipelineCompletedStepResultValidation | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

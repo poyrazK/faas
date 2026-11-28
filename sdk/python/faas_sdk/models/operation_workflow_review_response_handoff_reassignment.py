@@ -25,28 +25,29 @@ class OperationWorkflowReviewResponseHandoffReassignment:
     """
 
     decision_at: datetime.datetime
-    """OperationWorkflowReviewResponseHandoffReassignment.decision_at. Original reviewed decision timestamp."""
+    """ OperationWorkflowReviewResponseHandoffReassignment.decision_at. Original reviewed decision timestamp. """
     required_at: datetime.datetime
-    """OperationWorkflowReviewResponseHandoffReassignment.required_at. Original review requirement timestamp."""
+    """ OperationWorkflowReviewResponseHandoffReassignment.required_at. Original review requirement timestamp. """
     at: datetime.datetime
-    """OperationWorkflowReviewResponseHandoffReassignment.at. Server handoff time, starting the new acceptance
-    clock."""
+    """ OperationWorkflowReviewResponseHandoffReassignment.at. Server handoff time, starting the new acceptance
+    clock. """
     owner: str
-    """OperationWorkflowReviewResponseHandoffReassignment.owner. New responsible team label; membership is not
-    verified."""
+    """ OperationWorkflowReviewResponseHandoffReassignment.owner. New responsible team label; membership is not
+    verified. """
     previous_owner: str
-    """OperationWorkflowReviewResponseHandoffReassignment.previous_owner. Declining owner before this manual
-    transfer."""
+    """ OperationWorkflowReviewResponseHandoffReassignment.previous_owner. Declining owner before this manual
+    transfer. """
     actor: str
-    """OperationWorkflowReviewResponseHandoffReassignment.actor. Authenticated operator performing reassignment."""
+    """ OperationWorkflowReviewResponseHandoffReassignment.actor. Authenticated operator performing reassignment.
+    """
     reason: str
-    """OperationWorkflowReviewResponseHandoffReassignment.reason. Operator reason for choosing the new team."""
+    """ OperationWorkflowReviewResponseHandoffReassignment.reason. Operator reason for choosing the new team. """
     decline: OperationWorkflowReviewResponseHandoffDecline
-    """Immutable decline for a responsible team recorded by an authenticated authorized operator, without proof of
-    team membership. Retained history carries its one-time notification intent."""
+    """ Immutable decline for a responsible team recorded by an authenticated authorized operator, without proof of
+    team membership. Retained history carries its one-time notification intent. """
     notified_at: datetime.datetime | Unset = UNSET
-    """OperationWorkflowReviewResponseHandoffReassignment.notified_at. One-time notification marker, bounded by
-    retained history and inbox."""
+    """ OperationWorkflowReviewResponseHandoffReassignment.notified_at. One-time notification marker, bounded by
+    retained history and inbox. """
 
     def to_dict(self) -> dict[str, Any]:
         decision_at = self.decision_at.isoformat()

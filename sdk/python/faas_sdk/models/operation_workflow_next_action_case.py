@@ -20,12 +20,12 @@ class OperationWorkflowNextActionCase:
     """Exact workflow case affected by a current source action."""
 
     subject: OperationSubject
-    """Immutable public business correlation metadata. Captured at admission and preserved through recovery and
-    redeploy. Never an ownership or authorization claim."""
+    """ Immutable public business correlation metadata. Captured at admission and preserved through recovery and
+    redeploy. Never an ownership or authorization claim. """
     workflow: str
     instance_id: str
     platform_tenant_id: UUID | Unset = UNSET
-    """Included only for authorized account operator views; platform tenant scope is implicit."""
+    """ Included only for authorized account operator views; platform tenant scope is implicit. """
 
     def to_dict(self) -> dict[str, Any]:
         subject = self.subject.to_dict()

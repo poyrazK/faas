@@ -1243,6 +1243,8 @@ func cmdAppDispatch(args []string) int {
 			return cmdAppCopy(slug, commandArgs)
 		case "port-forward":
 			return cmdAppPortForward(slug, commandArgs)
+		case "tasks":
+			return cmdAppTasks(slug, commandArgs)
 		case subSecurity:
 			return cmdAppSecurity(slug, commandArgs)
 		case subEgressAllowlist:

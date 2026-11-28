@@ -32,8 +32,8 @@ class OperationWorkflowGapProgressGroup:
     gap_status: OperationWorkflowGapProgressGroupGapStatus
     missing_condition_count: int
     blocked_time: OperationWorkflowDurationDistribution
-    """One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
-    zero."""
+    """ One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
+    zero. """
     owner: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:

@@ -21,18 +21,18 @@ class RouteRow:
     """
 
     route: str
-    """Bounded route label (method + raw path, or `__route_other__`)."""
+    """ Bounded route label (method + raw path, or `__route_other__`). """
     count: int
-    """Number of requests with this route in the window."""
+    """ Number of requests with this route in the window. """
     p50_ms: float
-    """p50 of `gateway_request_duration_seconds_bucket{app, route, class}` over the window, in ms."""
+    """ p50 of `gateway_request_duration_seconds_bucket{app, route, class}` over the window, in ms. """
     p95_ms: float
-    """p95 over all classes in the window, in ms."""
+    """ p95 over all classes in the window, in ms. """
     p99_ms: float
-    """p99 over all classes in the window, in ms."""
+    """ p99 over all classes in the window, in ms. """
     error_pct: float
-    """Share of 5xx requests with this route in the window. Client-caused 4xx responses do not consume availability
-    budget."""
+    """ Share of 5xx requests with this route in the window. Client-caused 4xx responses do not consume availability
+    budget. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

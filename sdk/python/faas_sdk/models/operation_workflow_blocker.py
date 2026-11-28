@@ -24,30 +24,30 @@ class OperationWorkflowBlocker:
 
     code: str
     description: str
-    """Public UTF-8 text limited to 512 bytes without control characters."""
+    """ Public UTF-8 text limited to 512 bytes without control characters. """
     operation: str
-    """Target Operation name."""
+    """ Target Operation name. """
     priority: OperationWorkflowBlockerPriority | Unset = UNSET
-    """Application-assigned urgency. Omitted means normal for queue filtering and counts."""
+    """ Application-assigned urgency. Omitted means normal for queue filtering and counts. """
     business_impact: str | Unset = UNSET
-    """Public application-reported impact limited to 512 UTF-8 bytes without control characters."""
+    """ Public application-reported impact limited to 512 UTF-8 bytes without control characters. """
     acknowledged_at: datetime.datetime | Unset = UNSET
-    """Application acknowledgement time paired with acknowledged_by. Must be at or after known first observation
-    and at or before report time."""
+    """ Application acknowledgement time paired with acknowledged_by. Must be at or after known first observation
+    and at or before report time. """
     acknowledged_by: str | Unset = UNSET
-    """Public application actor identifier paired with acknowledged_at. Limited to 128 UTF-8 bytes without control
-    characters."""
+    """ Public application actor identifier paired with acknowledged_at. Limited to 128 UTF-8 bytes without control
+    characters. """
     follow_up_at: datetime.datetime | Unset = UNSET
-    """Optional follow-up deadline at or after acknowledgement. Does not resolve the blocker or reset its age."""
+    """ Optional follow-up deadline at or after acknowledgement. Does not resolve the blocker or reset its age. """
     owner: str | Unset = UNSET
-    """Optional public application-assigned person or team identifier, limited to 128 UTF-8 bytes without control
-    characters. Empty or omitted means unassigned; this grants no execution authority."""
+    """ Optional public application-assigned person or team identifier, limited to 128 UTF-8 bytes without control
+    characters. Empty or omitted means unassigned; this grants no execution authority. """
     next_action: str | Unset = UNSET
-    """Optional public application-suggested resolution step, limited to 512 UTF-8 bytes without control
-    characters. This is guidance rather than an executable command."""
+    """ Optional public application-suggested resolution step, limited to 512 UTF-8 bytes without control
+    characters. This is guidance rather than an executable command. """
     first_observed_at: datetime.datetime | Unset = UNSET
-    """Optional application observation time at or before the containing report. Upgraded transactional SDKs
-    preserve it across repeats of the same target/code until cleared. Omitted means unknown."""
+    """ Optional application observation time at or before the containing report. Upgraded transactional SDKs
+    preserve it across repeats of the same target/code until cleared. Omitted means unknown. """
 
     def to_dict(self) -> dict[str, Any]:
         code = self.code

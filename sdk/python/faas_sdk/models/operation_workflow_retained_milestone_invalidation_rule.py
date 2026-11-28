@@ -20,11 +20,11 @@ class OperationWorkflowRetainedMilestoneInvalidationRule:
     """
 
     prerequisite: OperationWorkflowRetainedMilestoneRequirement
-    """Source operation and milestone bound to a declared transaction-backed step of the selected workflow
-    contract."""
+    """ Source operation and milestone bound to a declared transaction-backed step of the selected workflow
+    contract. """
     invalidated_by: OperationWorkflowRetainedMilestoneRequirement
-    """Source operation and milestone bound to a declared transaction-backed step of the selected workflow
-    contract."""
+    """ Source operation and milestone bound to a declared transaction-backed step of the selected workflow
+    contract. """
 
     def to_dict(self) -> dict[str, Any]:
         prerequisite = self.prerequisite.to_dict()

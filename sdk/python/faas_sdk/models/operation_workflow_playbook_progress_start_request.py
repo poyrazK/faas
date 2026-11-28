@@ -17,14 +17,14 @@ class OperationWorkflowPlaybookProgressStartRequest:
     """
 
     playbook_id: str
-    """OperationWorkflowPlaybookProgressStartRequest.playbook_id. Exact matched rule identifier."""
+    """ OperationWorkflowPlaybookProgressStartRequest.playbook_id. Exact matched rule identifier. """
     playbook_version: int
-    """OperationWorkflowPlaybookProgressStartRequest.playbook_version. Pinned rule revision."""
+    """ OperationWorkflowPlaybookProgressStartRequest.playbook_version. Pinned rule revision. """
     contract_version: int
-    """OperationWorkflowPlaybookProgressStartRequest.contract_version. Pinned workflow contract version."""
+    """ OperationWorkflowPlaybookProgressStartRequest.contract_version. Pinned workflow contract version. """
     reporting_operation_id: UUID
-    """OperationWorkflowPlaybookProgressStartRequest.reporting_operation_id. Exact operation reporting the matched
-    current guidance."""
+    """ OperationWorkflowPlaybookProgressStartRequest.reporting_operation_id. Exact operation reporting the matched
+    current guidance. """
 
     def to_dict(self) -> dict[str, Any]:
         playbook_id = self.playbook_id

@@ -1,10 +1,10 @@
 import json
 
 import httpx
-
 from faas_sdk.preview.api.alert_rules import enable_alert_preset
-from faas_sdk.client import AuthenticatedClient
 from faas_sdk.preview.models import EnableAlertPresetRequest
+
+from faas_sdk.client import AuthenticatedClient
 
 
 def test_stored_workflow_backlog_preset_decodes_due_age_and_keeps_notification_defaults():

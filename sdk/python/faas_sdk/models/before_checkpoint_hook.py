@@ -19,10 +19,10 @@ class BeforeCheckpointHook:
     """
 
     path: str | Unset = UNSET
-    """Absolute path on the app's loopback HTTP listener. Called with POST and X-Faas-Before-Checkpoint: 1
-    immediately before pausing the VM."""
+    """ Absolute path on the app's loopback HTTP listener. Called with POST and X-Faas-Before-Checkpoint: 1
+    immediately before pausing the VM. """
     timeout_ms: int | Unset = 500
-    """Deadline for checkpoint response in milliseconds; 0 uses the 500 ms default."""
+    """ Deadline for checkpoint response in milliseconds; 0 uses the 500 ms default. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

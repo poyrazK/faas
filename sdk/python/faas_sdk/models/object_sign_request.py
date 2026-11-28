@@ -33,40 +33,40 @@ class ObjectSignRequest:
     method: ObjectSignRequestMethod
     key: str
     version_id: UUID | Unset = UNSET
-    """GET/HEAD only. Exact owned immutable public version UUID. Mutable null and native provider selectors are
-    rejected. Omit for the current object."""
+    """ GET/HEAD only. Exact owned immutable public version UUID. Mutable null and native provider selectors are
+    rejected. Omit for the current object. """
     if_match: str | Unset = UNSET
-    """PUT only. Mutually exclusive with if_none_match. GCS accepts one strong quoted XML ETag or * and binds the
+    """ PUT only. Mutually exclusive with if_none_match. GCS accepts one strong quoted XML ETag or * and binds the
     observed content generation; a concurrent replacement is rejected even if it has the same ETag. Conditions are
-    fixed in the signed capability."""
+    fixed in the signed capability. """
     if_none_match: ObjectSignRequestIfNoneMatch | Unset = UNSET
-    """PUT only. Create only if no live object exists. Mutually exclusive with if_match."""
+    """ PUT only. Create only if no live object exists. Mutually exclusive with if_match. """
     expires_in: int | Unset = 300
     size_bytes: int | Unset = UNSET
-    """Required for PUT; forbidden for GET."""
+    """ Required for PUT; forbidden for GET. """
     content_type: str | Unset = UNSET
-    """PUT only."""
+    """ PUT only. """
     cache_control: str | Unset = UNSET
-    """Cache-Control value for PUT."""
+    """ Cache-Control value for PUT. """
     content_disposition: str | Unset = UNSET
-    """Content-Disposition value for PUT."""
+    """ Content-Disposition value for PUT. """
     content_encoding: str | Unset = UNSET
-    """Content-Encoding value for PUT."""
+    """ Content-Encoding value for PUT. """
     content_language: str | Unset = UNSET
-    """Content-Language value for PUT."""
+    """ Content-Language value for PUT. """
     metadata: ObjectSignRequestMetadata | Unset = UNSET
-    """PUT-only x-amz-meta-* values."""
+    """ PUT-only x-amz-meta-* values. """
     tags: ObjectSignRequestTags | Unset = UNSET
-    """PUT-only S3 object tags."""
+    """ PUT-only S3 object tags. """
     protection: ObjectWriteProtection | Unset = UNSET
-    """Fixed or enrolled event retention and an independent legal hold for a new object version. Omitted retention
+    """ Fixed or enrolled event retention and an independent legal hold for a new object version. Omitted retention
     inherits the immutable admitted bucket default. Event hold ON requires one days or years duration and permits an
     optional minimum date. Event hold OFF on creation requires an explicit fixed date and no duration. Governance
-    bypass is unsupported."""
+    bypass is unsupported. """
     encryption: ObjectEncryption | Unset = UNSET
-    """Owned encryption selection for object writes and upload policies. KMS requires an enrolled Gregale key
+    """ Owned encryption selection for object writes and upload policies. KMS requires an enrolled Gregale key
     reference; bucket keys apply only to aws:kms. Context is canonical base64 of a bounded JSON object with unique
-    string entries."""
+    string entries. """
 
     def to_dict(self) -> dict[str, Any]:
         method: str = self.method

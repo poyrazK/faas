@@ -21,15 +21,15 @@ class DiffBreak:
     """
 
     code: str
-    """Stable RFC 7807 code; matches api.Code* constants"""
+    """ Stable RFC 7807 code; matches api.Code* constants """
     severity: DiffBreakSeverity
     reason: str
     field: str | Unset = UNSET
-    """Optional scope-wide ('memory') or per-row ('environment.<scope>.<key>')."""
+    """ Optional scope-wide ('memory') or per-row ('environment.<scope>.<key>'). """
     observed: Any | Unset = UNSET
-    """JSON-encoded observed value (int / string / []string / …)."""
+    """ JSON-encoded observed value (int / string / []string / …). """
     limit: Any | Unset = UNSET
-    """JSON-encoded limit value."""
+    """ JSON-encoded limit value. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

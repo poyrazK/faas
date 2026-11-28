@@ -16,12 +16,12 @@ class CreateMCPReadinessMaintenanceRequest:
     """Exact-environment notification silence with a finite time range and audit reason."""
 
     ends_at: datetime.datetime
-    """Future end within 720 hours of start."""
+    """ Future end within 720 hours of start. """
     reason: str
-    """Nonblank UTF-8 reason of at most 500 bytes."""
+    """ Nonblank UTF-8 reason of at most 500 bytes. """
     scope: str | Unset = "default"
     starts_at: datetime.datetime | Unset = UNSET
-    """Omit to start now. Past starts older than one minute are rejected."""
+    """ Omit to start now. Past starts older than one minute are rejected. """
 
     def to_dict(self) -> dict[str, Any]:
         ends_at = self.ends_at.isoformat()

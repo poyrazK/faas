@@ -52,73 +52,73 @@ class OperationWorkflowReviewResponseChange:
     """OperationWorkflowReviewResponseChange. Authenticated response update snapshot."""
 
     owner: str
-    """OperationWorkflowReviewResponseChange.owner. Responsible team label; trimmed control-free UTF-8 limited to
-    256 bytes."""
+    """ OperationWorkflowReviewResponseChange.owner. Responsible team label; trimmed control-free UTF-8 limited to
+    256 bytes. """
     plan: str
-    """OperationWorkflowReviewResponseChange.plan. Human response plan; nonblank UTF-8 limited to 1024 bytes. Line
-    breaks and tabs are allowed."""
+    """ OperationWorkflowReviewResponseChange.plan. Human response plan; nonblank UTF-8 limited to 1024 bytes. Line
+    breaks and tabs are allowed. """
     status: OperationWorkflowReviewResponseChangeStatus
-    """OperationWorkflowReviewResponseChange.status. Active ownership or human resolution after a fresh scoped
-    check of linked source reviews."""
+    """ OperationWorkflowReviewResponseChange.status. Active ownership or human resolution after a fresh scoped
+    check of linked source reviews. """
     at: datetime.datetime
-    """OperationWorkflowReviewResponseChange.at. Server change time."""
+    """ OperationWorkflowReviewResponseChange.at. Server change time. """
     actor: str
-    """OperationWorkflowReviewResponseChange.actor. Authenticated response editor."""
+    """ OperationWorkflowReviewResponseChange.actor. Authenticated response editor. """
     scheduled_review_reschedule: OperationWorkflowReviewResponseScheduledReviewReschedule | Unset = UNSET
-    """Immutable schedule change audit with previous and replacement due times, completion identity, human reason
+    """ Immutable schedule change audit with previous and replacement due times, completion identity, human reason
     and server actor and time. Retained change history records each reschedule; current completion keeps the latest
-    change and original due time."""
+    change and original due time. """
     scheduled_review_cancellation: OperationWorkflowReviewResponseScheduledReviewCancellation | Unset = UNSET
-    """Immutable cancellation audit for one pending scheduled evidence check. Retains original completion and due
+    """ Immutable cancellation audit for one pending scheduled evidence check. Retains original completion and due
     timestamps, server actor and time, and human reason. Does not change completion evidence, ownership or review
-    obligations."""
+    obligations. """
     escalation_action_review: OperationWorkflowReviewResponseEscalationActionReview | Unset = UNSET
-    """Most recent explicit scoped observation of immutable completion evidence. Source indices refer to the
+    """ Most recent explicit scoped observation of immutable completion evidence. Source indices refer to the
     completion evidence order. A clear observation does not establish causality or business completion; observation
     is not atomic with concurrent application reports. History preserves prior review snapshots within existing
-    retention bounds."""
+    retention bounds. """
     escalation_completion: OperationWorkflowReviewResponseEscalationCompletion | Unset = UNSET
-    """Immutable human completion of escalation coordination work, with linked review references and server actor
-    and time. Existing overdue markers remain historical."""
+    """ Immutable human completion of escalation coordination work, with linked review references and server actor
+    and time. Existing overdue markers remain historical. """
     escalation_acknowledgment: OperationWorkflowReviewResponseEscalationAcknowledgment | Unset = UNSET
-    """Immutable human escalation acknowledgment with a coordinator commitment, recorded actor and time.
+    """ Immutable human escalation acknowledgment with a coordinator commitment, recorded actor and time.
     Notification acknowledgment alone does not create this record. The system overdue marker and explicit human
-    completion may be appended without changing commitment fields."""
+    completion may be appended without changing commitment fields. """
     handoff_acceptance_escalation_owner: str | Unset = UNSET
-    """OperationWorkflowReviewResponseChange.handoff_acceptance_escalation_owner. Optional control-free UTF-8 team
+    """ OperationWorkflowReviewResponseChange.handoff_acceptance_escalation_owner. Optional control-free UTF-8 team
     label for future missed acceptance deadlines. Omission preserves policy, empty string clears it; the destination
-    is pinned at each actual handoff. Must differ from the parent request owner when explicitly configured."""
+    is pinned at each actual handoff. Must differ from the parent request owner when explicitly configured. """
     handoff_reassignment: OperationWorkflowReviewResponseHandoffReassignment | Unset = UNSET
-    """Immutable manual routing record for an authorized operator, with preserved decline context and one-time
-    notification intent. Ownership assignment is not acceptance."""
+    """ Immutable manual routing record for an authorized operator, with preserved decline context and one-time
+    notification intent. Ownership assignment is not acceptance. """
     handoff_decline: OperationWorkflowReviewResponseHandoffDecline | Unset = UNSET
-    """Immutable decline for a responsible team recorded by an authenticated authorized operator, without proof of
-    team membership. Retained history carries its one-time notification intent."""
+    """ Immutable decline for a responsible team recorded by an authenticated authorized operator, without proof of
+    team membership. Retained history carries its one-time notification intent. """
     handoff_accept_after_seconds: int | Unset = UNSET
-    """OperationWorkflowReviewResponseChange.handoff_accept_after_seconds. Future handoff acceptance window,
+    """ OperationWorkflowReviewResponseChange.handoff_accept_after_seconds. Future handoff acceptance window,
     defaulting to 3600 seconds. Request omission preserves current policy; active acceptance deadlines stay pinned.
-   """
+    """
     handoff_acceptance: OperationWorkflowReviewResponseHandoffAcceptance | Unset = UNSET
-    """Immutable acceptance by an authenticated authorized operator for the responsible team, without verifying
-    team membership or satisfying the original review deadline."""
+    """ Immutable acceptance by an authenticated authorized operator for the responsible team, without verifying
+    team membership or satisfying the original review deadline. """
     decision_review_fallback_owner: str | Unset = UNSET
-    """OperationWorkflowReviewResponseChange.decision_review_fallback_owner. Optional distinct fallback team for
+    """ OperationWorkflowReviewResponseChange.decision_review_fallback_owner. Optional distinct fallback team for
     future overdue decision reviews. Request omission preserves policy and empty string clears it; active episodes
-    retain their pinned fallback."""
+    retain their pinned fallback. """
     decision_review_after_seconds: int | Unset = UNSET
-    """OperationWorkflowReviewResponseChange.decision_review_after_seconds. Future decision revalidation window;
-    defaults to 86400 seconds. Existing deadlines remain pinned; request omission preserves current policy."""
+    """ OperationWorkflowReviewResponseChange.decision_review_after_seconds. Future decision revalidation window;
+    defaults to 86400 seconds. Existing deadlines remain pinned; request omission preserves current policy. """
     decision: OperationWorkflowReviewResponseDecision | Unset = UNSET
-    """Immutable human decision with accountable actor and the reviewed health snapshot. Application execution
-    remains application-owned."""
+    """ Immutable human decision with accountable actor and the reviewed health snapshot. Application execution
+    remains application-owned. """
     fallback_owner: str | Unset = UNSET
-    """OperationWorkflowReviewResponseChange.fallback_owner. Fallback policy captured for this response change."""
+    """ OperationWorkflowReviewResponseChange.fallback_owner. Fallback policy captured for this response change. """
     reason: OperationWorkflowReviewResponseChangeReason | Unset = UNSET
-    """OperationWorkflowReviewResponseChange.reason. Explicit human edit or periodic missed-check-in event; absent
-    in older history."""
+    """ OperationWorkflowReviewResponseChange.reason. Explicit human edit or periodic missed-check-in event; absent
+    in older history. """
     check_in_at: datetime.datetime | Unset = UNSET
-    """OperationWorkflowReviewResponseChange.check_in_at. Required future check-in for active responses; absent
-    when resolved. Replaces inbox attention time without changing the original alert response deadline."""
+    """ OperationWorkflowReviewResponseChange.check_in_at. Required future check-in for active responses; absent
+    when resolved. Replaces inbox attention time without changing the original alert response deadline. """
 
     def to_dict(self) -> dict[str, Any]:
         owner = self.owner

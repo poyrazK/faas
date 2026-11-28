@@ -22,10 +22,10 @@ class OrgMeResponse:
     """
 
     org: OrgWithRole
-    """OrgResponse + the caller's role on the active org. Used by
+    """ OrgResponse + the caller's role on the active org. Used by
     GET /v1/orgs/me (`OrgMeResponse.org`). The role field is
     a closed enum: owner|admin|developer|viewer|billing.
-    """
+     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

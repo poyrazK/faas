@@ -82,33 +82,33 @@ class AppManifest:
 
     entrypoint: list[str]
     profiling: ProfilingConfig | Unset = UNSET
-    """Opt-in sampled CPU profiling baked into each deployment."""
+    """ Opt-in sampled CPU profiling baked into each deployment. """
     tracing: TracingConfig | Unset = UNSET
-    """Opt-in zero-config request tracing baked into each deployment. Managed runtimes export database, cache and
+    """ Opt-in zero-config request tracing baked into each deployment. Managed runtimes export database, cache and
     HTTP client spans to the debugger without an API key or code changes; apps that configure their own OTel
-    exporter are left untouched."""
+    exporter are left untouched. """
     profiling_on_demand: bool | Unset = UNSET
-    """Dormant on-demand profile collectors stamped by the image service."""
+    """ Dormant on-demand profile collectors stamped by the image service. """
     env: AppManifestEnv | Unset = UNSET
     env_secrets: AppManifestEnvSecrets | Unset = UNSET
-    """Env override via sealed-secret refs. Each value is "secret:NAME"; the host resolver looks up NAME against
-    the app_secrets table at wake."""
+    """ Env override via sealed-secret refs. Each value is "secret:NAME"; the host resolver looks up NAME against
+    the app_secrets table at wake. """
     working_dir: None | str | Unset = UNSET
     port: int | None | Unset = UNSET
     service_binding_transport: ServiceBindingTransport | Unset = UNSET
-    """Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private
-    `.internal` alias; `http` preserves the legacy `.svc.gregale` endpoint."""
+    """ Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private
+    `.internal` alias; `http` preserves the legacy `.svc.gregale` endpoint. """
     ports: list[WorkloadPort] | Unset = UNSET
-    """Protocol-aware listeners preserved from OCI ExposedPorts. The legacy port remains the primary HTTP/readiness
+    """ Protocol-aware listeners preserved from OCI ExposedPorts. The legacy port remains the primary HTTP/readiness
     listener; named TCP entries may be selected through the app--port-<name> public hostname, while all entries
-    remain available for in-task discovery."""
+    remain available for in-task discovery. """
     healthz: None | str | Unset = UNSET
     user: None | str | Unset = UNSET
     healthcheck: AppManifestHealthcheck | Unset = UNSET
-    """AppManifest-level healthcheck shape: OCI HEALTHCHECK fields plus typed deployment probe overrides. Durations
-    are integer seconds at the JSON boundary to match OCI/Docker conventions."""
+    """ AppManifest-level healthcheck shape: OCI HEALTHCHECK fields plus typed deployment probe overrides. Durations
+    are integer seconds at the JSON boundary to match OCI/Docker conventions. """
     stop_signal: None | str | Unset = UNSET
-    """OCI STOPSIGNAL (default SIGTERM). Wired into the Engine.StopInstance signal-and-grace flow."""
+    """ OCI STOPSIGNAL (default SIGTERM). Wired into the Engine.StopInstance signal-and-grace flow. """
     secret_reload_signal: (
         AppManifestSecretReloadSignalType1
         | AppManifestSecretReloadSignalType2Type1
@@ -116,19 +116,19 @@ class AppManifest:
         | None
         | Unset
     ) = UNSET
-    """Opt this image's workload into live secret-file refresh by selecting the signal guest-init sends after
+    """ Opt this image's workload into live secret-file refresh by selecting the signal guest-init sends after
     replacing FAAS_SECRETS_FILE; the app must handle the signal and reload its config. Main and long-running sidecar
     images opt in independently, including deployments with companions; each workload reloads only its own granted
-    secrets. Must differ from stop_signal."""
+    secrets. Must differ from stop_signal. """
     secret_reload_readiness: bool | Unset = False
-    """Wait for the workload to publish FAAS_SECRETS_RELOAD_READY_FILE before sending a secret reload signal.
-    Requires secret_reload_signal. Main and sidecar workloads opt in independently."""
+    """ Wait for the workload to publish FAAS_SECRETS_RELOAD_READY_FILE before sending a secret reload signal.
+    Requires secret_reload_signal. Main and sidecar workloads opt in independently. """
     secret_files: list[SecretFile] | Unset = UNSET
-    """App secrets guest-init writes to /run/secrets for the main workload. Set from the app's Compose service
-    secrets."""
+    """ App secrets guest-init writes to /run/secrets for the main workload. Set from the app's Compose service
+    secrets. """
     stop_grace_period: None | str | Unset = UNSET
-    """OCI StopGracePeriod as a Go duration string (e.g. "30s"). Per-plan cap (Hobby 30s, Pro 60s, Scale 120s)
-    enforced by Validate."""
+    """ OCI StopGracePeriod as a Go duration string (e.g. "30s"). Per-plan cap (Hobby 30s, Pro 60s, Scale 120s)
+    enforced by Validate. """
     execution_mode: (
         AppManifestExecutionModeType1
         | AppManifestExecutionModeType2Type1
@@ -136,7 +136,7 @@ class AppManifest:
         | None
         | Unset
     ) = UNSET
-    """Lifecycle contract for this app. Default 'request' preserves today's behaviour."""
+    """ Lifecycle contract for this app. Default 'request' preserves today's behaviour. """
     restart_policy: (
         AppManifestRestartPolicyType1
         | AppManifestRestartPolicyType2Type1
@@ -144,68 +144,68 @@ class AppManifest:
         | None
         | Unset
     ) = UNSET
-    """Restart behaviour when the main workload exits. Default is mode-derived: always for worker/service, no for
-    job, on-failure for request."""
+    """ Restart behaviour when the main workload exits. Default is mode-derived: always for worker/service, no for
+    job, on-failure for request. """
     after_restore: AfterRestoreHook | Unset = UNSET
-    """Optional loopback callback that must succeed after snapshot restore, or after a frozen instance resumes,
-    before the instance becomes ready."""
+    """ Optional loopback callback that must succeed after snapshot restore, or after a frozen instance resumes,
+    before the instance becomes ready. """
     before_checkpoint: BeforeCheckpointHook | Unset = UNSET
-    """Optional loopback callback for new terminal init snapshots. A failure aborts capture. Enabling it disables
-    warm snapshots; snapshot reuse skips the callback."""
+    """ Optional loopback callback for new terminal init snapshots. A failure aborts capture. Enabling it disables
+    warm snapshots; snapshot reuse skips the callback. """
     warmup: WarmupHook | Unset = UNSET
-    """Path that primes a deployment's first init snapshot. Before that capture Gregale sends up to 20 GET requests
+    """ Path that primes a deployment's first init snapshot. Before that capture Gregale sends up to 20 GET requests
     (5 s at most) to it on the app's HTTP port; without it, the HTTP health check path is used. Priming never fails
-    a deploy."""
+    a deploy. """
     pause: AppManifestPause | Unset = UNSET
-    """The app's declared pause tier. Absent means the default for its type: between_requests for a function,
-    when_idle for a request-mode app."""
+    """ The app's declared pause tier. Absent means the default for its type: between_requests for a function,
+    when_idle for a request-mode app. """
     startup_deadline_s: int | None | Unset = UNSET
-    """Upper bound on time-to-ready (seconds). Per-plan cap enforced by Validate. Default 0 means 'use plan
-    default'."""
+    """ Upper bound on time-to-ready (seconds). Per-plan cap enforced by Validate. Default 0 means 'use plan
+    default'. """
     max_retries: int | None | Unset = UNSET
-    """Consecutive restart-attempt cap. Per-plan cap: Hobby 5, Pro 10, Scale 20. Default 0 means 'use plan
-    default'."""
+    """ Consecutive restart-attempt cap. Per-plan cap: Hobby 5, Pro 10, Scale 20. Default 0 means 'use plan
+    default'. """
     request_timeout_s: int | None | Unset = UNSET
-    """Runtime request wall-clock timeout in seconds. 0 inherits the plan/type default."""
+    """ Runtime request wall-clock timeout in seconds. 0 inherits the plan/type default. """
     function_concurrency: int | None | Unset = UNSET
-    """Per-worker request concurrency the image service stamps into the function's build as
-    FAAS_FUNCTION_CONCURRENCY. 0 or 1 means one request per worker."""
+    """ Per-worker request concurrency the image service stamps into the function's build as
+    FAAS_FUNCTION_CONCURRENCY. 0 or 1 means one request per worker. """
     service_replicas: ServiceReplicas | Unset = UNSET
-    """Per-deployment replica scaffold for execution_mode='service'. Replica count is bounded by ServiceReplicasMax
+    """ Per-deployment replica scaffold for execution_mode='service'. Replica count is bounded by ServiceReplicasMax
     per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit the app's max_concurrency ceiling. min ≤ desired
-    ≤ max must hold. Foundation here; rolling-deploy / rollback / image-digest pinning semantics land."""
+    ≤ max must hold. Foundation here; rolling-deploy / rollback / image-digest pinning semantics land. """
     worker_replicas: WorkerScaling | Unset = UNSET
-    """Queue-driven or custom-metric autoscaling policy for execution_mode='worker'. Supports scale-to-zero when
-    min=0."""
+    """ Queue-driven or custom-metric autoscaling policy for execution_mode='worker'. Supports scale-to-zero when
+    min=0. """
     favicon: None | str | Unset = UNSET
-    """Persisted base64-encoded favicon for the gateway edge answer; the decoded payload is capped at 32 KiB."""
+    """ Persisted base64-encoded favicon for the gateway edge answer; the decoded payload is capped at 32 KiB. """
     robots_txt: None | str | Unset = UNSET
-    """Persisted per-app robots.txt body; empty uses the platform allow-all default."""
+    """ Persisted per-app robots.txt body; empty uses the platform allow-all default. """
     head_wakes: bool | Unset = False
-    """Persisted opt-in to waking a parked app for HEAD / instead of receiving the cached edge answer."""
+    """ Persisted opt-in to waking a parked app for HEAD / instead of receiving the cached edge answer. """
     crawler_policy: AppManifestCrawlerPolicy | Unset = "wake"
-    """Effective policy for known monitor/crawler requests."""
+    """ Effective policy for known monitor/crawler requests. """
     pre_auth_rate_limit: PreAuthRateLimitConfig | Unset = UNSET
-    """Optional per-source gateway limit evaluated before consumer-key lookup, JWT verification, and VM wake. App-
+    """ Optional per-source gateway limit evaluated before consumer-key lookup, JWT verification, and VM wake. App-
     wide and failed-response budgets are replica-local; exact routes can opt into shared request budgets. Observe
-    mode records threshold crossings without rejecting requests."""
+    mode records threshold crossings without rejecting requests. """
     health_path: str | Unset = "/healthz"
-    """Monitor-facing health path."""
+    """ Monitor-facing health path. """
     health_path_wakes: bool | Unset = False
-    """Whether health probes may wake this app."""
+    """ Whether health probes may wake this app. """
     session_affinity: bool | Unset = False
-    """Whether the edge prefers the same running instance. Best effort only; stale or unhealthy instances are
-    bypassed automatically."""
+    """ Whether the edge prefers the same running instance. Best effort only; stale or unhealthy instances are
+    bypassed automatically. """
     version_affinity_cookie: str | Unset = UNSET
-    """Configured browser cookie name for rollout affinity; omitted when disabled."""
+    """ Configured browser cookie name for rollout affinity; omitted when disabled. """
     version_affinity_managed_cookie: bool | Unset = False
-    """Whether the edge issues its own host-only rollout-affinity cookie."""
+    """ Whether the edge issues its own host-only rollout-affinity cookie. """
     revision_pin_ttl_seconds: int | Unset = 0
-    """Configured revision pin window in seconds; zero disables pinning."""
+    """ Configured revision pin window in seconds; zero disables pinning. """
     release_policy: AppManifestReleasePolicy | Unset = UNSET
-    """Effective default rollout for production releases."""
+    """ Effective default rollout for production releases. """
     release_probe_paths: list[str] | Unset = UNSET
-    """Paths the default rollout probe checks; absent means /."""
+    """ Paths the default rollout probe checks; absent means /. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -243,7 +243,7 @@ class AppManifest:
 
         service_binding_transport: str | Unset = UNSET
         if not isinstance(self.service_binding_transport, Unset):
-            service_binding_transport = check_service_binding_transport(self.service_binding_transport)
+            service_binding_transport = self.service_binding_transport
 
         ports: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.ports, Unset):

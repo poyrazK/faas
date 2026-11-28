@@ -21,9 +21,9 @@ class ProjectRollbackMember:
     scope: str
     status: str
     previously_served: bool
-    """Whether the revision has a recorded end to a past serving period."""
+    """ Whether the revision has a recorded end to a past serving period. """
     slug: str | Unset = UNSET
-    """App slug when the app is still attached to the project."""
+    """ App slug when the app is still attached to the project. """
     predecessor_id: UUID | Unset = UNSET
     predecessor_revision: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

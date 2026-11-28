@@ -34,70 +34,70 @@ class OperationWorkflowPlaybookProgress:
     """
 
     id: UUID
-    """OperationWorkflowPlaybookProgress.id. Stable checklist identity; repeated starts for the same pinned case
-    and definition return the existing record."""
+    """ OperationWorkflowPlaybookProgress.id. Stable checklist identity; repeated starts for the same pinned case
+    and definition return the existing record. """
     revision: int
-    """OperationWorkflowPlaybookProgress.revision. Optimistic concurrency revision."""
+    """ OperationWorkflowPlaybookProgress.revision. Optimistic concurrency revision. """
     playbook: OperationWorkflowPlaybook
-    """OperationWorkflowPlaybook. Application-owned advisory guidance; evidence requirements are human checklists
-    and links are never executed by Gregale."""
+    """ OperationWorkflowPlaybook. Application-owned advisory guidance; evidence requirements are human checklists
+    and links are never executed by Gregale. """
     contract_version: int
-    """OperationWorkflowPlaybookProgress.contract_version. Pinned workflow contract revision."""
+    """ OperationWorkflowPlaybookProgress.contract_version. Pinned workflow contract revision. """
     definition_id: UUID
-    """OperationWorkflowPlaybookProgress.definition_id. Immutable original reporting definition."""
+    """ OperationWorkflowPlaybookProgress.definition_id. Immutable original reporting definition. """
     reporting_operation_id: UUID
-    """OperationWorkflowPlaybookProgress.reporting_operation_id. Original reporting operation used when the
-    checklist started."""
+    """ OperationWorkflowPlaybookProgress.reporting_operation_id. Original reporting operation used when the
+    checklist started. """
     items: list[OperationWorkflowPlaybookProgressItem]
-    """OperationWorkflowPlaybookProgress.items. Frozen evidence labels and their latest review records."""
+    """ OperationWorkflowPlaybookProgress.items. Frozen evidence labels and their latest review records. """
     completed_count: int
-    """OperationWorkflowPlaybookProgress.completed_count. Number of checklist items reviewed as completed."""
+    """ OperationWorkflowPlaybookProgress.completed_count. Number of checklist items reviewed as completed. """
     checklist_complete: bool
-    """OperationWorkflowPlaybookProgress.checklist_complete. Every item in a nonempty checklist is completed;
-    conveys no application readiness or business outcome."""
+    """ OperationWorkflowPlaybookProgress.checklist_complete. Every item in a nonempty checklist is completed;
+    conveys no application readiness or business outcome. """
     created_at: datetime.datetime
-    """OperationWorkflowPlaybookProgress.created_at. Server start clock."""
+    """ OperationWorkflowPlaybookProgress.created_at. Server start clock. """
     created_by: str
-    """OperationWorkflowPlaybookProgress.created_by. Authenticated checklist creator."""
+    """ OperationWorkflowPlaybookProgress.created_by. Authenticated checklist creator. """
     updated_at: datetime.datetime
-    """OperationWorkflowPlaybookProgress.updated_at. Latest review clock."""
+    """ OperationWorkflowPlaybookProgress.updated_at. Latest review clock. """
     history: list[OperationWorkflowPlaybookProgressChange]
-    """OperationWorkflowPlaybookProgress.history. Most recent 64 committed item review snapshots, in revision
-    order."""
+    """ OperationWorkflowPlaybookProgress.history. Most recent 64 committed item review snapshots, in revision
+    order. """
     history_truncated: bool
-    """OperationWorkflowPlaybookProgress.history_truncated. Older review changes were pruned from the bounded
-    history."""
+    """ OperationWorkflowPlaybookProgress.history_truncated. Older review changes were pruned from the bounded
+    history. """
     outcome_follow_ups: list[OperationWorkflowPlaybookOutcomeFollowUp] | Unset = UNSET
-    """OperationWorkflowPlaybookProgress.outcome_follow_ups. Human-reviewed outcome-specific follow-up lists;
-    original checklist counts and business reports remain independent."""
+    """ OperationWorkflowPlaybookProgress.outcome_follow_ups. Human-reviewed outcome-specific follow-up lists;
+    original checklist counts and business reports remain independent. """
     outcome_deadline_at: datetime.datetime | Unset = UNSET
-    """OperationWorkflowPlaybookProgress.outcome_deadline_at. Immutable checklist creation time plus the pinned
-    application wait duration; human edits and watch enrollment do not reschedule it."""
+    """ OperationWorkflowPlaybookProgress.outcome_deadline_at. Immutable checklist creation time plus the pinned
+    application wait duration; human edits and watch enrollment do not reschedule it. """
     start_state_revision: int | Unset = UNSET
-    """OperationWorkflowPlaybookProgress.start_state_revision. Original case state revision pinned when a playbook
-    with an expected outcome starts; earlier reports cannot establish its business result."""
+    """ OperationWorkflowPlaybookProgress.start_state_revision. Original case state revision pinned when a playbook
+    with an expected outcome starts; earlier reports cannot establish its business result. """
     business_outcome: OperationWorkflowPlaybookBusinessOutcome | Unset = UNSET
-    """OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen
+    """ OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen
     playbook expectation. Independent of human completion and evidence satisfaction; changed guidance never silently
-    changes the expected outcome."""
+    changes the expected outcome. """
     disposition: OperationWorkflowPlaybookProgressDisposition | Unset = UNSET
-    """OperationWorkflowPlaybookProgress.disposition. Coordination disposition. Omitted legacy values mean active.
-    Closed checklists reject item edits and further decisions; this is not business success."""
+    """ OperationWorkflowPlaybookProgress.disposition. Coordination disposition. Omitted legacy values mean active.
+    Closed checklists reject item edits and further decisions; this is not business success. """
     latest_review: OperationWorkflowPlaybookReview | Unset = UNSET
-    """OperationWorkflowPlaybookReview. Durable human choice with server reviewer, observation context and
-    immutable replacement reference. Not an application outcome or execution permission."""
+    """ OperationWorkflowPlaybookReview. Durable human choice with server reviewer, observation context and
+    immutable replacement reference. Not an application outcome or execution permission. """
     reviews: list[OperationWorkflowPlaybookReview] | Unset = UNSET
-    """OperationWorkflowPlaybookProgress.reviews. Most recent 32 durable review decisions in shared revision order;
-    independent of item review history."""
+    """ OperationWorkflowPlaybookProgress.reviews. Most recent 32 durable review decisions in shared revision order;
+    independent of item review history. """
     reviews_truncated: bool | Unset = UNSET
-    """OperationWorkflowPlaybookProgress.reviews_truncated. Older human review decisions were pruned from the
-    bounded journal."""
+    """ OperationWorkflowPlaybookProgress.reviews_truncated. Older human review decisions were pruned from the
+    bounded journal. """
     replaces_progress_ids: list[UUID] | Unset = UNSET
-    """OperationWorkflowPlaybookProgress.replaces_progress_ids. Case-read-only inverse links from replaced
-    predecessors. Derived from retained exact-case records and never persisted or accepted in requests."""
+    """ OperationWorkflowPlaybookProgress.replaces_progress_ids. Case-read-only inverse links from replaced
+    predecessors. Derived from retained exact-case records and never persisted or accepted in requests. """
     applicability: OperationWorkflowPlaybookApplicability | Unset = UNSET
-    """OperationWorkflowPlaybookApplicability. Ephemeral applicability of a durable pinned checklist against
-    current exact-case evidence. No progress, review history, readiness or outcome is mutated."""
+    """ OperationWorkflowPlaybookApplicability. Ephemeral applicability of a durable pinned checklist against
+    current exact-case evidence. No progress, review history, readiness or outcome is mutated. """
 
     def to_dict(self) -> dict[str, Any]:
         id = str(self.id)

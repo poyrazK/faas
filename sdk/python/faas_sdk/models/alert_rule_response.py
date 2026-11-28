@@ -38,91 +38,91 @@ class AlertRuleResponse:
 
     id: str
     app_id: str
-    """Pinned app id. Empty string = account-wide rule."""
+    """ Pinned app id. Empty string = account-wide rule. """
     name: str
     enabled: bool
     metric: AlertRuleResponseMetric
-    """MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1
+    """ MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1
     when either task gauge is missing, stale, or invalid. Min=0 worker apps also require a fresh observer heartbeat
     with value 1. mcp_task_promotion_hold_age_seconds reads the oldest active hold directly from state (seconds,
-    zero with no holds); its alerts support webhook action only."""
+    zero with no holds); its alerts support webhook action only. """
     comparison: AlertRuleResponseComparison
     threshold: float
     window_spec: AlertRuleResponseWindowSpec
     webhook_url: str
-    """Signed webhook destination; empty for a rule that delivers only to notification channels."""
+    """ Signed webhook destination; empty for a rule that delivers only to notification channels. """
     webhook_secret_sealed_masked: str
-    """Literal "***" — the plaintext is never returned."""
+    """ Literal "***" — the plaintext is never returned. """
     cooldown_minutes: int
     state: AlertRuleResponseState
-    """Evaluation state. degraded means the rule's own metric source is unavailable; unknown means insufficient
-    samples, compacted event history, or a paused event consumer."""
+    """ Evaluation state. degraded means the rule's own metric source is unavailable; unknown means insufficient
+    samples, compacted event history, or a paused event consumer. """
     created_at: datetime.datetime
     updated_at: datetime.datetime
     action: AlertRuleResponseAction = "webhook"
-    """What to do when the rule fires. webhook = fire the configured webhook only (legacy default). rollback = roll
+    """ What to do when the rule fires. webhook = fire the configured webhook only (legacy default). rollback = roll
     the rule's app back to its last live deployment. demote = pin the current canary step (no traffic advance).
     promote = short-circuit the canary ladder to 100%. Pre-auth target and MCP task, event consumer, and workflow
-    metrics support webhook only."""
+    metrics support webhook only. """
     observe_only: bool | Unset = UNSET
-    """The rule records observations on the normal evaluation schedule."""
+    """ The rule records observations on the normal evaluation schedule. """
     recovery_confirmation_checks: int | Unset = UNSET
-    """Consecutive healthy checks required to recover."""
+    """ Consecutive healthy checks required to recover. """
     environment_scope: str | Unset = UNSET
-    """Environment observed by this rule when scoped."""
+    """ Environment observed by this rule when scoped. """
     observed_incidents: list[AlertObservedIncident] | Unset = UNSET
-    """Latest observation-only incidents, most recent first. Included in the individual rule response."""
+    """ Latest observation-only incidents, most recent first. Included in the individual rule response. """
     observation_coverage: AlertObservationCoverage | Unset = UNSET
-    """Recorded live Observe only checks during the 24 hours before this response."""
+    """ Recorded live Observe only checks during the 24 hours before this response. """
     mcp_readiness_scope: str | Unset = UNSET
-    """Immutable readiness environment selector. Omitted or empty means every environment; default selects only
-    default. Valid only for mcp_readiness_unhealthy."""
+    """ Immutable readiness environment selector. Omitted or empty means every environment; default selects only
+    default. Valid only for mcp_readiness_unhealthy. """
     mcp_min_calls: int | Unset = UNSET
-    """MCP protocol alerts only. Minimum observations in every rolling window; defaults to 20 on create. Latency
-    uses measured executions. Omit for other metrics."""
+    """ MCP protocol alerts only. Minimum observations in every rolling window; defaults to 20 on create. Latency
+    uses measured executions. Omit for other metrics. """
     mcp_for_minutes: int | Unset = UNSET
-    """MCP protocol alerts only. Continuous breach duration sampled every 30 seconds; defaults to 10 on create.
+    """ MCP protocol alerts only. Continuous breach duration sampled every 30 seconds; defaults to 10 on create.
     Missing observations interrupt eligibility. Webhook action, app scope, gt/gte and windows 5m/15m/1h are
-    required. Error thresholds are percent (0..100), execution p95 thresholds are milliseconds (0..300000)."""
+    required. Error thresholds are percent (0..100), execution p95 thresholds are milliseconds (0..300000). """
     event_subscription_id: UUID | Unset = UNSET
-    """Immutable subscription selector. Required only for event consumer metrics; webhook action and windows up to
-    24h are required."""
+    """ Immutable subscription selector. Required only for event consumer metrics; webhook action and windows up to
+    24h are required. """
     edge_rule_id: UUID | Unset = UNSET
-    """Immutable edge rule selector for edge_rule_hits, edge_rule_log_hits and edge_rule_activity; absent means
-    every rule of the app."""
+    """ Immutable edge rule selector for edge_rule_hits, edge_rule_log_hits and edge_rule_activity; absent means
+    every rule of the app. """
     post_deploy_rollback_window_seconds: int | Unset = UNSET
-    """Configured completed-release rollback eligibility window in seconds; 0 is disabled. Acceptance requires
+    """ Configured completed-release rollback eligibility window in seconds; 0 is disabled. Acceptance requires
     deployment-specific error_rate_pct or boot_failures evidence, a gt or gte comparison, and recorded predecessor
-    lineage."""
+    lineage. """
     notify_resolved: bool | Unset = UNSET
-    """The webhook also receives a signed alert.resolved event when the rule recovers. Omitted when false."""
+    """ The webhook also receives a signed alert.resolved event when the rule recovers. Omitted when false. """
     environment_id: UUID | Unset = UNSET
-    """The stage the rule belongs to. Omitted for production."""
+    """ The stage the rule belongs to. Omitted for production. """
     failure_source: AlertRuleResponseFailureSource | Unset = UNSET
-    """Source dimension for failed_invocations; omit when metric is not failed_invocations (xor_chk)."""
+    """ Source dimension for failed_invocations; omit when metric is not failed_invocations (xor_chk). """
     custom_metric_name: str | Unset = UNSET
-    """The pushed custom metric a custom_metric rule watches. Present only when metric is custom_metric."""
+    """ The pushed custom metric a custom_metric rule watches. Present only when metric is custom_metric. """
     custom_metric_labels: AlertRuleResponseCustomMetricLabels | Unset = UNSET
-    """The labelled series a custom_metric rule watches: the series with exactly these labels. Absent when the rule
-    watches the aggregate."""
+    """ The labelled series a custom_metric rule watches: the series with exactly these labels. Absent when the rule
+    watches the aggregate. """
     log_query: str | Unset = UNSET
-    """The canonical log search filters a log_search_matches rule counts. Present only when metric is
-    log_search_matches."""
+    """ The canonical log search filters a log_search_matches rule counts. Present only when metric is
+    log_search_matches. """
     job_name: str | Unset = UNSET
-    """The job a job_failures rule counts; absent when it counts every job of the account."""
+    """ The job a job_failures rule counts; absent when it counts every job of the account. """
     cron_id: UUID | Unset = UNSET
-    """The cron a failed_invocations rule with failure_source cron counts; absent when it counts every cron of the
-    app."""
+    """ The cron a failed_invocations rule with failure_source cron counts; absent when it counts every cron of the
+    app. """
     slo_id: UUID | Unset = UNSET
-    """The customer SLO an slo_budget_burn or slo_budget_remaining_pct rule watches; absent for other metrics."""
+    """ The customer SLO an slo_budget_burn or slo_budget_remaining_pct rule watches; absent for other metrics. """
     synthetic_check_id: UUID | Unset = UNSET
-    """The synthetic check a synthetic_check_* rule watches; absent for other metrics."""
+    """ The synthetic check a synthetic_check_* rule watches; absent for other metrics. """
     channel_ids: list[UUID] | Unset = UNSET
-    """Notification channels the rule delivers fires and resolves to."""
+    """ Notification channels the rule delivers fires and resolves to. """
     last_fired_at: datetime.datetime | Unset = UNSET
     last_evaluated_at: datetime.datetime | Unset = UNSET
     anomaly_evaluation: AlertAnomalyEvaluation | Unset = UNSET
-    """Why the latest anomaly evaluation did not trigger a fire."""
+    """ Why the latest anomaly evaluation did not trigger a fire. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

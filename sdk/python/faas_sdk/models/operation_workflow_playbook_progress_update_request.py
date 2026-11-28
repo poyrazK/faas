@@ -26,27 +26,27 @@ class OperationWorkflowPlaybookProgressUpdateRequest:
     """
 
     revision: int
-    """OperationWorkflowPlaybookProgressUpdateRequest.revision. Expected current progress revision; conflicting
-    edits return 409."""
+    """ OperationWorkflowPlaybookProgressUpdateRequest.revision. Expected current progress revision; conflicting
+    edits return 409. """
     item_index: int
-    """OperationWorkflowPlaybookProgressUpdateRequest.item_index. Zero-based index in the frozen evidence
-    checklist."""
+    """ OperationWorkflowPlaybookProgressUpdateRequest.item_index. Zero-based index in the frozen evidence
+    checklist. """
     status: OperationWorkflowPlaybookProgressUpdateRequestStatus
-    """OperationWorkflowPlaybookProgressUpdateRequest.status. Human review state; completed requires at least one
-    scoped evidence reference."""
+    """ OperationWorkflowPlaybookProgressUpdateRequest.status. Human review state; completed requires at least one
+    scoped evidence reference. """
     note: str
-    """OperationWorkflowPlaybookProgressUpdateRequest.note. Required review note, trimmed nonempty and without
-    control characters."""
+    """ OperationWorkflowPlaybookProgressUpdateRequest.note. Required review note, trimmed nonempty and without
+    control characters. """
     evidence: list[OperationWorkflowPlaybookEvidence]
-    """OperationWorkflowPlaybookProgressUpdateRequest.evidence. Replacement evidence references for this item;
-    empty allowed only for pending."""
+    """ OperationWorkflowPlaybookProgressUpdateRequest.evidence. Replacement evidence references for this item;
+    empty allowed only for pending. """
     owner: str | Unset = UNSET
-    """OperationWorkflowPlaybookProgressUpdateRequest.owner. Optional manual outcome-step reassignment; omission
-    preserves the current owner and an empty value clears it. Requires outcome_code."""
+    """ OperationWorkflowPlaybookProgressUpdateRequest.owner. Optional manual outcome-step reassignment; omission
+    preserves the current owner and an empty value clears it. Requires outcome_code. """
     outcome_code: str | Unset = UNSET
-    """OperationWorkflowPlaybookProgressUpdateRequest.outcome_code. Optional outcome-specific follow-up selector;
+    """ OperationWorkflowPlaybookProgressUpdateRequest.outcome_code. Optional outcome-specific follow-up selector;
     item_index addresses that pinned step list. First review captures fresh comparable evidence of this exact
-    outcome."""
+    outcome. """
 
     def to_dict(self) -> dict[str, Any]:
         revision = self.revision

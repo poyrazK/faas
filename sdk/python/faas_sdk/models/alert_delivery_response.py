@@ -41,29 +41,29 @@ class AlertDeliveryResponse:
     rule_id: UUID
     account_id: UUID
     idempotency_key: str
-    """rule_id + ':' + cooldown bucket (production) or delivery_id + ':test' (test path)"""
+    """ rule_id + ':' + cooldown bucket (production) or delivery_id + ':test' (test path) """
     status: AlertDeliveryResponseStatus
     attempt_count: int
     observed_value: float
     fired_at: datetime.datetime
     is_test: bool
-    """true iff the row was written by Dispatcher.DispatchTest"""
+    """ true iff the row was written by Dispatcher.DispatchTest """
     anomaly: AlertDeliveryAnomalyEvidence | Unset = UNSET
-    """Baseline comparison captured at the time of an anomaly alert fire."""
+    """ Baseline comparison captured at the time of an anomaly alert fire. """
     readiness_event_id: UUID | Unset = UNSET
-    """Stable readiness logical event associated with this physical delivery."""
+    """ Stable readiness logical event associated with this physical delivery. """
     readiness_destination: AlertDeliveryResponseReadinessDestination | Unset = UNSET
-    """Selected receiver role for this physical readiness dispatch."""
+    """ Selected receiver role for this physical readiness dispatch. """
     readiness_failover_reason: AlertDeliveryResponseReadinessFailoverReason | Unset = UNSET
-    """Destination selection reason recorded on this physical readiness delivery."""
+    """ Destination selection reason recorded on this physical readiness delivery. """
     app_id: UUID | Unset = UNSET
-    """omitted on account-wide rules"""
+    """ omitted on account-wide rules """
     last_status_code: int | Unset = UNSET
-    """0 when the attempt never reached the wire"""
+    """ 0 when the attempt never reached the wire """
     last_error: str | Unset = UNSET
-    """truncated server-side via dashboard.FormatAlertError (log-injection-safe)"""
+    """ truncated server-side via dashboard.FormatAlertError (log-injection-safe) """
     delivered_at: datetime.datetime | Unset = UNSET
-    """omitted until status=delivered"""
+    """ omitted until status=delivered """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -24,7 +24,7 @@ class PlatformTenantCustomerLifecycleWebhookPayload:
 
     platform_tenant_id: UUID
     external_ref: str
-    """The platform owner's stable customer reference."""
+    """ The platform owner's stable customer reference. """
     consumer_id: UUID
     app_id: UUID
     customer_external_ref: str

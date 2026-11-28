@@ -35,37 +35,37 @@ class OperationWorkflowReadinessBusinessOutcomeWatch:
     """
 
     id: UUID
-    """OperationWorkflowReadinessBusinessOutcomeWatch.id. Retained advisory business outcome watch metadata; does
-    not modify application reports or coordination revisions."""
+    """ OperationWorkflowReadinessBusinessOutcomeWatch.id. Retained advisory business outcome watch metadata; does
+    not modify application reports or coordination revisions. """
     revision: int
-    """OperationWorkflowReadinessBusinessOutcomeWatch.revision. Retained advisory business outcome watch metadata;
-    does not modify application reports or coordination revisions."""
+    """ OperationWorkflowReadinessBusinessOutcomeWatch.revision. Retained advisory business outcome watch metadata;
+    does not modify application reports or coordination revisions. """
     state_revision: int
-    """OperationWorkflowReadinessBusinessOutcomeWatch.state_revision. Retained advisory business outcome watch
-    metadata; does not modify application reports or coordination revisions."""
+    """ OperationWorkflowReadinessBusinessOutcomeWatch.state_revision. Retained advisory business outcome watch
+    metadata; does not modify application reports or coordination revisions. """
     started_at: datetime.datetime
-    """OperationWorkflowReadinessBusinessOutcomeWatch.started_at. Retained advisory business outcome watch
-    metadata; does not modify application reports or coordination revisions."""
+    """ OperationWorkflowReadinessBusinessOutcomeWatch.started_at. Retained advisory business outcome watch
+    metadata; does not modify application reports or coordination revisions. """
     deadline_notified: bool
-    """OperationWorkflowReadinessBusinessOutcomeWatch.deadline_notified. Retained advisory business outcome watch
-    metadata; does not modify application reports or coordination revisions."""
+    """ OperationWorkflowReadinessBusinessOutcomeWatch.deadline_notified. Retained advisory business outcome watch
+    metadata; does not modify application reports or coordination revisions. """
     current: OperationWorkflowReadinessBusinessOutcome
-    """Advisory comparison of the expected terminal outcome with a scoped retained application report. Missing
+    """ Advisory comparison of the expected terminal outcome with a scoped retained application report. Missing
     state, stale reports, contract changes, older revisions and terminal reports without outcome codes remain
     unknown. Explicit outcome codes do not imply causation or authorize execution. Completion snapshots are
-    immutable; current checks are live reads."""
+    immutable; current checks are live reads. """
     escalation: OperationWorkflowReadinessOutcomeEscalationReference | Unset = UNSET
-    """Reference to the single retained escalation notification in the same subscription. Pruning does not recreate
-    escalations; links may expire."""
+    """ Reference to the single retained escalation notification in the same subscription. Pruning does not recreate
+    escalations; links may expire. """
     escalation_policy: OperationWorkflowReadinessOutcomeEscalationPolicy | Unset = UNSET
-    """Opt-in deadline escalation policy frozen at completion. Requires an outcome watch and future outcome
-    deadline. Schedules one assigned follow-up on the deadline notification; never executes business actions."""
+    """ Opt-in deadline escalation policy frozen at completion. Requires an outcome watch and future outcome
+    deadline. Schedules one assigned follow-up on the deadline notification; never executes business actions. """
     deadline_at: datetime.datetime | Unset = UNSET
-    """OperationWorkflowReadinessBusinessOutcomeWatch.deadline_at. Retained advisory business outcome watch
-    metadata; does not modify application reports or coordination revisions."""
+    """ OperationWorkflowReadinessBusinessOutcomeWatch.deadline_at. Retained advisory business outcome watch
+    metadata; does not modify application reports or coordination revisions. """
     last_notified_status: OperationWorkflowReadinessBusinessOutcomeWatchLastNotifiedStatus | Unset = UNSET
-    """OperationWorkflowReadinessBusinessOutcomeWatch.last_notified_status. Retained advisory business outcome
-    watch metadata; does not modify application reports or coordination revisions."""
+    """ OperationWorkflowReadinessBusinessOutcomeWatch.last_notified_status. Retained advisory business outcome
+    watch metadata; does not modify application reports or coordination revisions. """
 
     def to_dict(self) -> dict[str, Any]:
         id = str(self.id)

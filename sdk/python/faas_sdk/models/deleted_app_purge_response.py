@@ -24,9 +24,9 @@ class DeletedAppPurgeResponse:
     id: UUID
     slug: str
     purged: bool
-    """True once the app is gone and its slug is free for this account."""
+    """ True once the app is gone and its slug is free for this account. """
     pending_reason: DeletedAppPurgeResponsePendingReason | Unset = UNSET
-    """What still holds the app while purged is false; the grace sweep retries."""
+    """ What still holds the app while purged is false; the grace sweep retries. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

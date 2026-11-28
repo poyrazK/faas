@@ -21,29 +21,29 @@ class RollbackRequest:
     """
 
     target_deployment_id: UUID | Unset = UNSET
-    """The UUID or vN of the deployment to promote back to 'live'. Must belong to the same app as the URL slug, and
+    """ The UUID or vN of the deployment to promote back to 'live'. Must belong to the same app as the URL slug, and
     be superseded or live with zero traffic. Nil/empty falls back to the most-recent superseded deployment (legacy
-    behaviour)."""
+    behaviour). """
     alert_rule_id: UUID | Unset = UNSET
-    """When set, the handler stamps the deployment_audit row's alert_rule_id column with this UUID so an operator
+    """ When set, the handler stamps the deployment_audit row's alert_rule_id column with this UUID so an operator
     can cross-link the audit timeline back to /dashboard/alerts/{id}. Wire-additive; the field is ignored when
     nil/empty. Only privileged in-process callers (the metering service ActionDispatcher) set this; the API does not
-    enforce role because the endpoint already requires MFA + ScopesDeployWrite."""
+    enforce role because the endpoint already requires MFA + ScopesDeployWrite. """
     expected_current_deployment_id: UUID | Unset = UNSET
-    """Exact current deployment UUID or vN. Together with an explicit target starts the checked asynchronous
+    """ Exact current deployment UUID or vN. Together with an explicit target starts the checked asynchronous
     workflow and returns rollback_operation. Rejects a changed current deployment instead of selecting another one.
-   """
+    """
     reason: str | Unset = UNSET
-    """One-line reason for an exact checked rollback. Cannot be combined with alert_rule_id."""
+    """ One-line reason for an exact checked rollback. Cannot be combined with alert_rule_id. """
     acknowledge_releases: bool | Unset = UNSET
-    """Roll back although release commands ran after the target last served. Rollback does not undo them. Without
+    """ Roll back although release commands ran after the target last served. Rollback does not undo them. Without
     it such a rollback is refused with rollback_crosses_release, which lists them. Automated rollbacks never set it.
-   """
+    """
     restore_databases: bool | Unset = UNSET
-    """Also restore the managed PostgreSQL database the crossed release commands migrated to just before the
+    """ Also restore the managed PostgreSQL database the crossed release commands migrated to just before the
     earliest of them, and switch the app to that copy. Requires acknowledge_releases and the postgres:manage scope;
     cannot be combined with expected_current_deployment_id. The response carries database_switch; the code rollback
-    happens inside it while the app is fenced."""
+    happens inside it while the app is fenced. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

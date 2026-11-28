@@ -23,13 +23,13 @@ class WorkflowCodeSpec:
     """
 
     run: str | Unset = UNSET
-    """Handler name; the entry path is /<run>."""
+    """ Handler name; the entry path is /<run>. """
     path: str | Unset = UNSET
-    """Explicit entry path starting with '/'."""
+    """ Explicit entry path starting with '/'. """
     timeout: str | Unset = UNSET
-    """Per-call timeout as a duration string; at most the plan's step timeout. Default 30s."""
+    """ Per-call timeout as a duration string; at most the plan's step timeout. Default 30s. """
     retry: WorkflowRetrySpec | Unset = UNSET
-    """Retry policy for one workflow step."""
+    """ Retry policy for one workflow step. """
 
     def to_dict(self) -> dict[str, Any]:
         run = self.run

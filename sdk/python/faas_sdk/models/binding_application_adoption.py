@@ -41,9 +41,9 @@ class BindingApplicationAdoption:
     secrets_expected: int
     secrets_observed: int
     reload: BindingAdoptionCounts
-    """Counts of authorized workload/secret pairs, derived from versioned receipts."""
+    """ Counts of authorized workload/secret pairs, derived from versioned receipts. """
     application: BindingAdoptionCounts
-    """Counts of authorized workload/secret pairs, derived from versioned receipts."""
+    """ Counts of authorized workload/secret pairs, derived from versioned receipts. """
     targets: list[BindingApplicationAckTarget]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

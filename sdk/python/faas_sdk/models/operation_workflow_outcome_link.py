@@ -25,10 +25,10 @@ class OperationWorkflowOutcomeLink:
     status: OperationWorkflowOutcomeLinkStatus
     summary: str
     elapsed_seconds: int
-    """Observed duration from this report to the linked outcome. Meaningful only when status is linked."""
+    """ Observed duration from this report to the linked outcome. Meaningful only when status is linked. """
     blocked_seconds: int
-    """Observed intervals with at least one reported blocker. Overlapping blockers count once. Meaningful only when
-    status is linked."""
+    """ Observed intervals with at least one reported blocker. Overlapping blockers count once. Meaningful only when
+    status is linked. """
     outcome_report_id: UUID | Unset = UNSET
     outcome_operation_id: UUID | Unset = UNSET
     outcome_revision: int | Unset = UNSET

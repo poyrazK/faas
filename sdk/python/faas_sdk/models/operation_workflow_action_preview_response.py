@@ -26,21 +26,22 @@ class OperationWorkflowActionPreviewResponse:
     """Observed current-state action candidates and their readiness without planned transaction evidence."""
 
     subject: OperationSubject
-    """Immutable public business correlation metadata. Captured at admission and preserved through recovery and
-    redeploy. Never an ownership or authorization claim."""
+    """ Immutable public business correlation metadata. Captured at admission and preserved through recovery and
+    redeploy. Never an ownership or authorization claim. """
     workflow: str
     instance_id: str
     evaluated_at: datetime.datetime
     contract_version: int
     reason: OperationWorkflowActionPreviewResponseReason
     actions: list[OperationWorkflowTransitionReadiness]
-    """Declared candidates evaluated with no planned milestones or decisions. Availability does not mean readiness
-    or authorization."""
+    """ Declared candidates evaluated with no planned milestones or decisions. Availability does not mean readiness
+    or authorization. """
     action_count: int
     has_more: bool
-    """The 100-action cap was reached. Filter by operation to narrow the preview; this endpoint has no cursor."""
+    """ The 100-action cap was reached. Filter by operation to narrow the preview; this endpoint has no cursor. """
     state: OperationWorkflowState | Unset = UNSET
-    """Latest app-reported state for one declared workflow instance, including terminal and staleness indicators."""
+    """ Latest app-reported state for one declared workflow instance, including terminal and staleness indicators.
+    """
     state_revision: int | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:

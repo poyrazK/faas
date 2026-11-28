@@ -37,27 +37,27 @@ class OperationWorkflowReviewResponseEscalationCompletion:
     at: datetime.datetime
     actor: str
     original_review_due_at: datetime.datetime | Unset = UNSET
-    """Original schedule time retained across explicit reschedules, even if older change history is pruned. Legacy
-    completions initialize this from their current due time on first reschedule."""
+    """ Original schedule time retained across explicit reschedules, even if older change history is pruned. Legacy
+    completions initialize this from their current due time on first reschedule. """
     review_reschedule: OperationWorkflowReviewResponseScheduledReviewReschedule | Unset = UNSET
-    """Immutable schedule change audit with previous and replacement due times, completion identity, human reason
+    """ Immutable schedule change audit with previous and replacement due times, completion identity, human reason
     and server actor and time. Retained change history records each reschedule; current completion keeps the latest
-    change and original due time."""
+    change and original due time. """
     review_cancellation: OperationWorkflowReviewResponseScheduledReviewCancellation | Unset = UNSET
-    """Immutable cancellation audit for one pending scheduled evidence check. Retains original completion and due
+    """ Immutable cancellation audit for one pending scheduled evidence check. Retains original completion and due
     timestamps, server actor and time, and human reason. Does not change completion evidence, ownership or review
-    obligations."""
+    obligations. """
     review_due_at: datetime.datetime | Unset = UNSET
-    """Current one-shot evidence check time. Only explicit rescheduling changes it; ordinary edits and manual
-    evidence reviews do not."""
+    """ Current one-shot evidence check time. Only explicit rescheduling changes it; ordinary edits and manual
+    evidence reviews do not. """
     scheduled_review_at: datetime.datetime | Unset = UNSET
-    """Scheduled evidence check delivery marker committed atomically with its observation and durable inbox
-    notification. Existing notification retention bounds apply."""
+    """ Scheduled evidence check delivery marker committed atomically with its observation and durable inbox
+    notification. Existing notification retention bounds apply. """
     review: OperationWorkflowReviewResponseEscalationActionReview | Unset = UNSET
-    """Most recent explicit scoped observation of immutable completion evidence. Source indices refer to the
+    """ Most recent explicit scoped observation of immutable completion evidence. Source indices refer to the
     completion evidence order. A clear observation does not establish causality or business completion; observation
     is not atomic with concurrent application reports. History preserves prior review snapshots within existing
-    retention bounds."""
+    retention bounds. """
 
     def to_dict(self) -> dict[str, Any]:
         acknowledged_at = self.acknowledged_at.isoformat()

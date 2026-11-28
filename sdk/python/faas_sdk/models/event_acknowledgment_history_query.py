@@ -22,17 +22,17 @@ class EventAcknowledgmentHistoryQuery:
     """Scope-bound page options selecting coalesced groups by first occurrence."""
 
     invocation_id: UUID | Unset = UNSET
-    """Delivery filter shared by every continuation request."""
+    """ Delivery filter shared by every continuation request. """
     kind: EventAcknowledgmentHistoryQueryKind | Unset = UNSET
-    """Outcome kind shared by the page traversal."""
+    """ Outcome kind shared by the page traversal. """
     from_: datetime.datetime | Unset = UNSET
-    """Inclusive first_at bound for the traversal."""
+    """ Inclusive first_at bound for the traversal. """
     until: datetime.datetime | Unset = UNSET
-    """Exclusive first_at bound for the traversal."""
+    """ Exclusive first_at bound for the traversal. """
     limit: int | Unset = 100
-    """Page size included in the cursor scope binding."""
+    """ Page size included in the cursor scope binding. """
     cursor: str | Unset = UNSET
-    """Previous page continuation retaining its initial cutoff."""
+    """ Previous page continuation retaining its initial cutoff. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

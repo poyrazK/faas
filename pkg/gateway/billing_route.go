@@ -68,6 +68,28 @@ func (h *Handler) billingRouteSetFor(appID string) *routeLabelSet {
 	return actual.(*routeLabelSet)
 }
 
+type unattributedRouteKey struct{}
+
+// withUnattributedRoute keeps the route label (declared template, original
+// path) of a request not yet attributed to a consumer, so one an MCP JWT
+// rule attributes later (attachOAuthConsumer) is labelled as a consumer
+// key's request would be.
+func withUnattributedRoute(r *http.Request, route string) *http.Request {
+	if r == nil || route == "" {
+		return r
+	}
+	return r.WithContext(context.WithValue(r.Context(), unattributedRouteKey{}, route))
+}
+
+// unattributedRouteFrom is withUnattributedRoute's label, else the label of
+// r's current path.
+func unattributedRouteFrom(r *http.Request) string {
+	if route, _ := r.Context().Value(unattributedRouteKey{}).(string); route != "" {
+		return route
+	}
+	return observedRouteLabel(r.Method, inferredObservedPath(r.URL.Path))
+}
+
 type planRouteKey struct{}
 
 // withPlanRoute keeps a consumer request's route label before the app's

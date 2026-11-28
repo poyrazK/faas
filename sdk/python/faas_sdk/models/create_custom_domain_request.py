@@ -18,7 +18,8 @@ class CreateCustomDomainRequest:
     domain: str
     app_id: str
     environment: str | Unset = UNSET
-    """Optional project environment slug. When set, traffic follows only that environment's active release graph."""
+    """ Optional project environment slug. When set, traffic follows only that environment's active release graph.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

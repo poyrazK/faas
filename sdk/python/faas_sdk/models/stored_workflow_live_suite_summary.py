@@ -26,8 +26,8 @@ class StoredWorkflowLiveSuiteSummary:
     case_count: int
     linked_runs: int
     managed: bool | Unset = UNSET
-    """True for suites with durable server-managed admission. Metadata PUT cannot change these records;
-    continuation requires explicit execution authorization."""
+    """ True for suites with durable server-managed admission. Metadata PUT cannot change these records;
+    continuation requires explicit execution authorization. """
 
     def to_dict(self) -> dict[str, Any]:
         id = str(self.id)

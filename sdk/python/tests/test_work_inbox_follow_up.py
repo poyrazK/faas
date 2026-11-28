@@ -3,7 +3,6 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
-
 from faas_sdk.preview import (
     ApplicationToolkit,
     ApplicationToolkitError,

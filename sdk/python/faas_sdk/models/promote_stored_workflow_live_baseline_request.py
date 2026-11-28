@@ -23,7 +23,7 @@ class PromoteStoredWorkflowLiveBaselineRequest:
     expected_published_version: int
     expected_deployment_id: UUID
     policy: StoredWorkflowLiveBaselinePolicy
-    """Version 2 required-case coverage and evidence-age policy reviewed during baseline promotion."""
+    """ Version 2 required-case coverage and evidence-age policy reviewed during baseline promotion. """
 
     def to_dict(self) -> dict[str, Any]:
         suite_id = str(self.suite_id)

@@ -16,9 +16,9 @@ class ProjectRollbackUndoRequest:
     """Review and acknowledge the inverse of a paused rollback's completed cutovers."""
 
     acknowledge_releases: bool | Unset = False
-    """Acknowledge release commands crossed by this undo."""
+    """ Acknowledge release commands crossed by this undo. """
     expected_plan_hash: str | Unset = UNSET
-    """Plan hash from a runnable undo preview of the same source with the same release acknowledgement."""
+    """ Plan hash from a runnable undo preview of the same source with the same release acknowledgement. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

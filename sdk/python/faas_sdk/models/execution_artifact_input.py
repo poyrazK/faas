@@ -19,13 +19,13 @@ class ExecutionArtifactInput:
     """
 
     path: str
-    """Normalized relative destination path in the new execution bundle."""
+    """ Normalized relative destination path in the new execution bundle. """
     execution_id: UUID | Unset = UNSET
-    """ID of a successful execution owned by this key family (omit when using grant_token)."""
+    """ ID of a successful execution owned by this key family (omit when using grant_token). """
     name: str | Unset = UNSET
-    """Exact artifact name from the source execution receipt (omit when using grant_token)."""
+    """ Exact artifact name from the source execution receipt (omit when using grant_token). """
     grant_token: str | Unset = UNSET
-    """Single-use token created for one artifact by another Runs key family."""
+    """ Single-use token created for one artifact by another Runs key family. """
 
     def to_dict(self) -> dict[str, Any]:
         path = self.path

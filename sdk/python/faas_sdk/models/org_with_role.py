@@ -23,14 +23,14 @@ class OrgWithRole:
     """
 
     id: str
-    """Org UUID (stable across renames)."""
+    """ Org UUID (stable across renames). """
     slug: str
-    """Lowercase slug. Personal orgs use `u-<12hex>`."""
+    """ Lowercase slug. Personal orgs use `u-<12hex>`. """
     name: str
     personal: bool
-    """True iff this is the caller's personal org (every account has exactly one)."""
+    """ True iff this is the caller's personal org (every account has exactly one). """
     plan: OrgResponsePlan
-    """Plan tier. Personal orgs default to `free`."""
+    """ Plan tier. Personal orgs default to `free`. """
     status: OrgResponseStatus
     created_at: datetime.datetime
     updated_at: datetime.datetime

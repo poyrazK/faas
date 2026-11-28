@@ -25,11 +25,11 @@ class WakeTimelineApp:
 
     app_id: UUID
     slug: str
-    """DNS-safe app slug (matches apps.slug)."""
+    """ DNS-safe app slug (matches apps.slug). """
     status: str | Unset = UNSET
-    """Optional deployment status (active/paused). Empty until a deployment is bound."""
+    """ Optional deployment status (active/paused). Empty until a deployment is bound. """
     url: str | Unset = UNSET
-    """Optional public URL once a deployment is bound."""
+    """ Optional public URL once a deployment is bound. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

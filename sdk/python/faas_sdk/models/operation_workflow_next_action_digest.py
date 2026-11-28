@@ -30,16 +30,16 @@ class OperationWorkflowNextActionDigest:
     evaluated_at: datetime.datetime
     soon_until: datetime.datetime
     matching_count: int
-    """All retained qualifying action rows, including unchanged items; not a workflow or global task count."""
+    """ All retained qualifying action rows, including unchanged items; not a workflow or global task count. """
     changed_count: int
-    """Newly qualifying or changed action rows pending delivery at this evaluation."""
+    """ Newly qualifying or changed action rows pending delivery at this evaluation. """
     remaining_changed_count: int
-    """Changed rows beyond this delivery cap, which remain eligible at later cadence evaluations."""
+    """ Changed rows beyond this delivery cap, which remain eligible at later cadence evaluations. """
     retention_limited: bool
-    """Queue and source inbox retention bound coverage. Deleted/pruned source work is unavailable."""
+    """ Queue and source inbox retention bound coverage. Deleted/pruned source work is unavailable. """
     explanations: list[OperationWorkflowNextActionDigestExplanation] | Unset = UNSET
-    """Delivery explanations identified by source subscription, sequence and action kind. Older notifications may
-    omit these."""
+    """ Delivery explanations identified by source subscription, sequence and action kind. Older notifications may
+    omit these. """
 
     def to_dict(self) -> dict[str, Any]:
         items = []

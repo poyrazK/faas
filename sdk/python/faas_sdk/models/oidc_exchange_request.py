@@ -20,17 +20,18 @@ class OIDCExchangeRequest:
     """Body for `POST /v1/auth/oidc/exchange`."""
 
     provider: str
-    """IdP identifier (`github`, `gitlab`, `circleci`, or generic `oidc`). Used for audit attribution only — the
-    issuer is pinned in the JWT `iss` claim."""
+    """ IdP identifier (`github`, `gitlab`, `circleci`, or generic `oidc`). Used for audit attribution only — the
+    issuer is pinned in the JWT `iss` claim. """
     token: str
-    """Raw IdP-issued JWT (the IdP token from `ACTIONS_ID_TOKEN_REQUEST_TOKEN` etc.)."""
+    """ Raw IdP-issued JWT (the IdP token from `ACTIONS_ID_TOKEN_REQUEST_TOKEN` etc.). """
     aud: str
-    """The `aud` claim the customer pinned in the action. Must match the trust policy's `audience` array verbatim."""
+    """ The `aud` claim the customer pinned in the action. Must match the trust policy's `audience` array verbatim.
+    """
     app: str | Unset = UNSET
-    """Optional app slug for audit attribution. Empty skips the audit app attribution."""
+    """ Optional app slug for audit attribution. Empty skips the audit app attribution. """
     capability: OIDCExchangeRequestCapability | Unset = UNSET
-    """Optional closed OIDC capability profile. Omit to retain the historical deploy:write bearer; environment-
-    preflight grants only project-environment read and qualification scopes."""
+    """ Optional closed OIDC capability profile. Omit to retain the historical deploy:write bearer; environment-
+    preflight grants only project-environment read and qualification scopes. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -45,18 +45,18 @@ class EdgeRuleMaintenanceAction:
     """
 
     retry_after_seconds: int | Unset = UNSET
-    """Optional per-rule Retry-After override in seconds.
+    """ Optional per-rule Retry-After override in seconds.
     0 (default) = use the platform default
     `api.EdgeRuleMaintenanceRetryAfterSeconds` (60 s).
     Must be in `[0, 86400]` (24 h); values above 86400 are
     rejected at create-time with 422.
-    """
+     """
     message: str | Unset = UNSET
-    """Optional operator-friendly detail string that goes into
+    """ Optional operator-friendly detail string that goes into
     `Problem.detail`. ≤ 512 B. Surface this on the
     customer's status page so monitoring / curl users see
     why the endpoint is dark.
-    """
+     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

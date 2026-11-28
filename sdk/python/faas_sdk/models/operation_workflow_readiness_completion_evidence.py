@@ -20,32 +20,32 @@ class OperationWorkflowReadinessCompletionEvidence:
     """
 
     checked_at: datetime.datetime
-    """OperationWorkflowReadinessCompletionEvidence.checked_at. Retained follow-up completion value; never changes
-    application evidence."""
+    """ OperationWorkflowReadinessCompletionEvidence.checked_at. Retained follow-up completion value; never changes
+    application evidence. """
     status: str
-    """OperationWorkflowReadinessCompletionEvidence.status. Retained follow-up completion value; never changes
-    application evidence."""
+    """ OperationWorkflowReadinessCompletionEvidence.status. Retained follow-up completion value; never changes
+    application evidence. """
     explanation: str
-    """OperationWorkflowReadinessCompletionEvidence.explanation. Retained follow-up completion value; never changes
-    application evidence."""
+    """ OperationWorkflowReadinessCompletionEvidence.explanation. Retained follow-up completion value; never changes
+    application evidence. """
     evidence_complete: bool
-    """OperationWorkflowReadinessCompletionEvidence.evidence_complete. Retained follow-up completion value; never
-    changes application evidence."""
+    """ OperationWorkflowReadinessCompletionEvidence.evidence_complete. Retained follow-up completion value; never
+    changes application evidence. """
     remaining_reasons: list[str]
-    """OperationWorkflowReadinessCompletionEvidence.remaining_reasons. Retained follow-up completion value; never
-    changes application evidence."""
+    """ OperationWorkflowReadinessCompletionEvidence.remaining_reasons. Retained follow-up completion value; never
+    changes application evidence. """
     pending_verification_count: int
-    """OperationWorkflowReadinessCompletionEvidence.pending_verification_count. Retained follow-up completion
-    value; never changes application evidence."""
+    """ OperationWorkflowReadinessCompletionEvidence.pending_verification_count. Retained follow-up completion
+    value; never changes application evidence. """
     warnings: list[str]
-    """OperationWorkflowReadinessCompletionEvidence.warnings. Retained follow-up completion value; never changes
-    application evidence."""
+    """ OperationWorkflowReadinessCompletionEvidence.warnings. Retained follow-up completion value; never changes
+    application evidence. """
     reporting_operation_id: UUID | Unset = UNSET
-    """OperationWorkflowReadinessCompletionEvidence.reporting_operation_id. Retained follow-up completion value;
-    never changes application evidence."""
+    """ OperationWorkflowReadinessCompletionEvidence.reporting_operation_id. Retained follow-up completion value;
+    never changes application evidence. """
     state_revision: int | Unset = UNSET
-    """OperationWorkflowReadinessCompletionEvidence.state_revision. Retained follow-up completion value; never
-    changes application evidence."""
+    """ OperationWorkflowReadinessCompletionEvidence.state_revision. Retained follow-up completion value; never
+    changes application evidence. """
 
     def to_dict(self) -> dict[str, Any]:
         checked_at = self.checked_at.isoformat()

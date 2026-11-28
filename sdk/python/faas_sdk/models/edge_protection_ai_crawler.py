@@ -19,11 +19,11 @@ class EdgeProtectionAICrawler:
     """One AI crawler's requests over the summary's range."""
 
     name: str
-    """Crawler name as the ai_crawler match field uses it, e.g. gptbot."""
+    """ Crawler name as the ai_crawler match field uses it, e.g. gptbot. """
     operator: str
-    """Company that runs the crawler."""
+    """ Company that runs the crawler. """
     purpose: EdgeProtectionAICrawlerPurpose
-    """What its fetches are for: training models, AI search, or an assistant answering a user."""
+    """ What its fetches are for: training models, AI search, or an assistant answering a user. """
     count: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

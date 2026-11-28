@@ -17,8 +17,8 @@ class OperationSubject:
 
     type_: str
     id: str
-    """Opaque application identifier, compared exactly. Maximum 256 UTF-8 bytes; ASCII controls are rejected. Use a
-    public stable ID appropriate for customer-visible history."""
+    """ Opaque application identifier, compared exactly. Maximum 256 UTF-8 bytes; ASCII controls are rejected. Use a
+    public stable ID appropriate for customer-visible history. """
 
     def to_dict(self) -> dict[str, Any]:
         type_ = self.type_

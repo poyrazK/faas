@@ -33,7 +33,7 @@ class ConfigGuard:
     window_ends_at: datetime.datetime | Unset = UNSET
     closed_at: datetime.datetime | Unset = UNSET
     decision: ConfigGuardDecision | Unset = UNSET
-    """Why a config guard closed: the rule, a one-line summary and the new-config and old-config samples."""
+    """ Why a config guard closed: the rule, a one-line summary and the new-config and old-config samples. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

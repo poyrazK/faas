@@ -135,6 +135,40 @@ func TestPrimeEnvironmentBranchWaitsForData(t *testing.T) {
 	}
 }
 
+// A pull request's build into a branch whose data is pending stays dark like
+// the branch's own deployments (prod 2026-11-28: a PR build went live with no
+// DATABASE_URL while its empty database was still being set up). Workers wait
+// too.
+func TestPrimeBuildIntoPendingBranchWaitsForData(t *testing.T) {
+	for _, mode := range []string{api.ExecutionModeRequest, api.ExecutionModeWorker} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := context.Background()
+			store := state.NewMemStore()
+			app, _ := seedEnvironmentBranch(t, store, mode, true)
+			build, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "pr-1", Kind: state.DeploymentKindPreview, ImageDigest: "sha256:pr"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.SetDeploymentRootfs(ctx, build.ID, "/pr.ext4", "layers/pr.ext4", 4096); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.UpdateDeploymentStatus(ctx, build.ID, state.DeploySnapshotting, ""); err != nil {
+				t.Fatal(err)
+			}
+			vmm := &sched.FakeVMM{}
+			notifier := &sched.FakeNotifier{}
+			engine := sched.XNewEngine(t, store, vmm, notifier, "1.10.0")
+
+			if err := engine.Prime(ctx, app.ID, build.ID); err != nil {
+				t.Fatalf("Prime(build into pending branch): %v", err)
+			}
+			if *vmm.ColdBoots() != 0 || notifier.Count(db.NotifyDeploymentReady) != 0 {
+				t.Fatalf("pending data activated the PR build: cold=%d ready=%d", *vmm.ColdBoots(), notifier.Count(db.NotifyDeploymentReady))
+			}
+		})
+	}
+}
+
 // A worker runs continuously, so its branch deployment keeps the normal
 // prime: one cold boot that stays running.
 func TestPrimeEnvironmentBranchWorkerStillBoots(t *testing.T) {

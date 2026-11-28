@@ -34,7 +34,7 @@ class ObjectVersionRetention:
     retain_until_date: datetime.datetime | Unset = UNSET
     event_hold: ObjectVersionRetentionEventHold | Unset = UNSET
     event_hold_duration: ObjectRetentionPeriod | Unset = UNSET
-    """Exactly one positive days or years duration must be present. Null values are rejected."""
+    """ Exactly one positive days or years duration must be present. Null values are rejected. """
 
     def to_dict(self) -> dict[str, Any]:
         mode: str | Unset = UNSET

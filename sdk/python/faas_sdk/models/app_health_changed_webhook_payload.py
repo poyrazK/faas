@@ -55,19 +55,19 @@ class AppHealthChangedWebhookPayload:
     transition_id: UUID
     transition_observed_at: datetime.datetime
     previous_status: AppHealthChangedWebhookPayloadPreviousStatus
-    """Last announced or silently established comparison status."""
+    """ Last announced or silently established comparison status. """
     status: AppHealthChangedWebhookPayloadStatus
     change: AppHealthChangedWebhookPayloadChange
     phase: AppHealthChangedWebhookPayloadPhase
     evaluated_at: datetime.datetime
     queued_at: datetime.datetime
     coalesced: bool
-    """Changes were combined during the notification cooldown."""
+    """ Changes were combined during the notification cooldown. """
     cooldown_seconds: int
-    """Minimum spacing between app health notification intents."""
+    """ Minimum spacing between app health notification intents. """
     serving_deployment_ids: list[str]
     history_path: str
-    """Authenticated cursor-paged history; locate transition_id while retained."""
+    """ Authenticated cursor-paged history; locate transition_id while retained. """
     latest_deployment_id: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:

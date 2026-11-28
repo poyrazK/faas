@@ -14,7 +14,7 @@ class SessionsRevokeAllResponse:
     """Body for `POST /v1/auth/sessions/revoke_all`."""
 
     revoked: int
-    """Number of sibling sessions revoked. The caller's session is NOT included in this count."""
+    """ Number of sibling sessions revoked. The caller's session is NOT included in this count. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

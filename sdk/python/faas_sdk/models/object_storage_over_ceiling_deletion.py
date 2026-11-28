@@ -20,7 +20,7 @@ class ObjectStorageOverCeilingDeletion:
     over_ceiling_since: datetime.datetime
     deletion_scheduled_at: datetime.datetime
     excess_bytes: int
-    """Bytes stored above the ceiling at the last check."""
+    """ Bytes stored above the ceiling at the last check. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

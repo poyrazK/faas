@@ -30,19 +30,19 @@ class WorkflowOutboundSpec:
     """
 
     integration_id: UUID
-    """Canonical UUID of the customer managed integration bound to the app."""
+    """ Canonical UUID of the customer managed integration bound to the app. """
     method: WorkflowOutboundSpecMethod
-    """Provider HTTP method within both integration and app binding permissions."""
+    """ Provider HTTP method within both integration and app binding permissions. """
     path: str
-    """Canonical relative provider path. A whole segment may be a template, such as
+    """ Canonical relative provider path. A whole segment may be a template, such as
     /v1/contacts/{{input.contact_id}}; resolved values are escaped and checked against the bound route policy at
-    execution time."""
+    execution time. """
     query: WorkflowOutboundSpecQuery | Unset = UNSET
-    """Optional static query keys with templated scalar values. Values are URL-encoded; the request remains bound
-    to this integration and its route permissions."""
+    """ Optional static query keys with templated scalar values. Values are URL-encoded; the request remains bound
+    to this integration and its route permissions. """
     idempotency_supported: bool | Unset = False
-    """Assert that the provider deduplicates the stable Idempotency-Key for this mutating operation; enables
-    retries and recovery."""
+    """ Assert that the provider deduplicates the stable Idempotency-Key for this mutating operation; enables
+    retries and recovery. """
 
     def to_dict(self) -> dict[str, Any]:
         integration_id = str(self.integration_id)

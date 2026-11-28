@@ -26,12 +26,12 @@ class PreAuthRateLimitConfig:
 
     mode: PreAuthRateLimitConfigMode
     requests_per_second: int | Unset = UNSET
-    """Required in observe/enforce mode and bounded by the app plan's request rate."""
+    """ Required in observe/enforce mode and bounded by the app plan's request rate. """
     burst: int | Unset = UNSET
-    """Required in observe/enforce mode and bounded by the app plan's request burst."""
+    """ Required in observe/enforce mode and bounded by the app plan's request burst. """
     routes: list[PreAuthRouteLimit] | Unset = UNSET
-    """Optional exact public method/path limits, evaluated in addition to the app-wide source limit. Each route
-    rate and burst must be no greater than the app-wide values."""
+    """ Optional exact public method/path limits, evaluated in addition to the app-wide source limit. Each route
+    rate and burst must be no greater than the app-wide values. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -23,14 +23,14 @@ class DomainBindingChange:
     domain: str | Unset = UNSET
     action: DomainBindingChangeAction | Unset = UNSET
     before: DomainBindingTarget | Unset = UNSET
-    """Resolved app and environment identity captured in a reviewed plan."""
+    """ Resolved app and environment identity captured in a reviewed plan. """
     after: DomainBindingTarget | Unset = UNSET
-    """Resolved app and environment identity captured in a reviewed plan."""
+    """ Resolved app and environment identity captured in a reviewed plan. """
     verified: bool | Unset = UNSET
     clears_default: bool | Unset = UNSET
-    """The source app's default domain pointer will be cleared."""
+    """ The source app's default domain pointer will be cleared. """
     deployment_ids: list[str] | Unset = UNSET
-    """Serving destination deployments captured for review; this is not an HTTP smoke-test result."""
+    """ Serving destination deployments captured for review; this is not an HTTP smoke-test result. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

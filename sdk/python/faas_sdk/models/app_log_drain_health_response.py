@@ -26,13 +26,13 @@ class AppLogDrainHealthResponse:
     queue_depth: int
     queue_capacity: int
     pending_records: int
-    """Number of records waiting in the durable local outbox."""
+    """ Number of records waiting in the durable local outbox. """
     pending_bytes: int
-    """Bytes waiting in the durable local outbox."""
+    """ Bytes waiting in the durable local outbox. """
     pending_bytes_capacity: int
-    """Durable local outbox byte capacity."""
+    """ Durable local outbox byte capacity. """
     dead_letter_total: int
-    """Number of records retained in the bounded dead-letter file."""
+    """ Number of records retained in the bounded dead-letter file. """
     delivered_total: int
     failed_total: int
     dropped_total: int
@@ -41,11 +41,11 @@ class AppLogDrainHealthResponse:
     gaps_total: int
     updated_at: datetime.datetime
     oldest_pending_at: datetime.datetime | Unset = UNSET
-    """Timestamp of the oldest record still awaiting delivery."""
+    """ Timestamp of the oldest record still awaiting delivery. """
     last_success_at: datetime.datetime | Unset = UNSET
     last_failure_at: datetime.datetime | Unset = UNSET
     last_error: str | Unset = UNSET
-    """Sanitized delivery summary; never raw transport output."""
+    """ Sanitized delivery summary; never raw transport output. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

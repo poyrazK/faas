@@ -29,19 +29,19 @@ class BillingStatusResponse:
     mode: BillingStatusResponseMode
     enabled: bool
     provider: str
-    """Configured provider name; no provider-specific identifiers are exposed."""
+    """ Configured provider name; no provider-specific identifiers are exposed. """
     plan: BillingStatusResponsePlan
     account_status: BillingStatusResponseAccountStatus
     customer_configured: bool
     subscription_configured: bool
     usage_reconciliation_enabled: bool
     subscription_ends_at: datetime.datetime | Unset = UNSET
-    """When a scheduled cancellation ends the subscription instead of renewing it; the plan then returns to Free.
-    Absent when none is scheduled."""
+    """ When a scheduled cancellation ends the subscription instead of renewing it; the plan then returns to Free.
+    Absent when none is scheduled. """
     scheduled_plan: BillingStatusResponseScheduledPlan | Unset = UNSET
-    """The plan a scheduled downgrade moves to at scheduled_plan_at. Absent when none is scheduled."""
+    """ The plan a scheduled downgrade moves to at scheduled_plan_at. Absent when none is scheduled. """
     scheduled_plan_at: datetime.datetime | Unset = UNSET
-    """When the scheduled downgrade applies."""
+    """ When the scheduled downgrade applies. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

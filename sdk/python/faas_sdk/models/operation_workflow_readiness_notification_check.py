@@ -24,26 +24,27 @@ class OperationWorkflowReadinessNotificationCheck:
     """Current advisory evidence check preserving the original notification. Global failures remain unavailable."""
 
     handoff: OperationWorkflowReadinessHandoff
-    """Advisory handoff context for the same checked workflow observation; scheduling-time evidence is not
-    retained."""
+    """ Advisory handoff context for the same checked workflow observation; scheduling-time evidence is not
+    retained. """
     notification: OperationWorkflowReadinessNotification
-    """Durable advisory readiness notification containing a bounded comparison and reporting Operation identities."""
+    """ Durable advisory readiness notification containing a bounded comparison and reporting Operation identities.
+    """
     checked_at: datetime.datetime
-    """OperationWorkflowReadinessNotificationCheck.checked_at. Current check time."""
+    """ OperationWorkflowReadinessNotificationCheck.checked_at. Current check time. """
     status: str
-    """OperationWorkflowReadinessNotificationCheck.status. Digest_checked for per-item source reconciliation; ready
-    or blocked only for a comparable retained edge; otherwise the explicit comparison boundary status."""
+    """ OperationWorkflowReadinessNotificationCheck.status. Digest_checked for per-item source reconciliation; ready
+    or blocked only for a comparable retained edge; otherwise the explicit comparison boundary status. """
     next_action_digest: OperationWorkflowNextActionDigestCheck | Unset = UNSET
-    """Read-only current source reconciliation of a saved digest, using independent retained source reads. No
-    delivery snapshot or workflow is modified."""
+    """ Read-only current source reconciliation of a saved digest, using independent retained source reads. No
+    delivery snapshot or workflow is modified. """
     business_outcome: OperationWorkflowReadinessBusinessOutcome | Unset = UNSET
-    """Advisory comparison of the expected terminal outcome with a scoped retained application report. Missing
+    """ Advisory comparison of the expected terminal outcome with a scoped retained application report. Missing
     state, stale reports, contract changes, older revisions and terminal reports without outcome codes remain
     unknown. Explicit outcome codes do not imply causation or authorize execution. Completion snapshots are
-    immutable; current checks are live reads."""
+    immutable; current checks are live reads. """
     change: OperationWorkflowReadinessChange | Unset = UNSET
-    """Readiness comparison of the saved edge with fresh retained evidence. Contract and state boundaries are
-    explicit."""
+    """ Readiness comparison of the saved edge with fresh retained evidence. Contract and state boundaries are
+    explicit. """
 
     def to_dict(self) -> dict[str, Any]:
         handoff = self.handoff.to_dict()

@@ -31,7 +31,7 @@ class EdgeRuleRetryAction:
     """
 
     max_attempts: int | Unset = 2
-    """Total attempts, NOT retries: 2 means the original plus one
+    """ Total attempts, NOT retries: 2 means the original plus one
     replay. 0 applies the default (2). 1 is rejected — it is a
     silent no-op that reads like protection.
 
@@ -40,9 +40,9 @@ class EdgeRuleRetryAction:
     request, so a high attempt count multiplies load against
     your own capacity at exactly the moment instances are
     already failing.
-    """
+     """
     allow_non_idempotent: bool | Unset = False
-    """Opt POST and PATCH into replay. Off by default. Even when
+    """ Opt POST and PATCH into replay. Off by default. Even when
     enabled, these methods are replayed only when the request
     carries a non-empty `Idempotency-Key` header.
 
@@ -51,31 +51,31 @@ class EdgeRuleRetryAction:
     return the stored result instead of repeating the side
     effect. GET, HEAD, OPTIONS, TRACE, PUT and DELETE are
     replayed without this flag.
-    """
+     """
     min_remaining_ms: int | Unset = 250
-    """Request-budget floor below which a replay is skipped. 0
+    """ Request-budget floor below which a replay is skipped. 0
     applies the default (250ms). Below this floor a retry
     mostly converts a 502 into a 504 without improving the
     outcome.
-    """
+     """
     backoff_ms: int | Unset = 0
-    """Delay before a replay. Defaults to 0 because the failure
+    """ Delay before a replay. Defaults to 0 because the failure
     being retried is a dead peer, not a loaded one, and the
     next instance is a different process — so waiting buys
     nothing. Raise it only when the sibling may still be
     waking.
-    """
+     """
     budget_percent: int | Unset = 10
-    """Aggregate replay allowance as a percentage of original
+    """ Aggregate replay allowance as a percentage of original
     requests in the gateway's short per-app window. For
     example, 10 permits at most one replay per ten originals,
     preventing a broad outage from doubling all traffic.
-    """
+     """
     budget_min_retries: int | Unset = 1
-    """Minimum replay allowance per app and accounting window.
+    """ Minimum replay allowance per app and accounting window.
     The default preserves one recovery opportunity for a
     low-traffic app even when budget_percent rounds down.
-    """
+     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

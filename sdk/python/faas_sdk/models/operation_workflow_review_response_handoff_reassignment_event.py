@@ -23,14 +23,14 @@ class OperationWorkflowReviewResponseHandoffReassignmentEvent:
     """
 
     source_notification_id: UUID
-    """OperationWorkflowReviewResponseHandoffReassignmentEvent.source_notification_id. Original response alert
-    identity."""
+    """ OperationWorkflowReviewResponseHandoffReassignmentEvent.source_notification_id. Original response alert
+    identity. """
     source_sequence: int
-    """OperationWorkflowReviewResponseHandoffReassignmentEvent.source_sequence. Original response sequence in this
-    inbox."""
+    """ OperationWorkflowReviewResponseHandoffReassignmentEvent.source_sequence. Original response sequence in this
+    inbox. """
     reassignment: OperationWorkflowReviewResponseHandoffReassignment
-    """Immutable manual routing record for an authorized operator, with preserved decline context and one-time
-    notification intent. Ownership assignment is not acceptance."""
+    """ Immutable manual routing record for an authorized operator, with preserved decline context and one-time
+    notification intent. Ownership assignment is not acceptance. """
 
     def to_dict(self) -> dict[str, Any]:
         source_notification_id = str(self.source_notification_id)

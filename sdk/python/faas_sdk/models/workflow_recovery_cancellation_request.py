@@ -21,10 +21,10 @@ class WorkflowRecoveryCancellationRequest:
     position: int
     expected_resume_count: int
     reason: str
-    """Nonblank UTF-8 reason without control characters. Limited to 512 bytes."""
+    """ Nonblank UTF-8 reason without control characters. Limited to 512 bytes. """
     request_id: UUID | Unset = UNSET
-    """Optional stable action identifier. Apply retains the original outcome including refusals; reusing it with
-    changed arguments conflicts. Preview never writes a receipt."""
+    """ Optional stable action identifier. Apply retains the original outcome including refusals; reusing it with
+    changed arguments conflicts. Preview never writes a receipt. """
 
     def to_dict(self) -> dict[str, Any]:
         position = self.position

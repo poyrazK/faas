@@ -24,32 +24,32 @@ class OperationWorkflowReadinessVerificationWatch:
     """
 
     id: UUID
-    """OperationWorkflowReadinessVerificationWatch.id. Server-managed advisory verification observation for the
-    retained source completion."""
+    """ OperationWorkflowReadinessVerificationWatch.id. Server-managed advisory verification observation for the
+    retained source completion. """
     revision: int
-    """OperationWorkflowReadinessVerificationWatch.revision. Server-managed advisory verification observation for
-    the retained source completion."""
+    """ OperationWorkflowReadinessVerificationWatch.revision. Server-managed advisory verification observation for
+    the retained source completion. """
     started_at: datetime.datetime
-    """OperationWorkflowReadinessVerificationWatch.started_at. Server-managed advisory verification observation for
-    the retained source completion."""
+    """ OperationWorkflowReadinessVerificationWatch.started_at. Server-managed advisory verification observation for
+    the retained source completion. """
     evaluated_at: datetime.datetime
-    """OperationWorkflowReadinessVerificationWatch.evaluated_at. Server-managed advisory verification observation
-    for the retained source completion."""
+    """ OperationWorkflowReadinessVerificationWatch.evaluated_at. Server-managed advisory verification observation
+    for the retained source completion. """
     state_revision: int
-    """OperationWorkflowReadinessVerificationWatch.state_revision. Server-managed advisory verification observation
-    for the retained source completion."""
+    """ OperationWorkflowReadinessVerificationWatch.state_revision. Server-managed advisory verification observation
+    for the retained source completion. """
     contract_version: int
-    """OperationWorkflowReadinessVerificationWatch.contract_version. Server-managed advisory verification
-    observation for the retained source completion."""
+    """ OperationWorkflowReadinessVerificationWatch.contract_version. Server-managed advisory verification
+    observation for the retained source completion. """
     pending_count_at_start: int
-    """OperationWorkflowReadinessVerificationWatch.pending_count_at_start. Server-managed advisory verification
-    observation for the retained source completion."""
+    """ OperationWorkflowReadinessVerificationWatch.pending_count_at_start. Server-managed advisory verification
+    observation for the retained source completion. """
     coverage_incomplete: bool
-    """OperationWorkflowReadinessVerificationWatch.coverage_incomplete. Server-managed advisory verification
-    observation for the retained source completion."""
+    """ OperationWorkflowReadinessVerificationWatch.coverage_incomplete. Server-managed advisory verification
+    observation for the retained source completion. """
     items: list[OperationWorkflowReadinessVerificationWatchItem]
-    """OperationWorkflowReadinessVerificationWatch.items. Server-managed advisory verification observation for the
-    retained source completion."""
+    """ OperationWorkflowReadinessVerificationWatch.items. Server-managed advisory verification observation for the
+    retained source completion. """
 
     def to_dict(self) -> dict[str, Any]:
         id = str(self.id)

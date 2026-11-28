@@ -34,47 +34,47 @@ class DiffRequest:
     """
 
     app_config: DiffAppConfigPatch | Unset = UNSET
-    """Per-app scalar patch. Pointer-aware: nil = "don't touch";
+    """ Per-app scalar patch. Pointer-aware: nil = "don't touch";
     explicit zero / explicit value = "set to this". Matches
     [UpdateAppRequest] semantics but exposes only the fields
     the engine computes against (no PublicAuth /
     OverflowNode).
-    """
+     """
     image: str | Unset = UNSET
-    """Would-write image reference. Empty = no image deploy
+    """ Would-write image reference. Empty = no image deploy
     proposed. Compared against the baseline's
     DeploymentResponse.ImageDigest for the immutable-diff
     check.
-    """
+     """
     manifest: AppManifest | Unset = UNSET
-    """App manifest: environment variables, build commands, working directory, healthcheck, user, and Dockerfile-
+    """ App manifest: environment variables, build commands, working directory, healthcheck, user, and Dockerfile-
     as-source flag. The optional `env_secrets` field carries sealed-secret refs ("secret:NAME" strings) resolved by
     the host at wake time against the app_secrets table. Values are NEVER sealed ciphertext — only refs. widens the
     contract additively with `healthcheck`, `stop_signal`, `stop_grace_period` from the OCI image-config spec; old
     guest-init ignores unknown fields per JSON semantics, so the widen is wire-compatible. widens additively with
     `execution_mode`, `restart_policy`, `startup_deadline_s`, `max_retries`, and `service_replicas` — these govern
     the lifecycle contract (request vs service vs worker vs job) and the per-mode replica scaffold. Defaults
-    preserve today's behaviour (execution_mode=request, restart_policy=on-failure)."""
+    preserve today's behaviour (execution_mode=request, restart_policy=on-failure). """
     env_by_scope: DiffRequestEnvByScope | Unset = UNSET
-    """Per-scope env write. Full-replacement semantics per
+    """ Per-scope env write. Full-replacement semantics per
     scope. Keys are scope names ("default",
     "staging", ...); values are DiffEnvRow arrays.
-    """
+     """
     crons: list[CreateCronRequest] | Unset = UNSET
     edge_rules: list[CreateEdgeRuleRequest] | Unset = UNSET
     scope: None | str | Unset = UNSET
-    """Pending per-deployment env scope (production-leveling Stream E). Compared against Baseline.LatestScope;
-    mismatch emits a scope_mismatch break. Empty = default."""
+    """ Pending per-deployment env scope (production-leveling Stream E). Compared against Baseline.LatestScope;
+    mismatch emits a scope_mismatch break. Empty = default. """
     build_plan: BuildPlan | Unset = UNSET
-    """Effective build plan surfaced on DeploymentResponse. Captured from the exact source archive at enqueue time
+    """ Effective build plan surfaced on DeploymentResponse. Captured from the exact source archive at enqueue time
     and retained after spool cleanup; legacy rows fall back to marker detection when the spool is still available.
-    Embedded on DeploymentResponse; never returned by a dedicated route."""
+    Embedded on DeploymentResponse; never returned by a dedicated route. """
     traffic_percent: int | None | Unset = UNSET
-    """Proposed initial deployment traffic weight. Mutually exclusive with canary."""
+    """ Proposed initial deployment traffic weight. Mutually exclusive with canary. """
     canary: CanaryPresetSpec | None | Unset = UNSET
-    """Proposed canary rollout policy. Mutually exclusive with traffic_percent."""
+    """ Proposed canary rollout policy. Mutually exclusive with traffic_percent. """
     workflows: list[WorkflowSpec] | Unset = UNSET
-    """Workflow declarations that the deployment would persist."""
+    """ Workflow declarations that the deployment would persist. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

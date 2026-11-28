@@ -14,11 +14,11 @@ class PlanSourceHost:
     """One place source code dials a service by its Compose name."""
 
     host: str
-    """The Compose service name the code uses as a host."""
+    """ The Compose service name the code uses as a host. """
     file: str
-    """Repository-relative path of the file."""
+    """ Repository-relative path of the file. """
     line: int
-    """1-based line number."""
+    """ 1-based line number. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

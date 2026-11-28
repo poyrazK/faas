@@ -95,7 +95,9 @@ def test_auto_sync_routes_keep_revision_and_aligned_native_snapshot():
 def test_linear_connection_routes_preserve_revision_and_omit_key_on_disconnect():
     from faas_sdk.preview.api.apps import get_issue_tracker_linear_connection, update_issue_tracker_linear_connection
     from faas_sdk.preview.models.issue_tracker_linear_connection import IssueTrackerLinearConnection
-    from faas_sdk.preview.models.update_issue_tracker_linear_connection_request import UpdateIssueTrackerLinearConnectionRequest
+    from faas_sdk.preview.models.update_issue_tracker_linear_connection_request import (
+        UpdateIssueTrackerLinearConnectionRequest,
+    )
 
     team = uuid4()
     payload = {"connected": True, "expected_revision": 7, "team_id": str(team), "api_key": "secret"}
@@ -126,7 +128,10 @@ def test_native_linear_creation_preserves_uuid_recovery_without_url():
 
 
 def test_native_linear_status_preserves_preview_scope_and_workflow_selection():
-    from faas_sdk.preview.api.apps import get_native_linear_issue_tracker_status, update_native_linear_issue_tracker_status
+    from faas_sdk.preview.api.apps import (
+        get_native_linear_issue_tracker_status,
+        update_native_linear_issue_tracker_status,
+    )
     from faas_sdk.preview.models.native_linear_issue_tracker_status import NativeLinearIssueTrackerStatus
     from faas_sdk.preview.models.update_native_linear_issue_tracker_status_request import (
         UpdateNativeLinearIssueTrackerStatusRequest,
@@ -217,7 +222,9 @@ def test_linear_auto_sync_preserves_mapping_and_native_scope():
 def test_linear_callback_secret_is_write_only_and_metadata_is_public():
     from faas_sdk.preview.api.apps import update_issue_tracker_linear_connection
     from faas_sdk.preview.models.issue_tracker_linear_connection import IssueTrackerLinearConnection
-    from faas_sdk.preview.models.update_issue_tracker_linear_connection_request import UpdateIssueTrackerLinearConnectionRequest
+    from faas_sdk.preview.models.update_issue_tracker_linear_connection_request import (
+        UpdateIssueTrackerLinearConnectionRequest,
+    )
 
     secret = "linear_signing_secret_1234567890abcdef"
     payload = {

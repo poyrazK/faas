@@ -36,16 +36,16 @@ class BindingVerificationRunDiagnostics:
     checked_at: datetime.datetime
     expires_at: datetime.datetime
     complete: bool
-    """All applicable diagnostic reads succeeded; does not authorize admission."""
+    """ All applicable diagnostic reads succeeded; does not authorize admission. """
     blockers: list[BindingVerificationDiagnosticBlocker]
     changes: list[BindingVerificationDifference]
     recovery: list[BindingVerificationRecoveryAction]
     budget: BindingVerificationBudget | Unset = UNSET
-    """Public observation of shared capacity. Underlying unfinished resources remain counted after diagnostic
-    expiry or cancellation requests. No admission authority."""
+    """ Public observation of shared capacity. Underlying unfinished resources remain counted after diagnostic
+    expiry or cancellation requests. No admission authority. """
     graph_run_id: UUID | Unset = UNSET
     check_passed: bool | Unset = UNSET
-    """Current public evidence satisfies current policy; does not confirm receipt completion."""
+    """ Current public evidence satisfies current policy; does not confirm receipt completion. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -30,15 +30,15 @@ class ScheduleOccurrenceResponse:
     schedule_revision: int
     scheduled_for: datetime.datetime
     schedule_policy: SchedulePolicy
-    """Versioned recurring-work scheduling policy for Jobs and both HTTP and command Crons. HTTP replace waits for
+    """ Versioned recurring-work scheduling policy for Jobs and both HTTP and command Crons. HTTP replace waits for
     a prior dispatched request to complete because the scheduler has no stop acknowledgement for a request already
-    delivered to the app."""
+    delivered to the app. """
     status: ScheduleOccurrenceResponseStatus
     created_at: datetime.datetime
     start_deadline_at: datetime.datetime | Unset = UNSET
     reason: str | Unset = UNSET
     work_decision: WorkDecision | Unset = UNSET
-    """Persisted classifier decision for one execution result."""
+    """ Persisted classifier decision for one execution result. """
     outcome_code: str | Unset = UNSET
     blocking_occurrence_id: UUID | Unset = UNSET
     exclusive_operation_id: UUID | Unset = UNSET

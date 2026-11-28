@@ -40,9 +40,9 @@ class ManagedPostgresHealth:
     compute_state: ManagedPostgresHealthComputeState
     stale_after_seconds: int
     checked_at: datetime.datetime | Unset = UNSET
-    """Latest metadata attempt, including provider request failures."""
+    """ Latest metadata attempt, including provider request failures. """
     last_success_at: datetime.datetime | Unset = UNSET
-    """Latest valid metadata response, including responses describing degraded resources."""
+    """ Latest valid metadata response, including responses describing degraded resources. """
     last_error_code: ManagedPostgresHealthLastErrorCode | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

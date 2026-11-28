@@ -24,14 +24,14 @@ class OperationWorkflowPlaybookDependencyRecovery:
     """
 
     checked_at: datetime.datetime
-    """OperationWorkflowPlaybookDependencyRecovery.checked_at. Successful case observation before revision-fenced
-    publication."""
+    """ OperationWorkflowPlaybookDependencyRecovery.checked_at. Successful case observation before revision-fenced
+    publication. """
     regression: OperationWorkflowReadinessOutcomeEscalationReference
-    """Reference to the single retained escalation notification in the same subscription. Pruning does not recreate
-    escalations; links may expire."""
+    """ Reference to the single retained escalation notification in the same subscription. Pruning does not recreate
+    escalations; links may expire. """
     ready_steps: list[OperationWorkflowPlaybookDependencyState]
-    """OperationWorkflowPlaybookDependencyRecovery.ready_steps. Recovered subset grouped by current checklist owner
-    and regression notice; completed reviews remain complete."""
+    """ OperationWorkflowPlaybookDependencyRecovery.ready_steps. Recovered subset grouped by current checklist owner
+    and regression notice; completed reviews remain complete. """
 
     def to_dict(self) -> dict[str, Any]:
         checked_at = self.checked_at.isoformat()

@@ -18,9 +18,9 @@ class APISandboxPartnerInviteResponse:
     """One-time credential used to exchange an invitation for a partner key."""
 
     partner: APISandboxPartnerResponse
-    """Owner-only partner progress."""
+    """ Owner-only partner progress. """
     token: str
-    """One-time invite token exchanged through the sandbox redemption endpoint."""
+    """ One-time invite token exchanged through the sandbox redemption endpoint. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

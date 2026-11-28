@@ -37,14 +37,14 @@ class OperationWorkflowActiveConditionGroup:
     condition_result: OperationWorkflowActiveConditionGroupConditionResult
     stale_workflow_count: int
     elapsed_time: OperationWorkflowDurationDistribution
-    """One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
-    zero."""
+    """ One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
+    zero. """
     blocked_time: OperationWorkflowDurationDistribution
-    """One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
-    zero."""
+    """ One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
+    zero. """
     evidence_age: OperationWorkflowDurationDistribution
-    """One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
-    zero."""
+    """ One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
+    zero. """
 
     def to_dict(self) -> dict[str, Any]:
         within_budget_workflow_count = self.within_budget_workflow_count

@@ -14,7 +14,7 @@ T = TypeVar("T", bound="ClearObsoleteDeploymentsBody")
 @_attrs_define
 class ClearObsoleteDeploymentsBody:
     older_than: str | Unset = UNSET
-    """Go duration (e.g. 168h)."""
+    """ Go duration (e.g. 168h). """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

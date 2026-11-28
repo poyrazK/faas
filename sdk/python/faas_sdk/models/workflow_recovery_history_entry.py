@@ -33,9 +33,9 @@ class WorkflowRecoveryHistoryEntry:
     outcome: str
     reason: str
     polling_notification: WorkflowRecoveryPollingNotification | Unset = UNSET
-    """Last captured polling alert receipt. queued means durable outbox admission; no_receivers never replays to
+    """ Last captured polling alert receipt. queued means durable outbox admission; no_receivers never replays to
     later subscribers. Successful polling retains the recovered receipt separately from the cleared error metadata.
-   """
+    """
     initial_failure_id: UUID | Unset = UNSET
     evidence_kind: WorkflowRecoveryHistoryEntryEvidenceKind | Unset = UNSET
     resume_count: int | Unset = UNSET
@@ -46,20 +46,20 @@ class WorkflowRecoveryHistoryEntry:
     evidence_url: str | Unset = UNSET
     job_url: str | Unset = UNSET
     candidate_evidence: WorkflowRecoveryCandidateEvidence | Unset = UNSET
-    """Immutable policy-review candidate facts, captured prospectively without execution inputs or outputs."""
+    """ Immutable policy-review candidate facts, captured prospectively without execution inputs or outputs. """
     durable: bool | Unset = UNSET
-    """True for an immutable event recorded prospectively with a state mutation; absent for retained source
-    observations."""
+    """ True for an immutable event recorded prospectively with a state mutation; absent for retained source
+    observations. """
     evaluation_reason: str | Unset = UNSET
-    """Worker transition classification; suppression reason remains in reason."""
+    """ Worker transition classification; suppression reason remains in reason. """
     episode_id: UUID | Unset = UNSET
-    """Health incident episode association preserved across later incidents."""
+    """ Health incident episode association preserved across later incidents. """
     policy: WorkflowRecoveryPolicy | Unset = UNSET
-    """Explicit app recovery policy. Preview prepares parent-job plans and worker-discovered initial-failure
+    """ Explicit app recovery policy. Preview prepares parent-job plans and worker-discovered initial-failure
     reviews. initial_failure requires explicit failure statuses. Opt-in automatic_retry requires saved_failure only;
     automatic_initial requires initial_failure only. Both require explicit workflow and failure-status filters and
     execution limits. Resume count caps the absolute generation; preparation and execution budgets are separate.
-    Cancellation remains manual."""
+    Cancellation remains manual. """
     policy_version: int | Unset = UNSET
     workflow: str | Unset = UNSET
     run_id: str | Unset = UNSET

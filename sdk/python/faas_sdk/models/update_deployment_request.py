@@ -17,9 +17,9 @@ class UpdateDeploymentRequest:
     """
 
     min_instances: int
-    """Per-deployment cold-wake floor override for PATCH /v1/deployments/{id}. 0 = inherit from parent app;
+    """ Per-deployment cold-wake floor override for PATCH /v1/deployments/{id}. 0 = inherit from parent app;
     positive value is the deployment's own floor. Effective per-instance floor = max(app, deployment). Validated
-    against the parent app's plan MaxMinInstances cap."""
+    against the parent app's plan MaxMinInstances cap. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

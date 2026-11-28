@@ -23,29 +23,30 @@ class OperationWorkflowReviewResponseLink:
     """
 
     subscription_id: UUID
-    """OperationWorkflowReviewResponseLink.subscription_id. Retained review subscription identity."""
+    """ OperationWorkflowReviewResponseLink.subscription_id. Retained review subscription identity. """
     sequence: int
-    """OperationWorkflowReviewResponseLink.sequence. Original delivery sequence."""
+    """ OperationWorkflowReviewResponseLink.sequence. Original delivery sequence. """
     notification_id: UUID
-    """OperationWorkflowReviewResponseLink.notification_id. Original delivery identity, captured by the server."""
+    """ OperationWorkflowReviewResponseLink.notification_id. Original delivery identity, captured by the server. """
     progress_id: UUID
-    """OperationWorkflowReviewResponseLink.progress_id. Pinned source playbook progress identity."""
+    """ OperationWorkflowReviewResponseLink.progress_id. Pinned source playbook progress identity. """
     outcome_code: str
-    """OperationWorkflowReviewResponseLink.outcome_code. Pinned follow-up outcome list."""
+    """ OperationWorkflowReviewResponseLink.outcome_code. Pinned follow-up outcome list. """
     item_index: int
-    """OperationWorkflowReviewResponseLink.item_index. Pinned local step index."""
+    """ OperationWorkflowReviewResponseLink.item_index. Pinned local step index. """
     dependency_review_revision: int
-    """OperationWorkflowReviewResponseLink.dependency_review_revision. Original review obligation revision."""
+    """ OperationWorkflowReviewResponseLink.dependency_review_revision. Original review obligation revision. """
     subject: OperationSubject
-    """Immutable public business correlation metadata. Captured at admission and preserved through recovery and
-    redeploy. Never an ownership or authorization claim."""
+    """ Immutable public business correlation metadata. Captured at admission and preserved through recovery and
+    redeploy. Never an ownership or authorization claim. """
     workflow: str
-    """OperationWorkflowReviewResponseLink.workflow. Protected workflow identity matching the parent risk alert."""
+    """ OperationWorkflowReviewResponseLink.workflow. Protected workflow identity matching the parent risk alert.
+    """
     instance_id: str
-    """OperationWorkflowReviewResponseLink.instance_id. Scoped source workflow instance."""
+    """ OperationWorkflowReviewResponseLink.instance_id. Scoped source workflow instance. """
     platform_tenant_id: UUID | Unset = UNSET
-    """OperationWorkflowReviewResponseLink.platform_tenant_id. Account-only exact source customer identity;
-    customer responses omit this field."""
+    """ OperationWorkflowReviewResponseLink.platform_tenant_id. Account-only exact source customer identity;
+    customer responses omit this field. """
 
     def to_dict(self) -> dict[str, Any]:
         subscription_id = str(self.subscription_id)

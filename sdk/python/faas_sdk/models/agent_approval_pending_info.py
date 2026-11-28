@@ -30,18 +30,18 @@ class AgentApprovalPendingInfo:
     """
 
     id: UUID
-    """The id of the approval request."""
+    """ The id of the approval request. """
     category: AgentApprovalPendingInfoCategory
-    """The kind of action that needs approval; budget when the change would take the agent past its monthly budget,
-    undo when the agent applies an undo of its own changes."""
+    """ The kind of action that needs approval; budget when the change would take the agent past its monthly budget,
+    undo when the agent applies an undo of its own changes. """
     review_url: str
-    """The page where a signed-in member who may decide approves or denies the request."""
+    """ The page where a signed-in member who may decide approves or denies the request. """
     expires_at: datetime.datetime
-    """When the request and any approval of it expire."""
+    """ When the request and any approval of it expire. """
     status: AgentApprovalPendingInfoStatus | Unset = UNSET
-    """Set on approval_denied and approval_expired: what became of the request."""
+    """ Set on approval_denied and approval_expired: what became of the request. """
     note: str | Unset = UNSET
-    """The person's reason for denying the request, when they gave one."""
+    """ The person's reason for denying the request, when they gave one. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

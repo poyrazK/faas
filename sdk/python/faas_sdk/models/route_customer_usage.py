@@ -21,29 +21,29 @@ class RouteCustomerUsage:
     """Observed customer exposure for one exact route label and HTTP method on the selected deployment."""
 
     route: str
-    """Exact recorded route label; may include its HTTP method prefix."""
+    """ Exact recorded route label; may include its HTTP method prefix. """
     method: RouteCustomerUsageMethod
-    """HTTP method for this route observation."""
+    """ HTTP method for this route observation. """
     requests: int
-    """All weighted retained requests for this route and deployment."""
+    """ All weighted retained requests for this route and deployment. """
     identified_requests: int
-    """Requests with at least one resolvable account-owned consumer or tenant identity."""
+    """ Requests with at least one resolvable account-owned consumer or tenant identity. """
     anonymous_requests: int
-    """Requests with neither consumer nor tenant identity recorded."""
+    """ Requests with neither consumer nor tenant identity recorded. """
     unresolved_identity_requests: int
-    """Requests with recorded identities that cannot be resolved within the app and account boundary."""
+    """ Requests with recorded identities that cannot be resolved within the app and account boundary. """
     consumer_count: int
-    """Distinct observed app-owned consumers before detail caps; overlaps tenant count."""
+    """ Distinct observed app-owned consumers before detail caps; overlaps tenant count. """
     platform_tenant_count: int
-    """Distinct observed account-owned request-time tenants before detail caps; overlaps consumer count."""
+    """ Distinct observed account-owned request-time tenants before detail caps; overlaps consumer count. """
     last_observed_at: datetime.datetime
-    """Latest recorded timestamp for this route; may be a minute bucket."""
+    """ Latest recorded timestamp for this route; may be a minute bucket. """
     customers: list[RouteCustomerObservation]
-    """Top recorded identity pairs by request count, with deterministic ID tie ordering."""
+    """ Top recorded identity pairs by request count, with deterministic ID tie ordering. """
     customers_truncated: bool
-    """More identity pairs matched than the customer detail limit."""
+    """ More identity pairs matched than the customer detail limit. """
     other_customer_requests: int
-    """Identified requests belonging to identity pairs omitted by the detail cap."""
+    """ Identified requests belonging to identity pairs omitted by the detail cap. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

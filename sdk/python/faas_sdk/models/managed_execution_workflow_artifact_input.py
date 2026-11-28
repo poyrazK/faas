@@ -17,9 +17,9 @@ class ManagedExecutionWorkflowArtifactInput:
 
     from_step: str
     name: str
-    """Normalized output_files name declared by the producer step."""
+    """ Normalized output_files name declared by the producer step. """
     path: str
-    """Normalized relative destination path in the consumer Run's ephemeral files bundle."""
+    """ Normalized relative destination path in the consumer Run's ephemeral files bundle. """
 
     def to_dict(self) -> dict[str, Any]:
         from_step = self.from_step

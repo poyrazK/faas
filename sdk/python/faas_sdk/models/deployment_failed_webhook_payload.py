@@ -20,9 +20,9 @@ class DeploymentFailedWebhookPayload:
     """Deployment failure details delivered with deployment.failed. Delivery IDs are stable across retries."""
 
     app_id: str
-    """App that owns this failed deployment."""
+    """ App that owns this failed deployment. """
     deployment_id: str
-    """Deployment that entered the failed state."""
+    """ Deployment that entered the failed state. """
     status: DeploymentFailedWebhookPayloadStatus
     error_code: str | Unset = UNSET
     error_hint: str | Unset = UNSET

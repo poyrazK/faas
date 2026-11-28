@@ -23,9 +23,9 @@ class WorkflowRecoveryPolicyChangeEntry:
     """Retained automatic queue entry and the effect of replacing its policy configuration."""
 
     entry: WorkflowRecoveryAutomaticQueueEntry
-    """One pending or unresolved applied automatic retry. Queued_at is the frozen review preparation time. Ages are
+    """ One pending or unresolved applied automatic retry. Queued_at is the frozen review preparation time. Ages are
     whole nonnegative seconds relative to the queue observed_at. Waiting age is omitted until the worker records a
-    wait; the saved reason may be historical."""
+    wait; the saved reason may be historical. """
     effect: WorkflowRecoveryPolicyChangeEntryEffect
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

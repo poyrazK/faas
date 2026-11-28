@@ -22,13 +22,14 @@ class AppEnvResponse:
 
     key: str
     scope: str
-    """Env-var scope. Always 'default' for the legacy flat response; varies for the nested `env_by_scope` response."""
+    """ Env-var scope. Always 'default' for the legacy flat response; varies for the nested `env_by_scope` response.
+    """
     created_at: datetime.datetime
     updated_at: datetime.datetime
     value: str | Unset = UNSET
-    """The variable's plaintext; present only with `?values=true`."""
+    """ The variable's plaintext; present only with `?values=true`. """
     config_change: ConfigChangeReceipt | Unset = UNSET
-    """The config revision an env or secret write recorded and the guard watching it."""
+    """ The config revision an env or secret write recorded and the guard watching it. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

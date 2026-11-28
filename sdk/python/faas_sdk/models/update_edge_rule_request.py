@@ -51,14 +51,14 @@ class UpdateEdgeRuleRequest:
     match_path: str | Unset = UNSET
     match_methods: list[str] | Unset = UNSET
     match_headers: UpdateEdgeRuleRequestMatchHeaders | Unset = UNSET
-    """Replacing this map changes the request-header selectors. Header names compare case-insensitively and values
-    compare exactly; use an empty object to remove all header conditions."""
+    """ Replacing this map changes the request-header selectors. Header names compare case-insensitively and values
+    compare exactly; use an empty object to remove all header conditions. """
     priority: int | Unset = UNSET
     enabled: bool | Unset = UNSET
     validate_mode: UpdateEdgeRuleRequestValidateMode | Unset = UNSET
-    """Top-level source of truth for kind=validate.
+    """ Top-level source of truth for kind=validate.
     Omit (do not send) to leave the column untouched.
-    """
+     """
     action: (
         EdgeRuleAsyncAction
         | EdgeRuleBudgetAction
@@ -82,17 +82,17 @@ class UpdateEdgeRuleRequest:
         | EdgeRuleWAFAction
         | Unset
     ) = UNSET
-    """Replaces the jsonb column whole."""
+    """ Replaces the jsonb column whole. """
     name: str | Unset = UNSET
-    """Replacement rule name."""
+    """ Replacement rule name. """
     description: str | Unset = UNSET
-    """Replacement rule notes."""
+    """ Replacement rule notes. """
     expires_at: datetime.datetime | Unset = UNSET
-    """New expiry; the gateway stops applying the rule after it."""
+    """ New expiry; the gateway stops applying the rule after it. """
     clear_expires_at: bool | Unset = UNSET
-    """Remove the expiry so the rule applies indefinitely."""
+    """ Remove the expiry so the rule applies indefinitely. """
     match: EdgeRuleMatchExpr | Unset = UNSET
-    """Match condition, ANDed with the rule's fixed selectors. A node
+    """ Match condition, ANDed with the rule's fixed selectors. A node
     is exactly one of all, any, not, or a field/op leaf. Fields: method,
     path, host, client_ip, country, asn (the client IP's
     autonomous system, e.g. 13335 or AS13335), ua_family (the
@@ -112,13 +112,13 @@ class UpdateEdgeRuleRequest:
     field). Depth at most 4,
     at most 32 nodes, 64 values per leaf, values and regexes at most 256
     bytes. An untrusted client IP, or its unknown country or ASN, is absent.
-    """
+     """
     clear_match: bool | Unset = UNSET
-    """Remove the match condition."""
+    """ Remove the match condition. """
     mode: UpdateEdgeRuleRequestMode | Unset = UNSET
-    """Switch the rule to enforce, or to log so it is matched and counted but never acts."""
+    """ Switch the rule to enforce, or to log so it is matched and counted but never acts. """
     penalty: EdgeRulePenalty | Unset = UNSET
-    """A rule's penalty box. Once the rule has refused
+    """ A rule's penalty box. Once the rule has refused
     the same client `after` times within `within_seconds`, every request
     from that client to the app is refused with 403 `penalty_box` and
     Retry-After for `seconds`, whichever rule or path it targets. The
@@ -126,9 +126,9 @@ class UpdateEdgeRuleRequest:
     in each gateway node's memory. Allowed on ip, geo, throttle and waf
     (block mode) rules; editing the rule's penalty away, disabling it or
     putting it in log mode releases its clients.
-    """
+     """
     clear_penalty: bool | Unset = UNSET
-    """Remove the rule's penalty box, releasing the clients it holds."""
+    """ Remove the rule's penalty box, releasing the clients it holds. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

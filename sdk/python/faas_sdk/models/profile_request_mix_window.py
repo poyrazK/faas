@@ -19,7 +19,7 @@ class ProfileRequestMixWindow:
     """Frozen request-count summary for one profile query window."""
 
     query: ProfileQuery
-    """Authorized deployment CPU capture window."""
+    """ Authorized deployment CPU capture window. """
     total: int
     routes: list[ProfileRequestMixGroup]
     statuses: list[ProfileRequestMixGroup]

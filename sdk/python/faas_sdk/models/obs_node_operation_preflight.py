@@ -19,10 +19,11 @@ class ObsNodeOperationPreflight:
     live_instances: int
     live_ram_mb: int
     capacity_change_mb: int
-    """Signed admission-capacity delta if the requested lifecycle transition lands; zero for an idempotent request."""
+    """ Signed admission-capacity delta if the requested lifecycle transition lands; zero for an idempotent request.
+    """
     reversible: bool
     disruption_warning: bool
-    """True when a force-drain targets a node that still has live instances."""
+    """ True when a force-drain targets a node that still has live instances. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -38,13 +38,13 @@ class CreateAppWebhookRequest:
     target_url: str
     webhook_secret: str
     event_filter: list[CreateAppWebhookRequestEventFilterItem] | Unset = UNSET
-    """Events to subscribe to; omit or leave empty for standard platform events. Select app.health.changed
-    explicitly to enable health notifications."""
+    """ Events to subscribe to; omit or leave empty for standard platform events. Select app.health.changed
+    explicitly to enable health notifications. """
     retry_policy: CreateAppWebhookRequestRetryPolicy | Unset = "default"
     delivery_format: CreateAppWebhookRequestDeliveryFormat | Unset = "json"
-    """Wire envelope. json preserves the legacy Gregale body; cloudevents opts into CloudEvents 1.0 structured
+    """ Wire envelope. json preserves the legacy Gregale body; cloudevents opts into CloudEvents 1.0 structured
     mode; datadog posts Datadog Events API bodies to a Datadog Events endpoint and sends webhook_secret as DD-API-
-    KEY, for deployment and rollout events only."""
+    KEY, for deployment and rollout events only. """
     enabled: bool | Unset = True
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

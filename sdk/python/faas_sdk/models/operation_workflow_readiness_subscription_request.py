@@ -28,37 +28,37 @@ class OperationWorkflowReadinessSubscriptionRequest:
     """
 
     scope: str
-    """OperationWorkflowReadinessSubscriptionRequest.scope. Application environment scope."""
+    """ OperationWorkflowReadinessSubscriptionRequest.scope. Application environment scope. """
     name: str
-    """OperationWorkflowReadinessSubscriptionRequest.name. Subscription name."""
+    """ OperationWorkflowReadinessSubscriptionRequest.name. Subscription name. """
     next_action_digest: OperationWorkflowNextActionDigestPolicy | Unset = UNSET
-    """Fixed team digest selection and cadence. Owner is both the exact action-owner filter and inbox recipient
+    """ Fixed team digest selection and cadence. Owner is both the exact action-owner filter and inbox recipient
     label, not proof of team membership. Overdue actions, deadlines within the configured approaching window and
-    unaccepted handoffs qualify. Unchanged delivered items are suppressed."""
+    unaccepted handoffs qualify. Unchanged delivered items are suppressed. """
     business_impact_watches: list[OperationWorkflowReadinessImpactWatchRequest] | Unset = UNSET
-    """OperationWorkflowReadinessSubscriptionRequest.business_impact_watches. Optional unique workflow/result
+    """ OperationWorkflowReadinessSubscriptionRequest.business_impact_watches. Optional unique workflow/result
     watches in the subscription application, customer and environment scope. Initial successful observation is
     silent; configuration remains fixed until deletion. These targets are independent of transition discovery
-    owner/operation filters."""
+    owner/operation filters. """
     app_id: UUID | Unset = UNSET
-    """OperationWorkflowReadinessSubscriptionRequest.app_id. Application UUID; required in customer requests and
-    omitted in account requests."""
+    """ OperationWorkflowReadinessSubscriptionRequest.app_id. Application UUID; required in customer requests and
+    omitted in account requests. """
     tenant_id: UUID | Unset = UNSET
-    """OperationWorkflowReadinessSubscriptionRequest.tenant_id. Optional account-only customer selector; customer
-    identity derives from authentication."""
+    """ OperationWorkflowReadinessSubscriptionRequest.tenant_id. Optional account-only customer selector; customer
+    identity derives from authentication. """
     workflow: str | Unset = UNSET
-    """OperationWorkflowReadinessSubscriptionRequest.workflow. Optional declared workflow selector."""
+    """ OperationWorkflowReadinessSubscriptionRequest.workflow. Optional declared workflow selector. """
     target_operation: str | Unset = UNSET
-    """OperationWorkflowReadinessSubscriptionRequest.target_operation. Optional transition operation selector."""
+    """ OperationWorkflowReadinessSubscriptionRequest.target_operation. Optional transition operation selector. """
     owner: str | Unset = UNSET
-    """OperationWorkflowReadinessSubscriptionRequest.owner. Optional blocker or pending verification owner
-    selector."""
+    """ OperationWorkflowReadinessSubscriptionRequest.owner. Optional blocker or pending verification owner
+    selector. """
     unassigned: bool | Unset = UNSET
-    """OperationWorkflowReadinessSubscriptionRequest.unassigned. Select ownerless blockers or verification
-    obligations."""
+    """ OperationWorkflowReadinessSubscriptionRequest.unassigned. Select ownerless blockers or verification
+    obligations. """
     events: list[OperationWorkflowReadinessSubscriptionRequestEventsItem] | Unset = UNSET
-    """OperationWorkflowReadinessSubscriptionRequest.events. Readiness inbox event selectors; defaults to all four
-    when omitted."""
+    """ OperationWorkflowReadinessSubscriptionRequest.events. Readiness inbox event selectors; defaults to all four
+    when omitted. """
 
     def to_dict(self) -> dict[str, Any]:
         scope = self.scope

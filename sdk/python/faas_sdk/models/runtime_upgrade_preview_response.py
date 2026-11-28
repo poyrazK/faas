@@ -28,7 +28,7 @@ class RuntimeUpgradePreviewResponse:
     deployment_id: str
     current: None | RuntimeReleaseResponse
     target: RuntimeReleaseResponse
-    """Exact published runtime base bytes; host kernel and function runner are separate components."""
+    """ Exact published runtime base bytes; host kernel and function runner are separate components. """
     disposition: RuntimeUpgradePreviewResponseDisposition
     changes: list[RuntimeUpgradePreviewResponseChangesItem]
     blockers: list[str]
@@ -36,7 +36,7 @@ class RuntimeUpgradePreviewResponse:
     rebuild_required: bool
     cold_start_required: bool
     execution_available: bool
-    """Preview only; no runtime update operation is implemented."""
+    """ Preview only; no runtime update operation is implemented. """
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.runtime_release_response import RuntimeReleaseResponse

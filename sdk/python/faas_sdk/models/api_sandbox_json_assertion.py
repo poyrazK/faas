@@ -14,9 +14,9 @@ class APISandboxJSONAssertion:
     """Expected scalar at a JSON Pointer in a sandbox response."""
 
     pointer: str
-    """JSON Pointer into the response. An empty string selects the response root."""
+    """ JSON Pointer into the response. An empty string selects the response root. """
     equals: bool | float | None | str
-    """Expected JSON scalar value, including null."""
+    """ Expected JSON scalar value, including null. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

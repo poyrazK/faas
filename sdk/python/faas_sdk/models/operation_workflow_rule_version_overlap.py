@@ -26,8 +26,8 @@ class OperationWorkflowRuleVersionOverlap:
     """
 
     subject: OperationSubject
-    """Immutable public business correlation metadata. Captured at admission and preserved through recovery and
-    redeploy. Never an ownership or authorization claim."""
+    """ Immutable public business correlation metadata. Captured at admission and preserved through recovery and
+    redeploy. Never an ownership or authorization claim. """
     instance_id: str
     operation_id: UUID
     history_complete: bool

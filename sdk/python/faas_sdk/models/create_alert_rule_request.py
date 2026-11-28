@@ -42,89 +42,89 @@ class CreateAlertRuleRequest:
 
     name: str
     metric: CreateAlertRuleRequestMetric
-    """Selected metric for the existing alert rule. MCP task age reads a fresh app gauge in seconds and degrades
+    """ Selected metric for the existing alert rule. MCP task age reads a fresh app gauge in seconds and degrades
     when unavailable; mcp_tasks_metrics_stale is 1 when either task gauge is missing, stale, or invalid. Min=0
     worker apps also require a fresh observer heartbeat with value 1. mcp_task_promotion_hold_age_seconds reads the
     oldest active hold directly from state (seconds, zero with no holds); its alerts support webhook action only.
-   """
+    """
     comparison: CreateAlertRuleRequestComparison
-    """above_baseline and below_baseline (preview behind FAAS_ANOMALY_ALERTS_ENABLED) compare against the median of
+    """ above_baseline and below_baseline (preview behind FAAS_ANOMALY_ALERTS_ENABLED) compare against the median of
     the same metric at the same time of day over the previous 7 days; threshold is then a multiplier (1.5-20 above,
     0.05-0.67 below). Supported for error_rate_pct, latency_p95_ms, latency_p99_ms, cold_start_pct and request_count
-    (below_baseline: request_count only)."""
+    (below_baseline: request_count only). """
     threshold: float
     window_spec: CreateAlertRuleRequestWindowSpec
     observe_only: bool | Unset = UNSET
-    """Record baseline breaches as observations. Defaults to false."""
+    """ Record baseline breaches as observations. Defaults to false. """
     recovery_confirmation_checks: int | Unset = 1
-    """Consecutive healthy checks required to recover. Two checks require an app-scoped baseline comparison."""
+    """ Consecutive healthy checks required to recover. Two checks require an app-scoped baseline comparison. """
     environment_scope: str | Unset = UNSET
-    """Scope a request-count, error-rate, or p95 latency baseline rule to default or a named project environment.
-    Scoped Notify supports channels and webhooks. Omitted or empty uses app-wide telemetry."""
+    """ Scope a request-count, error-rate, or p95 latency baseline rule to default or a named project environment.
+    Scoped Notify supports channels and webhooks. Omitted or empty uses app-wide telemetry. """
     mcp_readiness_scope: str | Unset = UNSET
-    """Readiness environment requested when creating this alert. Immutable readiness environment selector. Omitted
-    or empty means every environment; default selects only default. Valid only for mcp_readiness_unhealthy."""
+    """ Readiness environment requested when creating this alert. Immutable readiness environment selector. Omitted
+    or empty means every environment; default selects only default. Valid only for mcp_readiness_unhealthy. """
     mcp_min_calls: int | Unset = UNSET
-    """Observation minimum requested for the new protocol alert. MCP protocol alerts only. Minimum observations in
-    every rolling window; defaults to 20 on create. Latency uses measured executions. Omit for other metrics."""
+    """ Observation minimum requested for the new protocol alert. MCP protocol alerts only. Minimum observations in
+    every rolling window; defaults to 20 on create. Latency uses measured executions. Omit for other metrics. """
     mcp_for_minutes: int | Unset = UNSET
-    """Sustained duration requested for the new protocol alert. MCP protocol alerts only. Continuous breach
+    """ Sustained duration requested for the new protocol alert. MCP protocol alerts only. Continuous breach
     duration sampled every 30 seconds; defaults to 10 on create. Missing observations interrupt eligibility. Webhook
     action, app scope, gt/gte and windows 5m/15m/1h are required. Error thresholds are percent (0..100), execution
-    p95 thresholds are milliseconds (0..300000)."""
+    p95 thresholds are milliseconds (0..300000). """
     event_subscription_id: UUID | Unset = UNSET
-    """Event subscription id in the create alert rule request: immutable subscription selector. Required only for
-    event consumer metrics; webhook action and windows up to 24h are required."""
+    """ Event subscription id in the create alert rule request: immutable subscription selector. Required only for
+    event consumer metrics; webhook action and windows up to 24h are required. """
     edge_rule_id: UUID | Unset = UNSET
-    """Edge rule to count for edge_rule_hits (enforced matches), edge_rule_log_hits (log-mode matches) or
+    """ Edge rule to count for edge_rule_hits (enforced matches), edge_rule_log_hits (log-mode matches) or
     edge_rule_activity (matches in either mode, so the alert survives a switch from log mode to enforce); omit to
     count every rule of the app. Immutable. Edge-rule metrics are webhook-only and take window_spec 1h, 6h, 24h or
-    7d (hourly hit buckets, kept 14 days)."""
+    7d (hourly hit buckets, kept 14 days). """
     post_deploy_rollback_window_seconds: int | Unset = UNSET
-    """Enable completed-release rollback for this many seconds after cutover; 0 disables it. Requires
+    """ Enable completed-release rollback for this many seconds after cutover; 0 disables it. Requires
     action=rollback. Only deployment-specific error_rate_pct or boot_failures breaches with gt or gte comparisons
-    can qualify. A boot_failures rule with action=rollback needs a positive window."""
+    can qualify. A boot_failures rule with action=rollback needs a positive window. """
     notify_resolved: bool | Unset = UNSET
-    """Also send the webhook a signed alert.resolved event when the rule recovers. Requires webhook_url;
+    """ Also send the webhook a signed alert.resolved event when the rule recovers. Requires webhook_url;
     notification channels always receive resolves. Defaults to false, because receivers that predate it count every
-    delivery as a fire."""
+    delivery as a fire. """
     enabled: bool | Unset = UNSET
     failure_source: CreateAlertRuleRequestFailureSource | Unset = UNSET
-    """Required when metric == failed_invocations; omit otherwise (xor_chk)."""
+    """ Required when metric == failed_invocations; omit otherwise (xor_chk). """
     custom_metric_name: str | Unset = UNSET
-    """Required when metric is custom_metric; omit otherwise. A gauge is compared on its average over the window
-    and a counter on its per-second rate. custom_metric rules support webhook action only and windows up to 24h."""
+    """ Required when metric is custom_metric; omit otherwise. A gauge is compared on its average over the window
+    and a counter on its per-second rate. custom_metric rules support webhook action only and windows up to 24h. """
     custom_metric_labels: CreateAlertRuleRequestCustomMetricLabels | Unset = UNSET
-    """custom_metric rules only: watch the one labelled series with exactly these labels instead of the aggregate
-    (counters summed, gauges max across series). Keys match ^[a-z_][a-z0-9_]{0,62}$."""
+    """ custom_metric rules only: watch the one labelled series with exactly these labels instead of the aggregate
+    (counters summed, gauges max across series). Keys match ^[a-z_][a-z0-9_]{0,62}$. """
     log_query: str | Unset = UNSET
-    """Required when metric is log_search_matches; omit otherwise. URL query string of log search filters (source,
+    """ Required when metric is log_search_matches; omit otherwise. URL query string of log search filters (source,
     level, status, route, deployment_id, request_id, trace_id, q); the rule counts matching log events in its
-    window. Webhook action only, windows up to 24h."""
+    window. Webhook action only, windows up to 24h. """
     job_name: str | Unset = UNSET
-    """job_failures rules only. Count only the failed runs of the account's job with this name; omitted counts
-    every job. The job must exist."""
+    """ job_failures rules only. Count only the failed runs of the account's job with this name; omitted counts
+    every job. The job must exist. """
     cron_id: UUID | Unset = UNSET
-    """failed_invocations rules with failure_source cron only. Count only this cron's failed invocations; omitted
-    counts every cron of the app. The cron must belong to the app."""
+    """ failed_invocations rules with failure_source cron only. Count only this cron's failed invocations; omitted
+    counts every cron of the app. The cron must belong to the app. """
     slo_id: UUID | Unset = UNSET
-    """Required for slo_budget_burn (multi-window burn rate; 14.4 is the paging threshold) and
+    """ Required for slo_budget_burn (multi-window burn rate; 14.4 is the paging threshold) and
     slo_budget_remaining_pct (percent of the error budget left); names one of this app's SLOs. The rule window_spec
-    is ignored for these metrics."""
+    is ignored for these metrics. """
     synthetic_check_id: UUID | Unset = UNSET
-    """Required for synthetic_check_consecutive_failures (failed runs since the last success; window_spec ignored)
-    and synthetic_check_latency_p95_ms (p95 of successful runs in the window); names one of this app's checks."""
+    """ Required for synthetic_check_consecutive_failures (failed runs since the last success; window_spec ignored)
+    and synthetic_check_latency_p95_ms (p95 of successful runs in the window); names one of this app's checks. """
     webhook_url: str | Unset = UNSET
-    """Signed webhook destination. Required with webhook_secret unless channel_ids is set."""
+    """ Signed webhook destination. Required with webhook_secret unless channel_ids is set. """
     channel_ids: list[UUID] | Unset = UNSET
-    """Notification channels to deliver fires and resolves to. With at least one, webhook_url and webhook_secret
-    may be omitted."""
+    """ Notification channels to deliver fires and resolves to. With at least one, webhook_url and webhook_secret
+    may be omitted. """
     webhook_secret: str | Unset = UNSET
-    """Plaintext HMAC secret (max 256 bytes). Sealed at rest; never echoed."""
+    """ Plaintext HMAC secret (max 256 bytes). Sealed at rest; never echoed. """
     cooldown_minutes: int | Unset = UNSET
     action: CreateAlertRuleRequestAction | Unset = "webhook"
-    """What to do when the rule fires. Omit to default to webhook. Pre-auth target and MCP task, event consumer,
-    and workflow metrics support webhook only."""
+    """ What to do when the rule fires. Omit to default to webhook. Pre-auth target and MCP task, event consumer,
+    and workflow metrics support webhook only. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

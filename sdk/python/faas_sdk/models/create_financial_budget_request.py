@@ -24,7 +24,7 @@ class CreateFinancialBudgetRequest:
     """
 
     spec: FinancialBudgetSpec
-    """Customer budget intent; activation and enforcement are separately acknowledged."""
+    """ Customer budget intent; activation and enforcement are separately acknowledged. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

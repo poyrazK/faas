@@ -18,7 +18,7 @@ class AccountRateLimitsResponse:
     """Account-wide operation rate limits."""
 
     deploys: AccountDeployRateLimit
-    """Current fixed one-hour account deploy window."""
+    """ Current fixed one-hour account deploy window. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

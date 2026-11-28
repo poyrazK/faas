@@ -27,7 +27,7 @@ class OrgMemberResponse:
     role: OrgMemberResponseRole
     joined_at: datetime.datetime
     display_name: str | Unset = UNSET
-    """The member's display name; absent when unset."""
+    """ The member's display name; absent when unset. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

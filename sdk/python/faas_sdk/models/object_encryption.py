@@ -20,7 +20,7 @@ class ObjectEncryption:
 
     algorithm: ObjectEncryptionAlgorithm
     key_id: str | Unset = UNSET
-    """Owned arn:gregale:kms reference; required for KMS and forbidden for AES256."""
+    """ Owned arn:gregale:kms reference; required for KMS and forbidden for AES256. """
     bucket_key_enabled: bool | Unset = UNSET
     context: str | Unset = UNSET
 

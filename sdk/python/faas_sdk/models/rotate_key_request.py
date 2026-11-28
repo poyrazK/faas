@@ -20,7 +20,7 @@ class RotateKeyRequest:
     """
 
     grace_window_days: int | Unset = UNSET
-    """Days the old key keeps working after this rotation. `0` revokes it at once."""
+    """ Days the old key keeps working after this rotation. `0` revokes it at once. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

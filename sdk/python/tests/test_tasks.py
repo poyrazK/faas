@@ -5,7 +5,6 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-
 from faas_sdk.preview import Task, TaskDeliveryError, TaskDestination, TaskExecutionError, TaskSubmissionError
 
 RUN_ID = "11111111-1111-4111-8111-111111111111"

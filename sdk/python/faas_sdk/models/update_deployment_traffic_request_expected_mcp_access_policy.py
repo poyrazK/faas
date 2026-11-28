@@ -20,13 +20,13 @@ class UpdateDeploymentTrafficRequestExpectedMcpAccessPolicy:
     """
 
     resource: str
-    """Reviewed HTTPS MCP endpoint without credentials, query or fragment."""
+    """ Reviewed HTTPS MCP endpoint without credentials, query or fragment. """
     fingerprint: str
-    """Version 1 SHA-256 fingerprint returned by gregale mcp access audit."""
+    """ Version 1 SHA-256 fingerprint returned by gregale mcp access audit. """
     account_revision: int | Unset = UNSET
-    """Optional audited account edge-rule revision. Returns 409 mcp_account_revision_changed,
+    """ Optional audited account edge-rule revision. Returns 409 mcp_account_revision_changed,
     mcp_gateway_evidence_unavailable, mcp_gateway_evidence_stale, or mcp_gateway_replay_pending when the transaction
-    cannot admit promotion."""
+    cannot admit promotion. """
 
     def to_dict(self) -> dict[str, Any]:
         resource = self.resource

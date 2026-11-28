@@ -29,7 +29,7 @@ class WorkflowGuardSpec:
     all_: list[WorkflowGuardSpec] | Unset = UNSET
     any_: list[WorkflowGuardSpec] | Unset = UNSET
     not_: WorkflowGuardSpec | Unset = UNSET
-    """Bounded declarative when predicate. Specify exactly one of all, any,
+    """ Bounded declarative when predicate. Specify exactly one of all, any,
     not, or ref/op/value. References select input or a direct dependency
     output using input.foo or steps.lookup.output.body.foo without template
     delimiters. Equality is type-sensitive and accepts scalar literals only.
@@ -39,12 +39,12 @@ class WorkflowGuardSpec:
     At most 32 predicate nodes, 8 levels and 16 KiB per guard. Guards are
     forbidden on on_failure/on_timeout handler targets. A false guard skips
     its step and propagates through dependencies; skipped paths do not join.
-    """
+     """
     ref: str | Unset = UNSET
-    """Input path or output path of a declared direct dependency."""
+    """ Input path or output path of a declared direct dependency. """
     op: WorkflowGuardSpecOp | Unset = UNSET
     value: bool | float | None | str | Unset = UNSET
-    """Scalar JSON literal; numeric operators require a number and exists requires a boolean."""
+    """ Scalar JSON literal; numeric operators require a number and exists requires a boolean. """
 
     def to_dict(self) -> dict[str, Any]:
         all_: list[dict[str, Any]] | Unset = UNSET

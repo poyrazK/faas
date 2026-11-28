@@ -27,11 +27,11 @@ class OperationWorkflowMissingConditionGroup:
     unassigned: bool
     missing_condition_count: int
     blocked_time: OperationWorkflowDurationDistribution
-    """One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
-    zero."""
+    """ One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
+    zero. """
     owner: str | Unset = UNSET
-    """Public refresh owner from the expected condition declaration in the latest reporting Operation pinned
-    definition."""
+    """ Public refresh owner from the expected condition declaration in the latest reporting Operation pinned
+    definition. """
 
     def to_dict(self) -> dict[str, Any]:
         contract_version = self.contract_version

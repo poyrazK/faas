@@ -27,40 +27,42 @@ class OperationWorkflowPlaybookEvidenceEvent:
     """
 
     watch_id: UUID
-    """OperationWorkflowPlaybookEvidenceEvent.watch_id. Pinned case identity or retained watch metadata."""
+    """ OperationWorkflowPlaybookEvidenceEvent.watch_id. Pinned case identity or retained watch metadata. """
     progress_id: UUID
-    """OperationWorkflowPlaybookEvidenceEvent.progress_id. Pinned case identity or retained watch metadata."""
+    """ OperationWorkflowPlaybookEvidenceEvent.progress_id. Pinned case identity or retained watch metadata. """
     subject: OperationSubject
-    """Immutable public business correlation metadata. Captured at admission and preserved through recovery and
-    redeploy. Never an ownership or authorization claim."""
+    """ Immutable public business correlation metadata. Captured at admission and preserved through recovery and
+    redeploy. Never an ownership or authorization claim. """
     workflow: str
-    """OperationWorkflowPlaybookEvidenceEvent.workflow. Pinned case identity or retained watch metadata."""
+    """ OperationWorkflowPlaybookEvidenceEvent.workflow. Pinned case identity or retained watch metadata. """
     instance_id: str
-    """OperationWorkflowPlaybookEvidenceEvent.instance_id. Pinned case identity or retained watch metadata."""
+    """ OperationWorkflowPlaybookEvidenceEvent.instance_id. Pinned case identity or retained watch metadata. """
     contract_version: int
-    """OperationWorkflowPlaybookEvidenceEvent.contract_version. Pinned case identity or retained watch metadata."""
+    """ OperationWorkflowPlaybookEvidenceEvent.contract_version. Pinned case identity or retained watch metadata.
+    """
     playbook_id: str
-    """OperationWorkflowPlaybookEvidenceEvent.playbook_id. Pinned case identity or retained watch metadata."""
+    """ OperationWorkflowPlaybookEvidenceEvent.playbook_id. Pinned case identity or retained watch metadata. """
     playbook_version: int
-    """OperationWorkflowPlaybookEvidenceEvent.playbook_version. Pinned case identity or retained watch metadata."""
+    """ OperationWorkflowPlaybookEvidenceEvent.playbook_version. Pinned case identity or retained watch metadata.
+    """
     checked_at: datetime.datetime
-    """OperationWorkflowPlaybookEvidenceEvent.checked_at. Observed case evidence clock; this is polling, not an
-    application transaction timestamp."""
+    """ OperationWorkflowPlaybookEvidenceEvent.checked_at. Observed case evidence clock; this is polling, not an
+    application transaction timestamp. """
     changes: list[OperationWorkflowPlaybookEvidenceChange]
-    """OperationWorkflowPlaybookEvidenceEvent.changes. Grouped changes in requirement status or diagnostic reason;
-    excludes observation clocks and report counters."""
+    """ OperationWorkflowPlaybookEvidenceEvent.changes. Grouped changes in requirement status or diagnostic reason;
+    excludes observation clocks and report counters. """
     deadline_at: datetime.datetime | Unset = UNSET
-    """OperationWorkflowPlaybookEvidenceEvent.deadline_at. Original expected-result deadline when configured."""
+    """ OperationWorkflowPlaybookEvidenceEvent.deadline_at. Original expected-result deadline when configured. """
     business_outcome: OperationWorkflowPlaybookBusinessOutcome | Unset = UNSET
-    """OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen
+    """ OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen
     playbook expectation. Independent of human completion and evidence satisfaction; changed guidance never silently
-    changes the expected outcome."""
+    changes the expected outcome. """
     outcome_change: OperationWorkflowPlaybookOutcomeChange | Unset = UNSET
-    """OperationWorkflowPlaybookOutcomeChange. Saved before/after playbook result observation, separate from
-    checklist review and business causation."""
+    """ OperationWorkflowPlaybookOutcomeChange. Saved before/after playbook result observation, separate from
+    checklist review and business causation. """
     platform_tenant_id: UUID | Unset = UNSET
-    """OperationWorkflowPlaybookEvidenceEvent.platform_tenant_id. Exact evidence customer, included only for
-    operator watches and deliveries."""
+    """ OperationWorkflowPlaybookEvidenceEvent.platform_tenant_id. Exact evidence customer, included only for
+    operator watches and deliveries. """
 
     def to_dict(self) -> dict[str, Any]:
         watch_id = str(self.watch_id)

@@ -36,15 +36,15 @@ class AppLogDrainAnalyticsResponse:
     to: datetime.datetime
     buckets: list[AppLogDrainAnalyticsBucket]
     summary: AppLogDrainAnalyticsSummary
-    """Aggregate customer-safe delivery analytics over the requested window."""
+    """ Aggregate customer-safe delivery analytics over the requested window. """
     requested_from: datetime.datetime | Unset = UNSET
-    """Original requested lower bound before expanding to the recorded hourly observations."""
+    """ Original requested lower bound before expanding to the recorded hourly observations. """
     window_aligned: bool | Unset = UNSET
-    """True when hourly observations changed the effective bounds; from/to match the counter observation times."""
+    """ True when hourly observations changed the effective bounds; from/to match the counter observation times. """
     complete: bool | Unset = UNSET
-    """Whether every reported counter delta has a valid baseline without missing hourly samples."""
+    """ Whether every reported counter delta has a valid baseline without missing hourly samples. """
     coverage_gaps: list[str] | Unset = UNSET
-    """Missing baseline or hourly sample evidence; unknown deltas are omitted from totals."""
+    """ Missing baseline or hourly sample evidence; unknown deltas are omitted from totals. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

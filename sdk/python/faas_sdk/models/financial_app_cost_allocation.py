@@ -18,7 +18,7 @@ class FinancialAppCostAllocation:
     """Workload share of a meter cost attributed to one application."""
 
     attribution: FinancialAttribution
-    """Workload identity retained at first observation, surviving rename and deletion."""
+    """ Workload identity retained at first observation, surviving rename and deletion. """
     unit: str
     quantity: int
     net_millicents: int

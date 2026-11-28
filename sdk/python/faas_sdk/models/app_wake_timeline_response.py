@@ -40,37 +40,37 @@ class AppWakeTimelineResponse:
     """
 
     app: WakeTimelineApp
-    """Slim per-app identification embedded in `AppWakeTimelineResponse`.
+    """ Slim per-app identification embedded in `AppWakeTimelineResponse`.
     Carries only the fields the dashboard SPA needs for the
     wake-timeline header (slug + app_id). The dashboard's wider
     app list item carries template-specific
     glyph/badge fields (SLO badge, StateBadge*, QuotaLabel) that
     don't belong on the wire.
-    """
+     """
     wake_count_24h: int
-    """Selected retained instance count; keyset_v1 counts only this page. Legacy mode examines 100 recent
-    candidates before filtering."""
+    """ Selected retained instance count; keyset_v1 counts only this page. Legacy mode examines 100 recent
+    candidates before filtering. """
     wake_count_with_meta: int
-    """Denominator for at_capacity_pct — count of rows where the events.wake.boot_started LEFT JOIN succeeded."""
+    """ Denominator for at_capacity_pct — count of rows where the events.wake.boot_started LEFT JOIN succeeded. """
     at_capacity_count: int
-    """Numerator for at_capacity_pct."""
+    """ Numerator for at_capacity_pct. """
     at_capacity_pct: float
-    """Share of meta-bearing rows admitted at the per-app MaxConcurrency ceiling."""
+    """ Share of meta-bearing rows admitted at the per-app MaxConcurrency ceiling. """
     trigger_histogram: AppWakeTimelineResponseTriggerHistogram
-    """trigger → N count of WakeBootMeta.Trigger values across the meta-bearing rows. Empty {} on a fresh app,
-    never null."""
+    """ trigger → N count of WakeBootMeta.Trigger values across the meta-bearing rows. Empty {} on a fresh app,
+    never null. """
     trigger_class_histogram: AppWakeTimelineResponseTriggerClassHistogram
-    """trigger_class → N count of known user/monitor/crawler/preview_bot/unknown classifications. Empty {} on a
-    fresh app, never null."""
+    """ trigger_class → N count of known user/monitor/crawler/preview_bot/unknown classifications. Empty {} on a
+    fresh app, never null. """
     rows: list[WakeTimelineJSONRow]
-    """Retained instance records in descending started_at order. keyset_v1 breaks ties by instance ID and filters
-    before limiting; legacy mode filters 100 recent candidates."""
+    """ Retained instance records in descending started_at order. keyset_v1 breaks ties by instance ID and filters
+    before limiting; legacy mode filters 100 recent candidates. """
     as_of: datetime.datetime
-    """RFC3339Nano UTC timestamp marking the JSON envelope's authoritative 'as of' instant."""
+    """ RFC3339Nano UTC timestamp marking the JSON envelope's authoritative 'as of' instant. """
     page: AppWakeHistoryPage | Unset = UNSET
-    """Live retained instance-history page. App/window filtering precedes the bound; missing start times are
+    """ Live retained instance-history page. App/window filtering precedes the bound; missing start times are
     excluded. Counts describe this page only. Source success does not prove capture completeness, freshness or a
-    snapshot. Instance IDs stay in opaque cursors."""
+    snapshot. Instance IDs stay in opaque cursors. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

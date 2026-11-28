@@ -17,13 +17,13 @@ class CreateDatabaseSwitchRequest:
     """Restore a managed database the app binds and move the app to the copy, keeping its code."""
 
     database_id: UUID
-    """The managed database the app's bindings point at."""
+    """ The managed database the app's bindings point at. """
     name: str
-    """Name of the restored copy; it becomes the app's database."""
+    """ Name of the restored copy; it becomes the app's database. """
     point_in_time: datetime.datetime
-    """A time inside the database's restore range. Writes after it stay only in the source database."""
+    """ A time inside the database's restore range. Writes after it stay only in the source database. """
     scope: str | Unset = UNSET
-    """The environment whose bindings move; empty is the default scope."""
+    """ The environment whose bindings move; empty is the default scope. """
 
     def to_dict(self) -> dict[str, Any]:
         database_id = str(self.database_id)

@@ -68,18 +68,20 @@ class BindingApplicationAckTarget:
     application_ack: BindingApplicationAckTargetApplicationAck | Unset = UNSET
     application_ack_at: datetime.datetime | Unset = UNSET
     process_generation: str | Unset = UNSET
-    """Active execution identity; absent for legacy or retired processes."""
+    """ Active execution identity; absent for legacy or retired processes. """
     application_ack_generation: str | Unset = UNSET
-    """Execution identity supplied in the application ACK; strict adoption requires it to match process_generation."""
+    """ Execution identity supplied in the application ACK; strict adoption requires it to match process_generation.
+    """
     reload_status: BindingApplicationAckTargetReloadStatus | Unset = UNSET
-    """Derived status for this workload and its secret projection and notification."""
+    """ Derived status for this workload and its secret projection and notification. """
     reload_reason: BindingApplicationAckTargetReloadReason | Unset = UNSET
-    """Stable sanitized reason for reload_status; contains no raw errors or secret data."""
+    """ Stable sanitized reason for reload_status; contains no raw errors or secret data. """
     application_ack_status: BindingApplicationAckTargetApplicationAckStatus | Unset = UNSET
-    """Derived status for this workload and its application acknowledgement, including process-generation fencing."""
+    """ Derived status for this workload and its application acknowledgement, including process-generation fencing.
+    """
     application_ack_reason: BindingApplicationAckTargetApplicationAckReason | Unset = UNSET
-    """Stable sanitized reason for application_ack_status; contains no generation values, raw errors or secret
-    data."""
+    """ Stable sanitized reason for application_ack_status; contains no generation values, raw errors or secret
+    data. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

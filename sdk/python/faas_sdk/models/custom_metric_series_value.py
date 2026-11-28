@@ -19,7 +19,7 @@ class CustomMetricSeriesValue:
     """One labelled series of a custom metric (from OTLP data point attributes)."""
 
     key: str
-    """Canonical k=v,... form, keys sorted; pass it as labels to the history endpoint."""
+    """ Canonical k=v,... form, keys sorted; pass it as labels to the history endpoint. """
     labels: CustomMetricSeriesValueLabels
     value: float
     observed_at: datetime.datetime

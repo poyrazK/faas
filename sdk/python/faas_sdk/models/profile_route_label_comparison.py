@@ -28,13 +28,13 @@ class ProfileRouteLabelComparison:
     minimum_percent: float = 80.0
     maximum_change_percentage_points: float = 20.0
     baseline: ProfileRouteLabelCoverage | Unset = UNSET
-    """Application-reported labeled request entries in retained whole captures divided by weighted observed
+    """ Application-reported labeled request entries in retained whole captures divided by weighted observed
     requests in the deployment window. Boundary captures are excluded without extrapolation. This is not proof of
-    full request instrumentation. Counts above observed traffic cannot be reconciled."""
+    full request instrumentation. Counts above observed traffic cannot be reconciled. """
     candidate: ProfileRouteLabelCoverage | Unset = UNSET
-    """Application-reported labeled request entries in retained whole captures divided by weighted observed
+    """ Application-reported labeled request entries in retained whole captures divided by weighted observed
     requests in the deployment window. Boundary captures are excluded without extrapolation. This is not proof of
-    full request instrumentation. Counts above observed traffic cannot be reconciled."""
+    full request instrumentation. Counts above observed traffic cannot be reconciled. """
     delta_percentage_points: float | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

@@ -28,8 +28,8 @@ class WorkflowRecoveryAutomaticQueue:
     """
 
     policy: WorkflowRecoveryPolicyResponse
-    """Current recovery policy with trusted update actor and scheduler status. A versioned policy replacement
-    resets its automatic failure pause and suppresses older pending automatic actions."""
+    """ Current recovery policy with trusted update actor and scheduler status. A versioned policy replacement
+    resets its automatic failure pause and suppresses older pending automatic actions. """
     observed_at: datetime.datetime
     pending: int
     outstanding: int
@@ -38,10 +38,10 @@ class WorkflowRecoveryAutomaticQueue:
     entries: list[WorkflowRecoveryAutomaticQueueEntry]
     truncated: bool
     health_incident: WorkflowRecoveryHealthIncident | Unset = UNSET
-    """Latest retained health incident per app across policy versions. Reason changes do not create repeated
+    """ Latest retained health incident per app across policy versions. Reason changes do not create repeated
     alerts. Unknown snapshots defer initial capture and cannot declare recovery. Disabling alerts closes silently;
     healthy or inactive observations close with recovery only after alert capture. Historical webhook payloads
-    remain immutable."""
+    remain immutable. """
     cooldown_until: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

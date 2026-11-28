@@ -21,9 +21,9 @@ class WorkflowDiagnosticBlocker:
 
     code: WorkflowDiagnosticBlockerCode
     message: str
-    """Fixed explanation without private values."""
+    """ Fixed explanation without private values. """
     step_name: str | Unset = UNSET
-    """Affected step when the planner blocker is step-specific."""
+    """ Affected step when the planner blocker is step-specific. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -24,10 +24,11 @@ class WorkflowDiagnosticStep:
     attempt: int
     retry_base: int
     retry_eligible: bool | Unset = UNSET
-    """Advisory manual HTTP step retry eligibility using the captured graph and current quota. Absent means
-    unavailable or ineligible. Actual retry rechecks state and quota."""
+    """ Advisory manual HTTP step retry eligibility using the captured graph and current quota. Absent means
+    unavailable or ineligible. Actual retry rechecks state and quota. """
     retry_reopened_steps: list[str] | Unset = UNSET
-    """Skipped dependency descendants that would reopen with this manual retry. Omitted when empty or ineligible."""
+    """ Skipped dependency descendants that would reopen with this manual retry. Omitted when empty or ineligible.
+    """
     next_retry_at: datetime.datetime | Unset = UNSET
     next_check_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

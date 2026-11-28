@@ -40,7 +40,7 @@ class EdgeRuleMatchExpr:
     all_: list[EdgeRuleMatchExpr] | Unset = UNSET
     any_: list[EdgeRuleMatchExpr] | Unset = UNSET
     not_: EdgeRuleMatchExpr | Unset = UNSET
-    """Match condition, ANDed with the rule's fixed selectors. A node
+    """ Match condition, ANDed with the rule's fixed selectors. A node
     is exactly one of all, any, not, or a field/op leaf. Fields: method,
     path, host, client_ip, country, asn (the client IP's
     autonomous system, e.g. 13335 or AS13335), ua_family (the
@@ -60,13 +60,13 @@ class EdgeRuleMatchExpr:
     field). Depth at most 4,
     at most 32 nodes, 64 values per leaf, values and regexes at most 256
     bytes. An untrusted client IP, or its unknown country or ASN, is absent.
-    """
+     """
     field: str | Unset = UNSET
     op: EdgeRuleMatchExprOp | Unset = UNSET
     value: str | Unset = UNSET
     values: list[str] | Unset = UNSET
     list_: str | Unset = UNSET
-    """Account list name for op in_list."""
+    """ Account list name for op in_list. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -18,13 +18,13 @@ class SecurityActivityEvent:
 
     at: datetime.datetime
     kind: str
-    """Audit event kind, e.g. auth.session.created or api_key.created."""
+    """ Audit event kind, e.g. auth.session.created or api_key.created. """
     summary: str
-    """Fixed English phrase for the kind."""
+    """ Fixed English phrase for the kind. """
     ip: str | Unset = UNSET
-    """Client address recorded with the event."""
+    """ Client address recorded with the event. """
     detail: str | Unset = UNSET
-    """Sign-in method, provider or key label, when recorded."""
+    """ Sign-in method, provider or key label, when recorded. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

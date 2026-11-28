@@ -17,13 +17,13 @@ class DailyUsagePoint:
     """One day in the account's trailing 30 UTC calendar day usage trend."""
 
     date: datetime.date
-    """UTC calendar day."""
+    """ UTC calendar day. """
     gb_hours: float
-    """Account-wide GB-hours consumed on this day. Informational; uses the usage summary conversion."""
+    """ Account-wide GB-hours consumed on this day. Informational; uses the usage summary conversion. """
     top_app_slug: str | Unset = UNSET
-    """Slug of the app contributing the most GB-hours on this day."""
+    """ Slug of the app contributing the most GB-hours on this day. """
     top_app_gb_hours: float | Unset = UNSET
-    """GB-hours consumed by top_app_slug on this day."""
+    """ GB-hours consumed by top_app_slug on this day. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -24,11 +24,11 @@ class WakeTimelinePage:
     mode: WakeTimelinePageMode
     complete: bool
     since: datetime.datetime | Unset = UNSET
-    """Normalized original exclusive lower bound; omitted when no lower bound was supplied."""
+    """ Normalized original exclusive lower bound; omitted when no lower bound was supplied. """
     cursor: str | Unset = UNSET
-    """Echo of the supplied opaque page cursor."""
+    """ Echo of the supplied opaque page cursor. """
     next_cursor: str | Unset = UNSET
-    """Opaque continuation for the same account/app/wake/since/limit. Omitted on terminal retained pages."""
+    """ Opaque continuation for the same account/app/wake/since/limit. Omitted on terminal retained pages. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

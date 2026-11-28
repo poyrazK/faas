@@ -41,49 +41,49 @@ class OperationWorkflowStateHistoryEntry:
     occurred_at: datetime.datetime
     published_at: datetime.datetime
     outcome_link: OperationWorkflowOutcomeLink | Unset = UNSET
-    """Observed report-to-outcome path on the same retained history page. Links reported sequence without
-    establishing business causation; durations are meaningful only for linked status."""
+    """ Observed report-to-outcome path on the same retained history page. Links reported sequence without
+    establishing business causation; durations are meaningful only for linked status. """
     change_reason: OperationWorkflowChangeReason | Unset = UNSET
-    """Optional application-reported explanation tied to a business decision fact in the same transaction and
+    """ Optional application-reported explanation tied to a business decision fact in the same transaction and
     Operation and workflow instance and pinned version. It describes application reasoning and grants no authority.
-   """
+    """
     comparison: OperationWorkflowRevisionComparison | Unset = UNSET
-    """Derived comparison with the preceding retained report on this history page in the same workflow run and
-    tenant. Gaps and unavailable baselines prevent inferred changes or causal claims."""
+    """ Derived comparison with the preceding retained report on this history page in the same workflow run and
+    tenant. Gaps and unavailable baselines prevent inferred changes or causal claims. """
     selected_paths: list[OperationWorkflowPathSelection] | Unset = UNSET
     resolution_verifications: list[OperationWorkflowResolutionVerification] | Unset = UNSET
-    """Current retained-evidence status for verification obligations in this history report."""
+    """ Current retained-evidence status for verification obligations in this history report. """
     depends_on: list[OperationWorkflowDependency] | Unset = UNSET
-    """At this retained historical revision, full replacement snapshot of direct prerequisite references."""
+    """ At this retained historical revision, full replacement snapshot of direct prerequisite references. """
     dependencies_only: bool | Unset = UNSET
-    """At this retained historical revision, same-state metadata update mutually exclusive with other metadata-only
-    flags."""
+    """ At this retained historical revision, same-state metadata update mutually exclusive with other metadata-only
+    flags. """
     outcome_code: str | Unset = UNSET
-    """At this retained historical revision, explicit application-defined business result for a declared terminal
-    state."""
+    """ At this retained historical revision, explicit application-defined business result for a declared terminal
+    state. """
     outcome_description: str | Unset = UNSET
-    """At this retained historical revision, public UTF-8 description limited to 512 bytes without control
-    characters. Required when outcome_code is supplied."""
+    """ At this retained historical revision, public UTF-8 description limited to 512 bytes without control
+    characters. Required when outcome_code is supplied. """
     outcome_only: bool | Unset = UNSET
-    """At this retained historical revision, same-state terminal outcome report. Requires from_state equal to state
+    """ At this retained historical revision, same-state terminal outcome report. Requires from_state equal to state
     and no milestone evidence. Mutually exclusive with deadline_only and blockers_only. SDKs preserve current
-    blockers and deadline."""
+    blockers and deadline. """
     deadline_at: datetime.datetime | Unset = UNSET
-    """At this retained historical revision, optional application-reported due time. Omitted or empty in a report
-    clears the deadline. Transactional SDKs inherit it from their counter unless explicitly updated."""
+    """ At this retained historical revision, optional application-reported due time. Omitted or empty in a report
+    clears the deadline. Transactional SDKs inherit it from their counter unless explicitly updated. """
     deadline_only: bool | Unset = UNSET
-    """At this retained historical revision, same-state deadline snapshot update. Requires from_state equal to
-    state and no milestone evidence. Mutually exclusive with blockers_only. SDKs preserve current blockers."""
+    """ At this retained historical revision, same-state deadline snapshot update. Requires from_state equal to
+    state and no milestone evidence. Mutually exclusive with blockers_only. SDKs preserve current blockers. """
     blocker_resolutions: list[OperationWorkflowBlockerResolution] | Unset = UNSET
     blockers: list[OperationWorkflowBlocker] | Unset = UNSET
     blockers_only: bool | Unset = UNSET
-    """At this retained historical revision, same-state blocker replacement. Requires from_state equal to state and
-    no milestone evidence; not a business transition."""
+    """ At this retained historical revision, same-state blocker replacement. Requires from_state equal to state and
+    no milestone evidence; not a business transition. """
     from_state: str | Unset = UNSET
-    """App state immediately before this retained revision, when the transition was declared."""
+    """ App state immediately before this retained revision, when the transition was declared. """
     evidence_milestones: list[OperationWorkflowEvidenceMilestone] | Unset = UNSET
     platform_tenant_id: UUID | Unset = UNSET
-    """Account-owner tenant identifier attached to this report in operator feeds."""
+    """ Account-owner tenant identifier attached to this report in operator feeds. """
 
     def to_dict(self) -> dict[str, Any]:
         id = str(self.id)

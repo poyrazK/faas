@@ -19,13 +19,13 @@ class PutAppRegistryCredentialRequest:
     """
 
     registry: str
-    """Registry host. Must include explicit `https://` prefix (schemeless + http:// are rejected §https-only
+    """ Registry host. Must include explicit `https://` prefix (schemeless + http:// are rejected §https-only
     clarification; customer's Basic Auth never leaves the box over cleartext). Trailing slash optional; embedded
-    path / query / fragment rejected."""
+    path / query / fragment rejected. """
     username: str
-    """Basic Auth username (metadata, NOT sealed)."""
+    """ Basic Auth username (metadata, NOT sealed). """
     password: str
-    """Plaintext Basic Auth password. Sealed server-side; never persisted or returned."""
+    """ Plaintext Basic Auth password. Sealed server-side; never persisted or returned. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

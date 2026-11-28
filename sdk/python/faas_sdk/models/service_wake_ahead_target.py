@@ -17,11 +17,11 @@ class ServiceWakeAheadTarget:
     app_id: UUID
     slug: str
     call_share: float
-    """Share of cold wakes followed by a call to this service."""
+    """ Share of cold wakes followed by a call to this service. """
     cold_share: float
-    """Share of those calls that found it parked or woken ahead."""
+    """ Share of those calls that found it parked or woken ahead. """
     qualifies: bool
-    """The edge meets the wake-ahead thresholds."""
+    """ The edge meets the wake-ahead thresholds. """
     started: int
     used: int
     unused: int

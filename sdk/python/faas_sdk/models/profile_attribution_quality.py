@@ -27,8 +27,8 @@ class ProfileAttributionQuality:
     attributed_cpu_seconds: float
     unattributed_cpu_seconds: float
     diagnostics_complete: bool
-    """Host discard counters reconciled against the whole merged CPU capture. False for missing or inconsistent
-    counters."""
+    """ Host discard counters reconciled against the whole merged CPU capture. False for missing or inconsistent
+    counters. """
     reasons: list[ProfileAttributionReason]
     attributed_percent: float | Unset = UNSET
     unattributed_percent: float | Unset = UNSET

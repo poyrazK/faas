@@ -25,7 +25,7 @@ class RealtimeTriggerConfig:
     channel: str
     group: str
     max_concurrency: int | Unset = UNSET
-    """Parallel invocations; 0 means 1. Also capped by the plan's concurrency."""
+    """ Parallel invocations; 0 means 1. Also capped by the plan's concurrency. """
 
     def to_dict(self) -> dict[str, Any]:
         endpoint_id = str(self.endpoint_id)

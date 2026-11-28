@@ -25,11 +25,11 @@ class UploadStartRequest:
 
     app_slug: str
     total_size: int
-    """Total tarball bytes after gzip. Hard ceiling is 1 GiB; per-plan cap is enforced by the handler."""
+    """ Total tarball bytes after gzip. Hard ceiling is 1 GiB; per-plan cap is enforced by the handler. """
     sha256_hex: None | str | Unset = UNSET
-    """Optional sha256 of the tarball for build_provenance. Server does not verify."""
+    """ Optional sha256 of the tarball for build_provenance. Server does not verify. """
     deploy_options: UploadDeployOptions | Unset = UNSET
-    """Deployment metadata persisted with the upload session and applied at commit."""
+    """ Deployment metadata persisted with the upload session and applied at commit. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

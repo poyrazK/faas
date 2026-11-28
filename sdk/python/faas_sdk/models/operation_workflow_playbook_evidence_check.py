@@ -31,35 +31,36 @@ class OperationWorkflowPlaybookEvidenceCheck:
     """
 
     requirement: OperationWorkflowPlaybookEvidenceRequirement
-    """OperationWorkflowPlaybookEvidenceRequirement. One pinned live application-evidence selector per checklist
+    """ OperationWorkflowPlaybookEvidenceRequirement. One pinned live application-evidence selector per checklist
     label. Milestone selects a declared operation and milestone. Prerequisite additionally selects an exact current-
     state transition and producer, optionally an alternative group and named path. Verification selects current-
-    report blocker resolutions; absent obligations are unavailable."""
+    report blocker resolutions; absent obligations are unavailable. """
     status: OperationWorkflowPlaybookEvidenceCheckStatus
-    """OperationWorkflowPlaybookEvidenceCheck.status. Current retained evidence observation, not external proof or
-    business success."""
+    """ OperationWorkflowPlaybookEvidenceCheck.status. Current retained evidence observation, not external proof or
+    business success. """
     reason: str
-    """OperationWorkflowPlaybookEvidenceCheck.reason. Stable diagnostic code explaining the observation or
-    uncertainty."""
+    """ OperationWorkflowPlaybookEvidenceCheck.reason. Stable diagnostic code explaining the observation or
+    uncertainty. """
     checked_at: datetime.datetime
-    """OperationWorkflowPlaybookEvidenceCheck.checked_at. Case evidence observation clock; prerequisite freshness
-    retains its original evaluation clock."""
+    """ OperationWorkflowPlaybookEvidenceCheck.checked_at. Case evidence observation clock; prerequisite freshness
+    retains its original evaluation clock. """
     review_suggested: bool
-    """OperationWorkflowPlaybookEvidenceCheck.review_suggested. Completed human item currently has an unsatisfied
-    or unavailable requirement; no review is modified."""
+    """ OperationWorkflowPlaybookEvidenceCheck.review_suggested. Completed human item currently has an unsatisfied
+    or unavailable requirement; no review is modified. """
     state_revision: int | Unset = UNSET
-    """OperationWorkflowPlaybookEvidenceCheck.state_revision. Current report revision when available."""
+    """ OperationWorkflowPlaybookEvidenceCheck.state_revision. Current report revision when available. """
     reporting_operation_id: UUID | Unset = UNSET
-    """OperationWorkflowPlaybookEvidenceCheck.reporting_operation_id. Current application state-report operation."""
+    """ OperationWorkflowPlaybookEvidenceCheck.reporting_operation_id. Current application state-report operation.
+    """
     evidence: OperationWorkflowInstanceMilestoneRef | Unset = UNSET
-    """Identity and occurrence and publication times of a milestone observed for a declared workflow step."""
+    """ Identity and occurrence and publication times of a milestone observed for a declared workflow step. """
     prerequisite: OperationWorkflowRetainedMilestone | Unset = UNSET
-    """Verification of a retained app-reported prerequisite fact within the selected ownership boundary, subject,
+    """ Verification of a retained app-reported prerequisite fact within the selected ownership boundary, subject,
     workflow instance, and contract version. Verified does not attest to an external provider or authorize business
     writes. Invalidated means an applicable retained fact occurred at or after the prerequisite. Expired means the
     declared maximum evidence age has been reached at evaluation time. Invalidation takes precedence over expiry.
     Awaiting verification means no matching eligible fact is currently retained and does not prove it never
-    occurred."""
+    occurred. """
 
     def to_dict(self) -> dict[str, Any]:
         requirement = self.requirement.to_dict()

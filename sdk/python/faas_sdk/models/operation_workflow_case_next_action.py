@@ -37,27 +37,28 @@ class OperationWorkflowCaseNextAction:
     kind: OperationWorkflowCaseNextActionKind
     summary: str
     trigger: OperationWorkflowCaseNextActionTrigger
-    """Human obligation, automatic scheduled worker check or optional operator suggestion. Opening controls does
-    not perform the action."""
+    """ Human obligation, automatic scheduled worker check or optional operator suggestion. Opening controls does
+    not perform the action. """
     overdue: bool
-    """This action's own due time is at or before coordination_checked_at. Undated suggestions are never overdue."""
+    """ This action's own due time is at or before coordination_checked_at. Undated suggestions are never overdue.
+    """
     subscription_id: UUID
     sequence: int
     fulfillment_review: OperationWorkflowObligationFulfillmentReview | Unset = UNSET
-    """Bounded independent observation of the latest fulfilled case/cycle and its original or reaffirmed proof.
+    """ Bounded independent observation of the latest fulfilled case/cycle and its original or reaffirmed proof.
     Flags remain latched until explicit reaffirmation or reopening; normal workflow progress is not invalidation.
     Reasons describe retained coverage, not inferred business failure. Identical semantic observations suppress
-    owner notices."""
+    owner notices. """
     obligation: OperationWorkflowActionObligation | Unset = UNSET
-    """Stable source-and-kind identity derived from the persisted obligation epoch, including dependency-review
+    """ Stable source-and-kind identity derived from the persisted obligation epoch, including dependency-review
     revision where available. Ownership changes and deadline edits preserve the identity except a newly scheduled
-    response check-in, which defines a new check-in obligation. Older saved actions may omit identity."""
+    response check-in, which defines a new check-in obligation. Older saved actions may omit identity. """
     owner: str | Unset = UNSET
     due_at: datetime.datetime | Unset = UNSET
     evidence: list[OperationWorkflowReviewResponseLink] | Unset = UNSET
     shared_plan: bool | Unset = UNSET
-    """The originating plan or completion has references to other workflow cases. Case evidence is filtered; the
-    source controls act on the shared record."""
+    """ The originating plan or completion has references to other workflow cases. Case evidence is filtered; the
+    source controls act on the shared record. """
 
     def to_dict(self) -> dict[str, Any]:
         kind: str = self.kind

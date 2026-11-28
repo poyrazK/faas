@@ -33,15 +33,15 @@ class AccountAppSecretResponse:
     key: str
     scope: str
     secret_class: AccountAppSecretResponseSecretClass
-    """Retention treatment for this envelope: persistent values may be present in VM state, while ephemeral values
-    prohibit init and warm snapshot publication for the app scope."""
+    """ Retention treatment for this envelope: persistent values may be present in VM state, while ephemeral values
+    prohibit init and warm snapshot publication for the app scope. """
     ciphertext: str
-    """base64 age-sealed envelope. Plaintext NEVER appears on this wire."""
+    """ base64 age-sealed envelope. Plaintext NEVER appears on this wire. """
     created_at: datetime.datetime
     updated_at: datetime.datetime
     value_hash: str | Unset = UNSET
-    """16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key. Empty for older rows. Mirror of the
-    AccountAppSecretResponse / ScopedAppSecretResponse field."""
+    """ 16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key. Empty for older rows. Mirror of the
+    AccountAppSecretResponse / ScopedAppSecretResponse field. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

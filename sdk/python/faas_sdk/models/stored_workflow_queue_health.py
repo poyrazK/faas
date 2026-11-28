@@ -23,20 +23,20 @@ class StoredWorkflowQueueHealth:
 
     observed_at: datetime.datetime
     waiting_run_count: int
-    """Current pending and parked runs plus expired running leases for this stored workflow; reason counts sum to
-    this value."""
+    """ Current pending and parked runs plus expired running leases for this stored workflow; reason counts sum to
+    this value. """
     due_run_count: int
-    """Due waiting runs including capacity blockers and lease recovery."""
+    """ Due waiting runs including capacity blockers and lease recovery. """
     stale_run_count: int
-    """Running stored workflow runs whose dispatch lease has expired."""
+    """ Running stored workflow runs whose dispatch lease has expired. """
     oldest_due_age_seconds: float
-    """Age since the oldest due run became eligible, bounded by creation time; zero if none is due."""
+    """ Age since the oldest due run became eligible, bounded by creation time; zero if none is due. """
     app_running_count: int
-    """Live stored workflow dispatch claims across all workflows and tenants in this app; excludes expired leases
-    and native operation custody."""
+    """ Live stored workflow dispatch claims across all workflows and tenants in this app; excludes expired leases
+    and native operation custody. """
     app_dispatch_limit: int
     tenant_dispatch_limit: int
-    """Live claim limit per tenant within this app."""
+    """ Live claim limit per tenant within this app. """
     app_at_capacity: bool
     reason_counts: StoredWorkflowQueueHealthReasonCounts
 

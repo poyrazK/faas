@@ -24,31 +24,31 @@ class PlanAsyncRoute:
     """
 
     app: str
-    """Workload or app slug that owns the route"""
+    """ Workload or app slug that owns the route """
     name: str
-    """Stable async-route identity within the app"""
+    """ Stable async-route identity within the app """
     action: PlanAsyncRouteAction
-    """Reconciliation result; skipped means selection flags or --no-triggers leave this route untouched."""
+    """ Reconciliation result; skipped means selection flags or --no-triggers leave this route untouched. """
     match_host: str
     match_path: str
     match_methods: list[str]
     priority: int
     enabled: bool
     on_success: str | Unset = UNSET
-    """App webhook destination for successful executions"""
+    """ App webhook destination for successful executions """
     on_failure: str | Unset = UNSET
-    """App webhook destination for failed executions"""
+    """ App webhook destination for failed executions """
     retry_policy: RetryPolicyDTO | Unset = UNSET
-    """Wire shape for dispatch.RetryPolicy. max_attempts
+    """ Wire shape for dispatch.RetryPolicy. max_attempts
     is a requested total-attempt count; zero inherits the applicable
     account plan and never means unlimited. Durable invocation
     producers materialize the effective plan-capped value, and the
     scheduler re-clamps it at dispatch time to account for later plan
     downgrades.
-    """
+     """
     max_age_seconds: int | Unset = UNSET
     reason: str | Unset = UNSET
-    """Why this route is skipped, or what reconciliation does"""
+    """ Why this route is skipped, or what reconciliation does """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

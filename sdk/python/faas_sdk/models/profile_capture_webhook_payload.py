@@ -22,12 +22,12 @@ class ProfileCaptureWebhookPayload:
 
     version: int
     capture: ProfileCapture
-    """An on-demand capture. processes counts instrumented processes that saw the capture; zero means the instance
-    has no collector."""
+    """ An on-demand capture. processes counts instrumented processes that saw the capture; zero means the instance
+    has no collector. """
     capture_path: str
-    """Dashboard page of the capture."""
+    """ Dashboard page of the capture. """
     api_path: str
-    """API resource of the capture."""
+    """ API resource of the capture. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

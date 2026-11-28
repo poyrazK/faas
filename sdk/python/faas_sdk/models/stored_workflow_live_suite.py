@@ -42,11 +42,11 @@ class StoredWorkflowLiveSuite:
     outdated: bool
     observed_at: datetime.datetime
     summary: StoredWorkflowLiveSuiteCounts
-    """Current suite case counts, including unstarted and unverifiable members."""
+    """ Current suite case counts, including unstarted and unverifiable members. """
     cases: list[StoredWorkflowLiveSuiteCase]
     managed: bool | Unset = UNSET
-    """True when the suite owns durable server-managed execution and can be continued with explicit real-action
-    confirmation."""
+    """ True when the suite owns durable server-managed execution and can be continued with explicit real-action
+    confirmation. """
 
     def to_dict(self) -> dict[str, Any]:
         id = str(self.id)

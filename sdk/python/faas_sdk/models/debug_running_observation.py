@@ -29,7 +29,7 @@ class DebugRunningObservation:
     event_id: str | Unset = UNSET
     prewarm_min_instances: int | Unset = UNSET
     degraded: bool | Unset = UNSET
-    """True when one or more scheduler signals were unavailable."""
+    """ True when one or more scheduler signals were unavailable. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

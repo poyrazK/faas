@@ -21,9 +21,9 @@ class OperationWorkflowAttentionResponse:
 
     items: list[OperationWorkflowAttentionEntry]
     evaluated_at: datetime.datetime
-    """Staleness evaluation time retained across cursor pages."""
+    """ Staleness evaluation time retained across cursor pages. """
     next_cursor: str | Unset = UNSET
-    """Opaque continuation bound to account/customer role and every queue filter."""
+    """ Opaque continuation bound to account/customer role and every queue filter. """
 
     def to_dict(self) -> dict[str, Any]:
         items = []

@@ -36,16 +36,16 @@ class BindingVerificationReview:
     object_storage_write_required: bool
     queue_publish_required: bool
     inventory: AppBindingInventory
-    """Best-effort app binding metadata with explicit completeness and sanitized section issues."""
+    """ Best-effort app binding metadata with explicit completeness and sanitized section issues. """
     policy: BindingReleasePolicy
-    """Stored binding verification requirements and revision for an app deployment scope; unconfigured scopes
-    default to off."""
+    """ Stored binding verification requirements and revision for an app deployment scope; unconfigured scopes
+    default to off. """
     plan: list[BindingVerificationPlanStep]
     blockers: list[BindingCheckFinding]
     observed_check: BindingCheckReport | Unset = UNSET
-    """Safe preflight findings for the declared policy at checked_at. Coverage may be complete, partial or none; a
+    """ Safe preflight findings for the declared policy at checked_at. Coverage may be complete, partial or none; a
     passed report does not independently establish application readiness or credential use. Optional application
-    acknowledgements are version-bound self-attestations."""
+    acknowledgements are version-bound self-attestations. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

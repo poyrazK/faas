@@ -16,13 +16,13 @@ class AgentUndoRequest:
     """Chooses an agent's changes to undo: those since a time (default the last 24 hours), or the activity entries named."""
 
     since: datetime.datetime | Unset = UNSET
-    """Undo changes made at or after this time; at most 7 days ago."""
+    """ Undo changes made at or after this time; at most 7 days ago. """
     entries: list[str] | Unset = UNSET
-    """Activity entry ids to undo; when given, only they are undone."""
+    """ Activity entry ids to undo; when given, only they are undone. """
     force: bool | Unset = UNSET
-    """Also undo changes someone changed again since the agent did."""
+    """ Also undo changes someone changed again since the agent did. """
     plan_digest: str | Unset = UNSET
-    """On apply, the plan_digest of the reviewed plan."""
+    """ On apply, the plan_digest of the reviewed plan. """
 
     def to_dict(self) -> dict[str, Any]:
         since: str | Unset = UNSET

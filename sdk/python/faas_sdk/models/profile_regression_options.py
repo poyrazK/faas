@@ -27,17 +27,17 @@ class ProfileRegressionOptions:
 
     relative_increase_percent: float = 20.0
     absolute_increase_cpu_per_second: float = 0.01
-    """Absolute increase threshold for cpu_per_second mode."""
+    """ Absolute increase threshold for cpu_per_second mode. """
     minimum_profiles: int = 3
     minimum_coverage_ratio: float = 0.8
     routes: list[str] | Unset = UNSET
-    """Optional advisory route CPU/request checks using the relative and CPU/request thresholds and minimum
-    requests, regardless of the aggregate metric. Never gates rollout."""
+    """ Optional advisory route CPU/request checks using the relative and CPU/request thresholds and minimum
+    requests, regardless of the aggregate metric. Never gates rollout. """
     metric: ProfileRegressionOptionsMetric | Unset = "cpu_per_second"
     absolute_increase_cpu_seconds_per_request: float | Unset = 0.0001
-    """Required when metric is cpu_per_request."""
+    """ Required when metric is cpu_per_request. """
     minimum_requests: int | Unset = 20
-    """Required when metric is cpu_per_request; applied to each deployment window."""
+    """ Required when metric is cpu_per_request; applied to each deployment window. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

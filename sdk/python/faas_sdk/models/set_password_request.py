@@ -20,13 +20,13 @@ class SetPasswordRequest:
 
     password: str
     csrf_token: str
-    """Double-submit token from `GET /v1/auth/csrf?action=set_password`;
+    """ Double-submit token from `GET /v1/auth/csrf?action=set_password`;
     must equal the `faas_csrf` cookie that call set.
-    """
+     """
     current_password: str | Unset = UNSET
-    """Required when the account already has a password and the
+    """ Required when the account already has a password and the
     session carries no step-up from the last 5 minutes. Ignored for OAuth-only accounts.
-    """
+     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

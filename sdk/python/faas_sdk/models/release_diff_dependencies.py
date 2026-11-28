@@ -20,7 +20,7 @@ class ReleaseDiffDependencies:
     """How the builds' SBOM packages differ. Each list holds at most 100 entries."""
 
     known: bool
-    """False when either release has no build SBOM."""
+    """ False when either release has no build SBOM. """
     added: list[ReleaseDiffPackage]
     removed: list[ReleaseDiffPackage]
     changed: list[ReleaseDiffPackage]

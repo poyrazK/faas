@@ -22,7 +22,7 @@ class AppCostMeter:
 
     meter: str
     coverage: AppCostCoverage
-    """Source sampling windows with per-app quantity coverage explicitly unknown."""
+    """ Source sampling windows with per-app quantity coverage explicitly unknown. """
     quantity: int
     net_millicents: int
     allocations: list[FinancialAppCostAllocation]

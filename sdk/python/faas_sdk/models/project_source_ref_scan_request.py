@@ -20,27 +20,27 @@ class ProjectSourceRefScanRequest:
     """Connected GitHub repository input for POST /v1/projects/scan/source-ref."""
 
     repo: str
-    """GitHub owner/name to fetch through the connected installation."""
+    """ GitHub owner/name to fetch through the connected installation. """
     ref: str
-    """Branch, tag, or commit ref to scan."""
+    """ Branch, tag, or commit ref to scan. """
     project_slug: str
     app_slugs: ProjectSourceRefScanRequestAppSlugs | Unset = UNSET
-    """App allocations for this connected repository review. Keys are exact service names. Existing project apps
-    keep their names; new names are checked for format, reservation and availability without being allocated."""
+    """ App allocations for this connected repository review. Keys are exact service names. Existing project apps
+    keep their names; new names are checked for format, reservation and availability without being allocated. """
     repo_full_name: str | Unset = UNSET
-    """Repository binding stored if the plan is later applied; defaults to repo."""
+    """ Repository binding stored if the plan is later applied; defaults to repo. """
     production_branch: str | Unset = "main"
     install_id: int | Unset = UNSET
-    """Optional connected installation id. Omit to resolve the single installation that can access repo."""
+    """ Optional connected installation id. Omit to resolve the single installation that can access repo. """
     only: list[str] | Unset = UNSET
     exclude: list[str] | Unset = UNSET
     environment: str | Unset = UNSET
-    """Environment slug applied to deployments created by this scan"""
+    """ Environment slug applied to deployments created by this scan """
     no_triggers: bool | Unset = False
     migration: bool | Unset = False
-    """Prepare a manual migration: preserve repository service names, suggest project-prefixed app names, leave the
+    """ Prepare a manual migration: preserve repository service names, suggest project-prefixed app names, leave the
     project unbound from GitHub push deployments and suppress schedules and async routes. Credentials remain inside
-    the GitHub integration."""
+    the GitHub integration. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

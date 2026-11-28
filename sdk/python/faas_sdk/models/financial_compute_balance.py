@@ -42,18 +42,18 @@ class FinancialComputeBalance:
     held: bool
     observed_at: datetime.datetime
     egress: FinancialEgressBalance | Unset = UNSET
-    """Egress contribution to a shared account compute and egress budget. Its funding allowance is pinned to the
+    """ Egress contribution to a shared account compute and egress budget. Its funding allowance is pinned to the
     lowest recorded grant for the UTC month; increases benefit funding in a new month. Funded interface bytes
     include framing margin. Unused or uncertain credits commit conservatively after physical absence; invoice usage
-    remains measured bytes."""
+    remains measured bytes. """
     app_id: UUID | Unset = UNSET
     job_id: UUID | Unset = UNSET
     project_id: UUID | Unset = UNSET
-    """The capped project of a strict project budget (amendment 1): one gross book shared by every app in the
-    project. Jobs are not covered."""
+    """ The capped project of a strict project budget (amendment 1): one gross book shared by every app in the
+    project. Jobs are not covered. """
     environment_id: UUID | Unset = UNSET
-    """The capped environment of a strict environment budget (amendment 2): one gross book shared by every
-    deployment that runs in the environment. Capacity floors and jobs are not covered."""
+    """ The capped environment of a strict environment budget (amendment 2): one gross book shared by every
+    deployment that runs in the environment. Capacity floors and jobs are not covered. """
     account_id: UUID | Unset = UNSET
     scope_kind: FinancialComputeBalanceScopeKind | Unset = UNSET
     basis: FinancialComputeBalanceBasis | Unset = UNSET

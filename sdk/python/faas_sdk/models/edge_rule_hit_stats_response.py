@@ -17,12 +17,12 @@ class EdgeRuleHitStatsResponse:
 
     rule_id: str
     matched: int
-    """Requests an enforced rule matched."""
+    """ Requests an enforced rule matched. """
     logged: int
-    """Requests a log-mode rule matched."""
+    """ Requests a log-mode rule matched. """
     series: list[int] | Unset = UNSET
-    """With series=true, matched plus logged per hour; the first value is the hour starting at since, the last the
-    current hour."""
+    """ With series=true, matched plus logged per hour; the first value is the hour starting at since, the last the
+    current hour. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -23,15 +23,15 @@ class StoredWorkflowLiveSuiteComparison:
     """
 
     baseline: StoredWorkflowLiveSuiteSummary
-    """Retained suite identity and linked-run counts. Listing is not an assertion verdict."""
+    """ Retained suite identity and linked-run counts. Listing is not an assertion verdict. """
     candidate: StoredWorkflowLiveSuiteSummary
-    """Retained suite identity and linked-run counts. Listing is not an assertion verdict."""
+    """ Retained suite identity and linked-run counts. Listing is not an assertion verdict. """
     baseline_outdated: bool
     candidate_outdated: bool
     observed_at: datetime.datetime
     summary: StoredWorkflowLiveSuiteComparisonCounts
-    """Disjoint case classifications; all categories sum to total. Zero regressions alone is not evidence that the
-    candidate passed."""
+    """ Disjoint case classifications; all categories sum to total. Zero regressions alone is not evidence that the
+    candidate passed. """
     cases: list[StoredWorkflowLiveSuiteCaseComparison]
 
     def to_dict(self) -> dict[str, Any]:

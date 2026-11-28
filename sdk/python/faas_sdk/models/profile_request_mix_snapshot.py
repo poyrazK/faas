@@ -33,12 +33,12 @@ class ProfileRequestMixSnapshot:
     reason: str
     warnings: list[str]
     baseline: ProfileRequestMixWindow | Unset = UNSET
-    """Frozen request-count summary for one profile query window."""
+    """ Frozen request-count summary for one profile query window. """
     candidate: ProfileRequestMixWindow | Unset = UNSET
-    """Frozen request-count summary for one profile query window."""
+    """ Frozen request-count summary for one profile query window. """
     route_difference: float | Unset = UNSET
-    """Frozen total variation distance in percentage points; omitted for truncated or unavailable route
-    distributions."""
+    """ Frozen total variation distance in percentage points; omitted for truncated or unavailable route
+    distributions. """
     status_difference: float | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

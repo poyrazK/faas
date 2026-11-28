@@ -21,14 +21,14 @@ class OperationWorkflowReviewResponseDecisionRequest:
     """
 
     kind: OperationWorkflowReviewResponseDecisionRequestKind
-    """OperationWorkflowReviewResponseDecisionRequest.kind. Human intent; pause keeps check-ins active and does not
-    stop application execution."""
+    """ OperationWorkflowReviewResponseDecisionRequest.kind. Human intent; pause keeps check-ins active and does not
+    stop application execution. """
     reason: str
-    """OperationWorkflowReviewResponseDecisionRequest.reason. Nonblank UTF-8 explanation up to 1024 bytes; line
-    breaks and tabs allowed."""
+    """ OperationWorkflowReviewResponseDecisionRequest.reason. Nonblank UTF-8 explanation up to 1024 bytes; line
+    breaks and tabs allowed. """
     health_fingerprint: str
-    """OperationWorkflowReviewResponseDecisionRequest.health_fingerprint. Digest from the sampled health the
-    operator reviewed; absent, legacy or changed observations conflict."""
+    """ OperationWorkflowReviewResponseDecisionRequest.health_fingerprint. Digest from the sampled health the
+    operator reviewed; absent, legacy or changed observations conflict. """
 
     def to_dict(self) -> dict[str, Any]:
         kind: str = self.kind

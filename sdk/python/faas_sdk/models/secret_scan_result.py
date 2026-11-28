@@ -35,20 +35,20 @@ class SecretScanResult:
     status: str
     findings: list[SecretFinding]
     scanned_at: datetime.datetime | Unset = UNSET
-    """RFC 3339 UTC. Empty when the deployment hasn't been
+    """ RFC 3339 UTC. Empty when the deployment hasn't been
     secret-scanned yet.
-    """
+     """
     image_digest: str | Unset = UNSET
-    """OCI digest the scan ran against. Mirrors
+    """ OCI digest the scan ran against. Mirrors
     `ScanResult.image_digest` for cross-pipeline
     comparison. Empty for older rows.
-    """
+     """
     error: str | Unset = UNSET
-    """In-band explanation when the audit row is unreadable
+    """ In-band explanation when the audit row is unreadable
     (jsonb decode failed). Mirrors `ScanResult.error`.
     Empty on the success path — `status` carries the
     closed-set signal there.
-    """
+     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

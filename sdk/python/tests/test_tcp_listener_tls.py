@@ -3,8 +3,9 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from faas_sdk.preview.api.apps import create_app_tcp_listener, update_app_tcp_listener
-from faas_sdk.client import AuthenticatedClient
 from faas_sdk.preview.models import CreateTCPListenerRequest, TCPListenerTLSConfig, UpdateTCPListenerRequest
+
+from faas_sdk.client import AuthenticatedClient
 
 
 def test_generated_tls_intent_survives_real_http_transport():

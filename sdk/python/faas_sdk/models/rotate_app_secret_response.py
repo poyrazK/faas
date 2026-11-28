@@ -27,7 +27,7 @@ class RotateAppSecretResponse:
     key: str
     rotated_at: datetime.datetime
     kid: str | Unset = UNSET
-    """age-1... recipient string of the host identity that sealed this row. Empty if kid was not stampable."""
+    """ age-1... recipient string of the host identity that sealed this row. Empty if kid was not stampable. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

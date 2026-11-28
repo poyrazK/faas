@@ -17,20 +17,20 @@ class AgentBudgetResponse:
     """An agent connection's monthly budget for always-on capacity, and the always-on cost its changes keep running."""
 
     source: AgentBudgetResponseSource
-    """Where the budget comes from."""
+    """ Where the budget comes from. """
     spent_cents: int
-    """Always-on cost a month that the agent's changes keep running, priced at the overage rate and rounded up to
-    the cent. It does not reset each month; lowering capacity gives budget back."""
+    """ Always-on cost a month that the agent's changes keep running, priced at the overage rate and rounded up to
+    the cent. It does not reset each month; lowering capacity gives budget back. """
     month: str
-    """The current UTC month (kept for compatibility; spent_cents no longer resets monthly)."""
+    """ The current UTC month (kept for compatibility; spent_cents no longer resets monthly). """
     monthly_cents: int | Unset = UNSET
-    """The budget that applies, in cents a month; absent when unlimited."""
+    """ The budget that applies, in cents a month; absent when unlimited. """
     key_monthly_cents: int | Unset = UNSET
-    """The budget set for this agent, when one was."""
+    """ The budget set for this agent, when one was. """
     key_unlimited: bool | Unset = UNSET
-    """The agent was set to have no budget of its own."""
+    """ The agent was set to have no budget of its own. """
     org_max_cents: int | Unset = UNSET
-    """The organization's ceiling on agents' budgets, when it set one."""
+    """ The organization's ceiling on agents' budgets, when it set one. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

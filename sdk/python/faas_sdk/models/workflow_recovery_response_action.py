@@ -32,15 +32,15 @@ class WorkflowRecoveryResponseAction:
     position: int
     run_id: UUID
     cancellation: WorkflowRecoveryCancellationRequest | Unset = UNSET
-    """Exact admitted recovery item and generation reviewed by an operator. Preview is advisory and commit rechecks
-    eligibility. Operator identity is resolved from authentication."""
+    """ Exact admitted recovery item and generation reviewed by an operator. Preview is advisory and commit rechecks
+    eligibility. Operator identity is resolved from authentication. """
     retry: EventRecoveryRequest | Unset = UNSET
-    """Select routing failures (default) or the latest replayable retained execution per application event
+    """ Select routing failures (default) or the latest replayable retained execution per application event
     consumer. With parent_job_id, saved parent failures remain selectable even when execution or receipt evidence
     has disappeared; admission skips changes rather than following newer work. Ordinary execution mode includes
     publication and materialized backfill recipients, excludes workflows and object notifications, and requires
     retained admission and execution records. Native workflow mode requires explicit workflow_runs and never selects
-    event recipients. Creation freezes its own selection; preview is advisory."""
+    event recipients. Creation freezes its own selection; preview is advisory. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

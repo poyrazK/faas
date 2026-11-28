@@ -27,28 +27,28 @@ class TestAlertPresetResponse:
     """
 
     status: TestAlertPresetResponseStatus
-    """Always "sent" on 200. A dispatch failure returns 502
+    """ Always "sent" on 200. A dispatch failure returns 502
     with an RFC 7807 problem document (NOT this shape).
-    """
+     """
     test: bool
-    """Always true on 200. Discriminator customers can key off
+    """ Always true on 200. Discriminator customers can key off
     in their webhook receiver to skip production alerting
     paths (e.g. PagerDuty incidents) for test dispatches.
-    """
+     """
     delivery_id: str
-    """32-char lowercase hex identifier for this dispatch
+    """ 32-char lowercase hex identifier for this dispatch
     (16 random bytes from crypto/rand encoded as hex). The
     audit log row (`alert_preset.test_sent`) carries the
     same delivery_id so the customer can correlate by
     timestamp + delivery_id without leaking via UUID dashes.
-    """
+     """
     attempts: int
-    """Number of dispatch attempts the webhookout.Dispatcher
+    """ Number of dispatch attempts the webhookout.Dispatcher
     made before reaching the final state (1..MaxAttempts).
     Customers can use this to tune their receiver's SLA
     (e.g. a successful first attempt vs. a successful
     retry after a transient 502 from the receiver).
-    """
+     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

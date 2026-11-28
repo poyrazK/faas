@@ -23,37 +23,37 @@ class ProjectScanRequest:
     """Multipart body for POST /v1/projects/scan (dry-run)."""
 
     source: File
-    """tar.gz of the repo root."""
+    """ tar.gz of the repo root. """
     release_config: str | Unset = UNSET
-    """JSON-encoded ProjectReleaseConfigRequest for atomic-config-verify; contains only non-secret workload
-    variables."""
+    """ JSON-encoded ProjectReleaseConfigRequest for atomic-config-verify; contains only non-secret workload
+    variables. """
     migration: bool | Unset = False
-    """Preserve repository service identities and suggest project-prefixed app names. Requires no_triggers and no
-    repository push binding; apply repeats the reviewed setting."""
+    """ Preserve repository service identities and suggest project-prefixed app names. Requires no_triggers and no
+    repository push binding; apply repeats the reviewed setting. """
     app_slugs: ProjectScanRequestAppSlugs | Unset = UNSET
-    """Exact repository service names mapped to Gregale app names. Existing project members retain their names.
+    """ Exact repository service names mapped to Gregale app names. Existing project members retain their names.
     Names are checked for format, reservation and availability; they are never allocated by scan. Multipart clients
-    send this field as JSON."""
+    send this field as JSON. """
     project_slug: str | Unset = UNSET
-    """kebab slug; default = repo dir basename"""
+    """ kebab slug; default = repo dir basename """
     repo_full_name: str | Unset = UNSET
-    """GitHub owner/name to persist for push reconciliation"""
+    """ GitHub owner/name to persist for push reconciliation """
     production_branch: str | Unset = UNSET
     install_id: int | Unset = UNSET
-    """GitHub installation id (with --repository or --repo); 0 for unbound repos"""
+    """ GitHub installation id (with --repository or --repo); 0 for unbound repos """
     only: str | Unset = UNSET
-    """CSV of workload names to include (others skipped)"""
+    """ CSV of workload names to include (others skipped) """
     environment: str | Unset = UNSET
-    """Environment slug used to scope all discovered workloads"""
+    """ Environment slug used to scope all discovered workloads """
     no_triggers: bool | Unset = False
-    """Leave trigger and async-route declarations and existing project trigger/route state unchanged for this
-    scan/apply pair."""
+    """ Leave trigger and async-route declarations and existing project trigger/route state unchanged for this
+    scan/apply pair. """
     platform_tenant_required: bool | Unset = UNSET
-    """Override the customer identity policy for selected workloads in this scan/apply pair (Hobby and above).
+    """ Override the customer identity policy for selected workloads in this scan/apply pair (Hobby and above).
     Omitted uses Compose declarations and preserves existing app policy. Apply must repeat the same override as
-    scan."""
+    scan. """
     override_freeze: str | Unset = UNSET
-    """Apply only: release frozen apps to production anyway; the reason is audited."""
+    """ Apply only: release frozen apps to production anyway; the reason is audited. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

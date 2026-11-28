@@ -30,15 +30,16 @@ class JobTaskResponse:
     attempt: int
     created_at: datetime.datetime
     input_id: str | Unset = UNSET
-    """Stable declared input identity for this task."""
+    """ Stable declared input identity for this task. """
     input_ref: str | Unset = UNSET
-    """Opaque input reference passed to the guest."""
+    """ Opaque input reference passed to the guest. """
     source_task_index: int | Unset = UNSET
-    """Original task index when this task came from replay-failed."""
+    """ Original task index when this task came from replay-failed. """
     output_manifest: JobTaskResponseOutputManifest | Unset = UNSET
-    """Versioned artifact references published by a successful task. Gregale retains metadata, not artifact bytes."""
+    """ Versioned artifact references published by a successful task. Gregale retains metadata, not artifact bytes.
+    """
     work_decision: WorkDecision | Unset = UNSET
-    """Persisted classifier decision for one execution result."""
+    """ Persisted classifier decision for one execution result. """
     outcome_code: str | Unset = UNSET
     instance_id: UUID | Unset = UNSET
     error_class: JobTaskResponseErrorClass | Unset = UNSET

@@ -19,11 +19,11 @@ class EdgeRuleRecipeSuggestionsResponse:
     """Protection recipes suggested from the app's traffic."""
 
     window: str
-    """Telemetry window the suggestions read, in days: 7d, or the plan's telemetry retention when shorter."""
+    """ Telemetry window the suggestions read, in days: 7d, or the plan's telemetry retention when shorter. """
     since: datetime.datetime
-    """Start of the telemetry window."""
+    """ Start of the telemetry window. """
     suggestions: list[EdgeRuleRecipeSuggestion]
-    """Ranked suggestions, at most five."""
+    """ Ranked suggestions, at most five. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

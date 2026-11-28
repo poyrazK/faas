@@ -24,20 +24,21 @@ class OperationWorkflowReadinessComparisonRequest:
     """Scoped request to reread and compare saved transitions. The baseline is caller-supplied advisory data."""
 
     scope: str
-    """ReadinessComparisonRequest. Explicit application environment for this comparison."""
+    """ ReadinessComparisonRequest. Explicit application environment for this comparison. """
     baseline: OperationWorkflowReadinessSnapshot
-    """Caller-held compact readiness observations for at most 100 returned transitions. No historical
-    authentication or execution authority is implied."""
+    """ Caller-held compact readiness observations for at most 100 returned transitions. No historical
+    authentication or execution authority is implied. """
     app_id: UUID | Unset = UNSET
-    """ReadinessComparisonRequest. Required explicit app UUID for customer-self requests; reject on account routes."""
+    """ ReadinessComparisonRequest. Required explicit app UUID for customer-self requests; reject on account routes.
+    """
     tenant_id: UUID | Unset = UNSET
-    """ReadinessComparisonRequest. Optional account-owned customer selector; reject on customer-self routes."""
+    """ ReadinessComparisonRequest. Optional account-owned customer selector; reject on customer-self routes. """
     change: OperationWorkflowReadinessComparisonRequestChange | Unset = UNSET
-    """ReadinessComparisonRequest. Filter after all baseline transitions have been classified; unavailable includes
-    contract and state boundaries."""
+    """ ReadinessComparisonRequest. Filter after all baseline transitions have been classified; unavailable includes
+    contract and state boundaries. """
     limit: int | Unset = 20
-    """ReadinessComparisonRequest. Maximum matching rows returned after comparison; defaults to 20 and is capped at
-    100."""
+    """ ReadinessComparisonRequest. Maximum matching rows returned after comparison; defaults to 20 and is capped at
+    100. """
 
     def to_dict(self) -> dict[str, Any]:
         scope = self.scope

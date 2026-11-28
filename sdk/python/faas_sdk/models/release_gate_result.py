@@ -20,24 +20,24 @@ class ReleaseGateResult:
     kind: ReleaseGateResultKind
     passed: bool
     observed: float
-    """The burn rate, new error groups, metric average, the release's AI metric, failed-probe percentage, or signed
-    change in percent."""
+    """ The burn rate, new error groups, metric average, the release's AI metric, failed-probe percentage, or signed
+    change in percent. """
     bound: float
-    """The value that fails the gate."""
+    """ The value that fails the gate. """
     samples: int
-    """The release's requests, new-error events, probes, metric values or AI calls."""
+    """ The release's requests, new-error events, probes, metric values or AI calls. """
     summary: str
-    """What the gate measured, in one line."""
+    """ What the gate measured, in one line. """
     baseline_bad_fraction: float | Unset = UNSET
-    """slo gates: the predecessor's bad fraction."""
+    """ slo gates: the predecessor's bad fraction. """
     baseline: float | Unset = UNSET
-    """synthetic gates: the stable revision's failed-probe percentage; metric_change gates: the metric's average
-    before the rollout."""
+    """ synthetic gates: the stable revision's failed-probe percentage; metric_change gates: the metric's average
+    before the rollout. """
     error_classes: list[str] | Unset = UNSET
-    """new_errors gates: the new groups' error classes."""
+    """ new_errors gates: the new groups' error classes. """
     not_judged: bool | Unset = UNSET
-    """True when the gate had too few samples or unreadable evidence. It did not hold the rollout; summary says
-    what it was waiting for."""
+    """ True when the gate had too few samples or unreadable evidence. It did not hold the rollout; summary says
+    what it was waiting for. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

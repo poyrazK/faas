@@ -27,65 +27,67 @@ class OperationWorkflowState:
     """Latest app-reported state for one declared workflow instance, including terminal and staleness indicators."""
 
     overdue: bool
-    """True for an active workflow at or after its application-reported deadline."""
+    """ True for an active workflow at or after its application-reported deadline. """
     workflow: str
     instance_id: str
     state: str
     terminal: bool
-    """True when the state is listed in terminal_states on the pinned workflow definition that reported it."""
+    """ True when the state is listed in terminal_states on the pinned workflow definition that reported it. """
     stale: bool
-    """True when the app-reported occurrence time plus the pinned state_stale_after threshold is at or before the
-    read time."""
+    """ True when the app-reported occurrence time plus the pinned state_stale_after threshold is at or before the
+    read time. """
     occurred_at: datetime.datetime
-    """App-reported time when the current state became true; used for stale-state age."""
+    """ App-reported time when the current state became true; used for stale-state age. """
     revision: int
     contract_version: int
     updated_at: datetime.datetime
     change_reason: OperationWorkflowChangeReason | Unset = UNSET
-    """Optional application-reported explanation tied to a business decision fact in the same transaction and
+    """ Optional application-reported explanation tied to a business decision fact in the same transaction and
     Operation and workflow instance and pinned version. It describes application reasoning and grants no authority.
-   """
+    """
     selected_paths: list[OperationWorkflowPathSelection] | Unset = UNSET
     sla: OperationWorkflowStateSLA | Unset = UNSET
-    """Observational SLA for the current nonterminal state visit under its pinned contract. Consecutive same-state
+    """ Observational SLA for the current nonterminal state visit under its pinned contract. Consecutive same-state
     metadata reports preserve entry time. Known history establishes the current visit from revision 1 or a
     contiguous prior different state. Gaps or inconsistent times/versions/budgets yield unknown status and omit
-    inferred timestamps/durations. Breached at due_at or later. Terminal states have no current SLA."""
+    inferred timestamps/durations. Breached at due_at or later. Terminal states have no current SLA. """
     depends_on: list[OperationWorkflowDependency] | Unset = UNSET
-    """In the latest retained state, full replacement snapshot of direct prerequisite references."""
+    """ In the latest retained state, full replacement snapshot of direct prerequisite references. """
     dependencies_only: bool | Unset = UNSET
-    """In the latest retained state, same-state metadata update mutually exclusive with other metadata-only flags."""
+    """ In the latest retained state, same-state metadata update mutually exclusive with other metadata-only flags.
+    """
     outcome_code: str | Unset = UNSET
-    """In the latest retained state, explicit application-defined business result for a declared terminal state."""
+    """ In the latest retained state, explicit application-defined business result for a declared terminal state.
+    """
     outcome_description: str | Unset = UNSET
-    """In the latest retained state, public UTF-8 description limited to 512 bytes without control characters.
-    Required when outcome_code is supplied."""
+    """ In the latest retained state, public UTF-8 description limited to 512 bytes without control characters.
+    Required when outcome_code is supplied. """
     outcome_only: bool | Unset = UNSET
-    """In the latest retained state, same-state terminal outcome report. Requires from_state equal to state and no
+    """ In the latest retained state, same-state terminal outcome report. Requires from_state equal to state and no
     milestone evidence. Mutually exclusive with deadline_only and blockers_only. SDKs preserve current blockers and
-    deadline."""
+    deadline. """
     overdue_seconds: int | Unset = UNSET
-    """Whole elapsed seconds since the missed due time."""
+    """ Whole elapsed seconds since the missed due time. """
     deadline_at: datetime.datetime | Unset = UNSET
-    """In the latest retained state, optional application-reported due time. Omitted or empty in a report clears
-    the deadline. Transactional SDKs inherit it from their counter unless explicitly updated."""
+    """ In the latest retained state, optional application-reported due time. Omitted or empty in a report clears
+    the deadline. Transactional SDKs inherit it from their counter unless explicitly updated. """
     deadline_only: bool | Unset = UNSET
-    """In the latest retained state, same-state deadline snapshot update. Requires from_state equal to state and no
-    milestone evidence. Mutually exclusive with blockers_only. SDKs preserve current blockers."""
+    """ In the latest retained state, same-state deadline snapshot update. Requires from_state equal to state and no
+    milestone evidence. Mutually exclusive with blockers_only. SDKs preserve current blockers. """
     blocker_resolutions: list[OperationWorkflowBlockerResolution] | Unset = UNSET
     report_id: UUID | Unset = UNSET
-    """Identity of the latest reported snapshot."""
+    """ Identity of the latest reported snapshot. """
     operation_id: UUID | Unset = UNSET
-    """Operation that published the latest snapshot."""
+    """ Operation that published the latest snapshot. """
     blockers: list[OperationWorkflowBlocker] | Unset = UNSET
     blockers_only: bool | Unset = UNSET
-    """In the latest retained state, same-state blocker replacement. Requires from_state equal to state and no
-    milestone evidence; not a business transition."""
+    """ In the latest retained state, same-state blocker replacement. Requires from_state equal to state and no
+    milestone evidence; not a business transition. """
     stale_after_seconds: int | Unset = UNSET
-    """App-declared age threshold for the current state when one is configured."""
+    """ App-declared age threshold for the current state when one is configured. """
     evidence_milestones: list[OperationWorkflowEvidenceMilestone] | Unset = UNSET
     platform_tenant_id: UUID | Unset = UNSET
-    """Included only for account operator feeds."""
+    """ Included only for account operator feeds. """
 
     def to_dict(self) -> dict[str, Any]:
         overdue = self.overdue

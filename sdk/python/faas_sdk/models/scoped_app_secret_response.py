@@ -55,39 +55,39 @@ class ScopedAppSecretResponse:
     scope: str
     key: str
     secret_class: ScopedAppSecretResponseSecretClass
-    """Retention class applied to the named secret in this scope; ephemeral disables init and warm captures."""
+    """ Retention class applied to the named secret in this scope; ephemeral disables init and warm captures. """
     created_at: datetime.datetime
     updated_at: datetime.datetime
     delivery_version: int
-    """Opaque monotonic version of the runtime value."""
+    """ Opaque monotonic version of the runtime value. """
     delivery_status: ScopedAppSecretResponseDeliveryStatus
     kid: str | Unset = UNSET
-    """age-1.. recipient string of the host identity that sealed this row. Empty for rows sealed before migration
-    00166. Mirrors the `kid` field on the parent `AppSecretResponse` — see that schema for the cross-reference."""
+    """ age-1.. recipient string of the host identity that sealed this row. Empty for rows sealed before migration
+    00166. Mirrors the `kid` field on the parent `AppSecretResponse` — see that schema for the cross-reference. """
     value_hash: str | Unset = UNSET
-    """16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key. Empty for older rows."""
+    """ 16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key. Empty for older rows. """
     delivered_version: int | Unset = UNSET
-    """Newest version confirmed in a successfully started runtime."""
+    """ Newest version confirmed in a successfully started runtime. """
     last_delivery_attempt_at: datetime.datetime | Unset = UNSET
     last_delivered_at: datetime.datetime | Unset = UNSET
     last_delivery_error_code: ScopedAppSecretResponseLastDeliveryErrorCode | Unset = UNSET
     last_delivered_wake_id: str | Unset = UNSET
     last_delivered_instance_id: str | Unset = UNSET
     last_runtime_reload_version: int | Unset = UNSET
-    """Secret version associated with the latest guest-init projection/signal observation; compare with
-    delivery_version to detect stale status. Not an application acknowledgement."""
+    """ Secret version associated with the latest guest-init projection/signal observation; compare with
+    delivery_version to detect stale status. Not an application acknowledgement. """
     last_runtime_reload_projection: ScopedAppSecretResponseLastRuntimeReloadProjection | Unset = UNSET
     last_runtime_reload_signal: ScopedAppSecretResponseLastRuntimeReloadSignal | Unset = UNSET
-    """Guest-init sent/queued signal outcome; does not mean the application applied the new credentials."""
+    """ Guest-init sent/queued signal outcome; does not mean the application applied the new credentials. """
     last_runtime_reload_at: datetime.datetime | Unset = UNSET
     last_runtime_reload_error_code: ScopedAppSecretResponseLastRuntimeReloadErrorCode | Unset = UNSET
     last_runtime_reload_instance_id: str | Unset = UNSET
     runtime_reload_observations: list[SecretRuntimeReloadObservation] | Unset = UNSET
-    """For this scope, includes every active runtime authorized for the secret by its deployment, even before the
-    runtime reports."""
+    """ For this scope, includes every active runtime authorized for the secret by its deployment, even before the
+    runtime reports. """
     runtime_reload_targets_complete: bool | Unset = UNSET
-    """Indicates whether this scoped row contains a complete authorized target set. Older control planes omit the
-    marker, so acknowledgement waiters must fail closed."""
+    """ Indicates whether this scoped row contains a complete authorized target set. Older control planes omit the
+    marker, so acknowledgement waiters must fail closed. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

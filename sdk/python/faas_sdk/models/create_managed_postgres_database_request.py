@@ -25,10 +25,10 @@ class CreateManagedPostgresDatabaseRequest:
 
     name: str
     request_id: UUID | Unset = UNSET
-    """Optional reserved database identity for durable workflows. Identical retries recover the same resource
-    independently of the HTTP response cache. A different reservation cannot adopt an existing name."""
+    """ Optional reserved database identity for durable workflows. Identical retries recover the same resource
+    independently of the HTTP response cache. A different reservation cannot adopt an existing name. """
     region: str | Unset = UNSET
-    """Optional. Omit it to use the platform's default placement, which GET /v1/postgres/capabilities reports."""
+    """ Optional. Omit it to use the platform's default placement, which GET /v1/postgres/capabilities reports. """
     postgres_major: int | Unset = 17
     service_class: CreateManagedPostgresDatabaseRequestServiceClass | Unset = "development"
     availability: CreateManagedPostgresDatabaseRequestAvailability | Unset = "single_zone"

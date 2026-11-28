@@ -5,9 +5,9 @@ from pathlib import Path
 
 import httpx
 import pytest
+from faas_sdk.preview import PipelineSchedule, PipelineScheduleClient, PipelineScheduleError, PipelineScope
 
 from faas_sdk import JobContract
-from faas_sdk.preview import PipelineSchedule, PipelineScheduleClient, PipelineScheduleError, PipelineScope
 
 ROOT = Path(__file__).resolve().parents[1] / "request-contracts"
 if not ROOT.exists():

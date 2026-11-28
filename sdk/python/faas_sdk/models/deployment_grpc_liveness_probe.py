@@ -16,7 +16,7 @@ class DeploymentGRPCLivenessProbe:
     """Standard gRPC health.v1 liveness probe. An omitted or empty service checks overall server health."""
 
     service: str | Unset = UNSET
-    """Service passed to the health.v1 Check request; omit it to query overall server health."""
+    """ Service passed to the health.v1 Check request; omit it to query overall server health. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

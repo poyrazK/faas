@@ -28,16 +28,16 @@ class EdgeRuleWAFAction:
     """
 
     mode: EdgeRuleWAFActionMode | Unset = "observe"
-    """warn and block require paranoia_level 1."""
+    """ warn and block require paranoia_level 1. """
     paranoia_level: int | Unset = 1
-    """CRS paranoia level. Level 2 detects more and produces more false positives."""
+    """ CRS paranoia level. Level 2 detects more and produces more false positives. """
     anomaly_threshold: int | Unset = 5
-    """Inbound anomaly score at which a request counts as a detection (one critical match scores 5)."""
+    """ Inbound anomaly score at which a request counts as a detection (one critical match scores 5). """
     exclude_rule_ids: list[int] | Unset = UNSET
-    """CRS rule IDs left out of scoring on this route, for known false positives."""
+    """ CRS rule IDs left out of scoring on this route, for known false positives. """
     inspect_body_bytes: int | Unset = 8192
-    """Request body prefix inspected. Larger and streaming bodies are inspected up to this size only; larger values
-    use more of the app's inspection budget."""
+    """ Request body prefix inspected. Larger and streaming bodies are inspected up to this size only; larger values
+    use more of the app's inspection budget. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -20,20 +20,20 @@ class OutboundRequestPolicy:
     max_in_flight: int
     request_timeout_ms: int
     max_retries: int | Unset = 0
-    """Extra attempts for bodyless GET/HEAD requests after selected transient failures. Retries share the request
-    timeout and count as one admission."""
+    """ Extra attempts for bodyless GET/HEAD requests after selected transient failures. Retries share the request
+    timeout and count as one admission. """
     response_cache_ttl_seconds: int | Unset = 0
-    """Opt-in maximum freshness for eligible bodyless GET responses. Zero disables caching; provider cache
-    directives can shorten or prohibit storage."""
+    """ Opt-in maximum freshness for eligible bodyless GET responses. Zero disables caching; provider cache
+    directives can shorten or prohibit storage. """
     circuit_breaker_failure_threshold: int | Unset = 0
-    """Consecutive transient provider failures before the integration circuit opens. Zero disables the breaker and
-    requires circuit_breaker_open_seconds to be zero too."""
+    """ Consecutive transient provider failures before the integration circuit opens. Zero disables the breaker and
+    requires circuit_breaker_open_seconds to be zero too. """
     circuit_breaker_open_seconds: int | Unset = 0
-    """Cool-down after the breaker opens; after it elapses, only one cross-replica half-open provider probe is
-    allowed. Must be set with a nonzero failure threshold."""
+    """ Cool-down after the breaker opens; after it elapses, only one cross-replica half-open provider probe is
+    allowed. Must be set with a nonzero failure threshold. """
     retry_budget_per_minute: int | Unset = 0
-    """Shared token-bucket cap on extra safe-method provider attempts per minute across gateway replicas. Capacity
-    equals the configured rate; zero disables this aggregate cap while max_retries remains the per-call ceiling."""
+    """ Shared token-bucket cap on extra safe-method provider attempts per minute across gateway replicas. Capacity
+    equals the configured rate; zero disables this aggregate cap while max_retries remains the per-call ceiling. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

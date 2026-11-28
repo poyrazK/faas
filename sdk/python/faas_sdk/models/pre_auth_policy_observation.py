@@ -20,8 +20,8 @@ class PreAuthPolicyObservation:
     """Counts for one bounded app, route, failed-response, or target-observation policy slot."""
 
     policy_id: str
-    """Bounded app, route_<index>, failures_<index>, or targets_<index> policy identifier. Index is the route's
-    current array position."""
+    """ Bounded app, route_<index>, failures_<index>, or targets_<index> policy identifier. Index is the route's
+    current array position. """
     kind: PreAuthPolicyObservationKind
     would_block: int
     result_2xx: int
@@ -30,20 +30,20 @@ class PreAuthPolicyObservation:
     result_5xx: int
     result_unknown: int
     method: str | Unset = UNSET
-    """Configured public method; omitted for the app policy."""
+    """ Configured public method; omitted for the app policy. """
     path: str | Unset = UNSET
-    """Configured public path; omitted for the app policy."""
+    """ Configured public path; omitted for the app policy. """
     target_failures: int | Unset = UNSET
-    """Selected app failures carrying a valid target identifier."""
+    """ Selected app failures carrying a valid target identifier. """
     target_threshold: int | Unset = UNSET
-    """Failures for which both bounded target shards exceeded the configured failed-response budget. Approximate
-    signal; never blocks."""
+    """ Failures for which both bounded target shards exceeded the configured failed-response budget. Approximate
+    signal; never blocks. """
     target_missing: int | Unset = UNSET
-    """Selected app failures without a target header."""
+    """ Selected app failures without a target header. """
     target_invalid: int | Unset = UNSET
-    """Selected app failures with an invalid target header."""
+    """ Selected app failures with an invalid target header. """
     target_fallback: int | Unset = UNSET
-    """Valid target failures observed with process-local fallback because central coordination was unavailable."""
+    """ Valid target failures observed with process-local fallback because central coordination was unavailable. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

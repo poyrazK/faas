@@ -28,31 +28,31 @@ class SidecarProbe:
     """
 
     test: list[str] | Unset = UNSET
-    """Legacy OCI exec form: CMD, CMD-SHELL, or NONE. Retained for startup_probe compatibility."""
+    """ Legacy OCI exec form: CMD, CMD-SHELL, or NONE. Retained for startup_probe compatibility. """
     exec_: SidecarExecProbe | Unset = UNSET
-    """Exec probe command passed as argv inside the container; no shell is implied."""
+    """ Exec probe command passed as argv inside the container; no shell is implied. """
     http_get: SidecarHTTPGetProbe | Unset = UNSET
-    """HTTP GET probe sent from inside the container."""
+    """ HTTP GET probe sent from inside the container. """
     tcp_socket: SidecarTCPSocketProbe | Unset = UNSET
-    """TCP connection probe opened from inside the container."""
+    """ TCP connection probe opened from inside the container. """
     grpc: SidecarGRPCProbe | Unset = UNSET
-    """Standard gRPC health Check RPC sent to the companion's loopback listener."""
+    """ Standard gRPC health Check RPC sent to the companion's loopback listener. """
     period_s: int | Unset = UNSET
-    """Probe interval in seconds; typed-probe default 10, legacy OCI default 30."""
+    """ Probe interval in seconds; typed-probe default 10, legacy OCI default 30. """
     interval_s: int | Unset = UNSET
-    """Legacy alias for period_s."""
+    """ Legacy alias for period_s. """
     timeout_s: int | Unset = UNSET
-    """Probe timeout in seconds; defaults to 1 for typed probes and 30 for legacy OCI probes."""
+    """ Probe timeout in seconds; defaults to 1 for typed probes and 30 for legacy OCI probes. """
     failure_threshold: int | Unset = UNSET
-    """Consecutive failures before startup fails or liveness restarts the workload; defaults to 3."""
+    """ Consecutive failures before startup fails or liveness restarts the workload; defaults to 3. """
     retries: int | Unset = UNSET
-    """Legacy alias for failure_threshold."""
+    """ Legacy alias for failure_threshold. """
     success_threshold: int | Unset = UNSET
-    """Consecutive passes required to become healthy; defaults to 1."""
+    """ Consecutive passes required to become healthy; defaults to 1. """
     initial_delay_s: int | Unset = UNSET
-    """Delay before the first probe."""
+    """ Delay before the first probe. """
     start_period_s: int | Unset = UNSET
-    """Legacy OCI liveness grace period during which failures do not count."""
+    """ Legacy OCI liveness grace period during which failures do not count. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

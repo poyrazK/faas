@@ -14,7 +14,7 @@ class RecordReleaseOutcomeCheckRequest:
     """What a person checked in the database after a release command with an unknown outcome."""
 
     note: str
-    """What was checked, for example which migrations are applied."""
+    """ What was checked, for example which migrations are applied. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

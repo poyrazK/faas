@@ -13,7 +13,7 @@ from ...types import UNSET, Response, Unset
 
 def _get_kwargs(
     *,
-    body: PasswordResetRequest | Unset = UNSET,
+    body: PasswordResetRequest | PasswordResetRequest | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
@@ -69,7 +69,7 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
-    body: PasswordResetRequest | Unset = UNSET,
+    body: PasswordResetRequest | PasswordResetRequest | Unset = UNSET,
 ) -> Response[PasswordForgotResponse200 | Problem]:
     """Request a password-reset email.
 
@@ -106,7 +106,7 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient | Client,
-    body: PasswordResetRequest | Unset = UNSET,
+    body: PasswordResetRequest | PasswordResetRequest | Unset = UNSET,
 ) -> PasswordForgotResponse200 | Problem | None:
     """Request a password-reset email.
 
@@ -138,7 +138,7 @@ def sync(
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
-    body: PasswordResetRequest | Unset = UNSET,
+    body: PasswordResetRequest | PasswordResetRequest | Unset = UNSET,
 ) -> Response[PasswordForgotResponse200 | Problem]:
     """Request a password-reset email.
 
@@ -173,7 +173,7 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
-    body: PasswordResetRequest | Unset = UNSET,
+    body: PasswordResetRequest | PasswordResetRequest | Unset = UNSET,
 ) -> PasswordForgotResponse200 | Problem | None:
     """Request a password-reset email.
 

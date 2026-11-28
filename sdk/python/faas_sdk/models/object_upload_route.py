@@ -31,9 +31,9 @@ class ObjectUploadRoute:
     key_prefix: str | Unset = UNSET
     allowed_content_types: list[str] | Unset = UNSET
     encryption: ObjectEncryption | Unset = UNSET
-    """Owned encryption selection for object writes and upload policies. KMS requires an enrolled Gregale key
+    """ Owned encryption selection for object writes and upload policies. KMS requires an enrolled Gregale key
     reference; bucket keys apply only to aws:kms. Context is canonical base64 of a bounded JSON object with unique
-    string entries."""
+    string entries. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

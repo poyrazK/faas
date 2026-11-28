@@ -32,16 +32,16 @@ class CreateManagedExecutionWorkflowRequest:
     workflow_id: str
     version: str
     max_parallel_steps: int | Unset = 1
-    """Maximum number of this workflow's Runs active at once; 0 uses the default of 1."""
+    """ Maximum number of this workflow's Runs active at once; 0 uses the default of 1. """
     failure_policy: CreateManagedExecutionWorkflowRequestFailurePolicy | Unset = "fail_fast"
-    """Stop new admissions on a failed Run, or continue steps independent of failed branches."""
+    """ Stop new admissions on a failed Run, or continue steps independent of failed branches. """
     pipeline: ExecutionPipelineOptions | Unset = UNSET
-    """Preview; v2 only. Enables durable task steps, batch expansion and explicit retries. Submit exactly one of
+    """ Preview; v2 only. Enables durable task steps, batch expansion and explicit retries. Submit exactly one of
     steps or batch. Requires FAAS_EXECUTION_PIPELINES_ENABLED plus v2 and tasks gates. Queueing and backoff count
-    toward the deadline."""
+    toward the deadline. """
     batch: ExecutionTaskBatch | Unset = UNSET
-    """Expands into independent steps for one immutable task version. Cannot be combined with steps. Item labels
-    must be unique. Account and customer/task budgets still apply to every physical attempt."""
+    """ Expands into independent steps for one immutable task version. Cannot be combined with steps. Item labels
+    must be unique. Account and customer/task budgets still apply to every physical attempt. """
     steps: list[CreateManagedExecutionWorkflowStep] | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:

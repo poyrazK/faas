@@ -61,218 +61,219 @@ class AppResponse:
     type_: AppResponseType
     ram_mb: int
     vcpu: int
-    """Plan-derived guest vCPU count. Present on read responses; explicit create-time values must match the
-    canonical plan RAM/vCPU pair."""
+    """ Plan-derived guest vCPU count. Present on read responses; explicit create-time values must match the
+    canonical plan RAM/vCPU pair. """
     cpu_millicores: AppResponseCpuMillicores
     configured_resources: AppConfiguredResources
-    """The memory and sustained CPU shape selected for each instance of this app."""
+    """ The memory and sustained CPU shape selected for each instance of this app. """
     max_concurrency: int
     concurrency_per_vm: int
     effective_limits: AppEffectiveLimits
-    """The resource, scaling, rate, and timeout envelope currently applied to an app. Values are resolved from the
-    app configuration and current plan; they describe enforcement rather than guest hardware alone."""
+    """ The resource, scaling, rate, and timeout envelope currently applied to an app. Values are resolved from the
+    app configuration and current plan; they describe enforcement rather than guest hardware alone. """
     min_instances: int
     status: AppResponseStatus
-    """Customer-visible app state. `undeployed` is projected when the app has no deployment rows; its persisted
-    lifecycle remains active until the first deploy."""
+    """ Customer-visible app state. `undeployed` is projected when the app has no deployment rows; its persisted
+    lifecycle remains active until the first deploy. """
     build_cache_hit_rate_pct: float
-    """Trailing 30-day percentage of cache-eligible deployments served from the builder cache. Zero means no cache
-    decision was recorded in the window."""
+    """ Trailing 30-day percentage of cache-eligible deployments served from the builder cache. Zero means no cache
+    decision was recorded in the window. """
     url: str
-    """Stable platform hostname for the app (for example, https://my-app.gregale.dev)."""
+    """ Stable platform hostname for the app (for example, https://my-app.gregale.dev). """
     manifest: AppManifest
-    """App manifest: environment variables, build commands, working directory, healthcheck, user, and Dockerfile-
+    """ App manifest: environment variables, build commands, working directory, healthcheck, user, and Dockerfile-
     as-source flag. The optional `env_secrets` field carries sealed-secret refs ("secret:NAME" strings) resolved by
     the host at wake time against the app_secrets table. Values are NEVER sealed ciphertext — only refs. widens the
     contract additively with `healthcheck`, `stop_signal`, `stop_grace_period` from the OCI image-config spec; old
     guest-init ignores unknown fields per JSON semantics, so the widen is wire-compatible. widens additively with
     `execution_mode`, `restart_policy`, `startup_deadline_s`, `max_retries`, and `service_replicas` — these govern
     the lifecycle contract (request vs service vs worker vs job) and the per-mode replica scaffold. Defaults
-    preserve today's behaviour (execution_mode=request, restart_policy=on-failure)."""
+    preserve today's behaviour (execution_mode=request, restart_policy=on-failure). """
     autoscale_target_rps: int
-    """Per-instance RPS target for the reactive scale-up trigger. 0 = disabled. Hobby/Pro/Scale only. When measured
-    per-instance RPS exceeds this value, the scheduler admits another instance (up to max_concurrency)."""
+    """ Per-instance RPS target for the reactive scale-up trigger. 0 = disabled. Hobby/Pro/Scale only. When measured
+    per-instance RPS exceeds this value, the scheduler admits another instance (up to max_concurrency). """
     autoscale_target_cpu_pct: int
-    """Per-instance CPU% target (1..100) for the reactive scale-up trigger. 0 = disabled. Pro/Scale only. When
+    """ Per-instance CPU% target (1..100) for the reactive scale-up trigger. 0 = disabled. Pro/Scale only. When
     measured per-instance CPU% exceeds this value, the scheduler admits another instance (up to max_concurrency).
-   """
+    """
     service_binding_fingerprint: str | Unset = UNSET
-    """Opaque fingerprint of app identity, source ownership and service binding settings. Use as the atomic
-    precondition for a reviewed service-only update."""
+    """ Opaque fingerprint of app identity, source ownership and service binding settings. Use as the atomic
+    precondition for a reviewed service-only update. """
     project_id: UUID | Unset = UNSET
-    """Parent project as a canonical hyphenated UUID. Omitted when the app is standalone. Read-only: app create and
-    update requests do not accept it."""
+    """ Parent project as a canonical hyphenated UUID. Omitted when the app is standalone. Read-only: app create and
+    update requests do not accept it. """
     visibility: AppResponseVisibility | Unset = "public"
-    """Public exposes the app through the edge; internal keeps it available only to authenticated service-to-
-    service routing. Available on every plan."""
+    """ Public exposes the app through the edge; internal keeps it available only to authenticated service-to-
+    service routing. Available on every plan. """
     workload_class: AppResponseWorkloadClass | Unset = UNSET
-    """Runtime-observed application shape. Repository scanning seeds the value and the first characterization boot
-    may replace it. Distinct from type, which selects the app-vs-function execution contract."""
+    """ Runtime-observed application shape. Repository scanning seeds the value and the first characterization boot
+    may replace it. Distinct from type, which selects the app-vs-function execution contract. """
     runtime: AppResponseRuntime | Unset = UNSET
-    """Runtime for `type: function` apps. Omit for `type: app` (the default)."""
+    """ Runtime for `type: function` apps. Omit for `type: app` (the default). """
     resource_profile: ResourceProfile | Unset = UNSET
-    """Named resource profile resolved to a stable memory and sustained CPU shape. Profiles use the existing cgroup
-    and placement controls."""
+    """ Named resource profile resolved to a stable memory and sustained CPU shape. Profiles use the existing cgroup
+    and placement controls. """
     idle_timeout_s: int | None | Unset = UNSET
     request_timeout_s: int | Unset = UNSET
-    """Configured per-app request wall-clock timeout in seconds; 0 means the plan/type default."""
+    """ Configured per-app request wall-clock timeout in seconds; 0 means the plan/type default. """
     function_concurrency: int | Unset = UNSET
-    """Requests one Node or Python function worker serves at once. 0 or 1 keeps one request per worker; the plan's
-    concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next deploy."""
+    """ Requests one Node or Python function worker serves at once. 0 or 1 keeps one request per worker; the plan's
+    concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next deploy. """
     function_callables: AppResponseFunctionCallables | Unset = UNSET
-    """Names this function's typed client may call and their app slugs, set by functions-project deploys. Stamped
-    into the guest as GREGALE_FUNCTIONS on the next deploy."""
+    """ Names this function's typed client may call and their app slugs, set by functions-project deploys. Stamped
+    into the guest as GREGALE_FUNCTIONS on the next deploy. """
     function_input_schema: AppResponseFunctionInputSchema | Unset = UNSET
-    """JSON Schema an SDK functions client's calls to this function are checked against; a call whose body does not
+    """ JSON Schema an SDK functions client's calls to this function are checked against; a call whose body does not
     match is refused with 422 function_input_invalid. Set from the function's input in gregale.yaml by CLI deploys.
-   """
+    """
     deployment_availability: AppResponseDeploymentAvailability | Unset = UNSET
-    """Present on app list/detail reads. Reports whether any deployment is currently live; this is independent from
-    the app lifecycle status and does not assert that a historical artifact is safe to restore."""
+    """ Present on app list/detail reads. Reports whether any deployment is currently live; this is independent from
+    the app lifecycle status and does not assert that a historical artifact is safe to restore. """
     deleted_at: datetime.datetime | None | Unset = UNSET
     delete_grace_until: datetime.datetime | None | Unset = UNSET
     canonical_url: str | Unset = UNSET
-    """Customer-facing URL to share. Uses the verified default custom domain when configured, otherwise the
-    platform URL."""
+    """ Customer-facing URL to share. Uses the verified default custom domain when configured, otherwise the
+    platform URL. """
     default_domain: str | Unset = UNSET
-    """Verified custom domain selected as the app's canonical host, when configured."""
+    """ Verified custom domain selected as the app's canonical host, when configured. """
     preview_of_slug: str | Unset = UNSET
-    """Parent app slug for a pull-request or developer preview. Absent for production apps."""
+    """ Parent app slug for a pull-request or developer preview. Absent for production apps. """
     preview_pr_number: int | Unset = UNSET
-    """Pull-request number for a GitHub preview. Zero identifies a developer preview; absent for production apps."""
+    """ Pull-request number for a GitHub preview. Zero identifies a developer preview; absent for production apps.
+    """
     preview_pr_state: AppResponsePreviewPrState | Unset = UNSET
-    """Preview lifecycle state. Absent for production apps."""
+    """ Preview lifecycle state. Absent for production apps. """
     preview_expires_at: datetime.datetime | None | Unset = UNSET
-    """Automatic teardown deadline for a preview, when one is configured."""
+    """ Automatic teardown deadline for a preview, when one is configured. """
     service_bindings: list[AppServiceBinding] | Unset = UNSET
-    """Declared same-account service dependencies injected into this workload as legacy `_URL` environment
+    """ Declared same-account service dependencies injected into this workload as legacy `_URL` environment
     variables plus additive `_HTTPS_URL` canary companions. Project workloads derive these from Compose; standalone
     apps derive them from service_binding_targets. They are discovery metadata under the `account` policy and the
-    outbound authorization allowlist under the `declared` policy."""
+    outbound authorization allowlist under the `declared` policy. """
     service_reliability: ServiceReliabilityPolicies | Unset = UNSET
-    """Map of declared target service names to caller-owned reliability policies. Only names in this app's service
-    bindings may appear."""
+    """ Map of declared target service names to caller-owned reliability policies. Only names in this app's service
+    bindings may appear. """
     service_binding_policy: ServiceBindingPolicy | Unset = UNSET
-    """Caller-side authorization policy for internal service requests. `account` preserves same-account
+    """ Caller-side authorization policy for internal service requests. `account` preserves same-account
     reachability; `declared` permits only targets present in the caller's service bindings; `project` also permits
-    every service in the caller's own project."""
+    every service in the caller's own project. """
     service_binding_transport: ServiceBindingTransport | Unset = UNSET
-    """Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private
-    `.internal` alias; `http` preserves the legacy `.svc.gregale` endpoint."""
+    """ Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private
+    `.internal` alias; `http` preserves the legacy `.svc.gregale` endpoint. """
     preview_service_calls_policy: PreviewServiceCallsPolicy | Unset = UNSET
-    """Production target policy for internal service calls from preview apps. `allow` preserves existing behavior;
-    `deny` rejects preview callers before waking the target."""
+    """ Production target policy for internal service calls from preview apps. `allow` preserves existing behavior;
+    `deny` rejects preview callers before waking the target. """
     allowed_service_callers: list[str] | Unset = UNSET
-    """Target-side service allowlist of logical app slugs. Omitted means any same-account caller; an explicit empty
-    array denies all. Compose owns project policies; the app API owns standalone policies."""
+    """ Target-side service allowlist of logical app slugs. Omitted means any same-account caller; an explicit empty
+    array denies all. Compose owns project policies; the app API owns standalone policies. """
     allowed_service_call_scopes: ServiceCallerScopes | Unset = UNSET
-    """Target-owned service authorization map from logical caller app name to allowed HTTP methods and path
-    prefixes. When present, callers missing from the map are denied."""
+    """ Target-owned service authorization map from logical caller app name to allowed HTTP methods and path
+    prefixes. When present, callers missing from the map are denied. """
     egress_allowlist: list[str] | Unset = UNSET
-    """Per-app outbound CIDR allowlist. Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6 (`2001:db8::/32`).
+    """ Per-app outbound CIDR allowlist. Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6 (`2001:db8::/32`).
     v4-mapped v6 form (`::ffff:1.2.3.0/120`) is silently canonicalised to its v4 form at write time. Empty array
-    means no allowlist rule; the per-netns chain's default-accept policy applies."""
+    means no allowlist rule; the per-netns chain's default-accept policy applies. """
     egress_ports: list[int] | Unset = UNSET
-    """Extra TCP destination ports the app's guests may reach on top of 80 and 443. All other guest-originated
-    traffic except DNS (pinned to the platform resolver) is dropped. Sorted; empty array when none are declared."""
+    """ Extra TCP destination ports the app's guests may reach on top of 80 and 443. All other guest-originated
+    traffic except DNS (pinned to the platform resolver) is dropped. Sorted; empty array when none are declared. """
     streaming_enabled: bool | Unset = UNSET
-    """Per-app streaming flag. Free customers always see this as false; Hobby/Pro/Scale can PATCH it. activates the
-    streamed response path; only persists the flag."""
+    """ Per-app streaming flag. Free customers always see this as false; Hobby/Pro/Scale can PATCH it. activates the
+    streamed response path; only persists the flag. """
     websocket_enabled: bool | Unset = UNSET
-    """Per-app raw-bytes Upgrade bridge flag. Default-on for Hobby/Pro/Scale; Free customers always see this as
-    false. PATCH-true on Free is rejected by the API with 403 plan_websocket_not_allowed."""
+    """ Per-app raw-bytes Upgrade bridge flag. Default-on for Hobby/Pro/Scale; Free customers always see this as
+    false. PATCH-true on Free is rejected by the API with 403 plan_websocket_not_allowed. """
     session_affinity: bool | Unset = UNSET
-    """Whether the edge should prefer the same running instance for this app. Best effort only; stale or unhealthy
-    instances are bypassed automatically."""
+    """ Whether the edge should prefer the same running instance for this app. Best effort only; stale or unhealthy
+    instances are bypassed automatically. """
     version_affinity_cookie: str | Unset = UNSET
-    """Optional browser cookie name used for rollout affinity when Gregale-Version-Key is absent. The edge hashes
-    the value before forwarding it as a key."""
+    """ Optional browser cookie name used for rollout affinity when Gregale-Version-Key is absent. The edge hashes
+    the value before forwarding it as a key. """
     version_affinity_managed_cookie: bool | Unset = False
-    """Whether the edge issues an opaque, host-only browser cookie before the first rollout pick. Mutually
-    exclusive with version_affinity_cookie."""
+    """ Whether the edge issues an opaque, host-only browser cookie before the first rollout pick. Mutually
+    exclusive with version_affinity_cookie. """
     revision_pin_ttl_seconds: int | Unset = 0
-    """Retain superseded live deployments for revision-pinned requests for up to this many seconds. Zero disables
-    revision pinning."""
+    """ Retain superseded live deployments for revision-pinned requests for up to this many seconds. Zero disables
+    revision pinning. """
     release_policy: AppResponseReleasePolicy | Unset = UNSET
-    """Default rollout for production releases that name no rollout policy. safe (or unset) uses the adaptive
+    """ Default rollout for production releases that name no rollout policy. safe (or unset) uses the adaptive
     health-gated canary (each stage advances on clean evidence after a minute) with first-wake 5xx rollback; fast
-    uses the aggressive ladder with the same rollback; immediate moves all traffic at once."""
+    uses the aggressive ladder with the same rollback; immediate moves all traffic at once. """
     release_probe_paths: list[str] | Unset = UNSET
-    """Up to 3 concrete GET paths the default rollout probe checks instead of /. No queries, fragments, wildcards
-    or parameters."""
+    """ Up to 3 concrete GET paths the default rollout probe checks instead of /. No queries, fragments, wildcards
+    or parameters. """
     route_metrics_enabled: bool | Unset = UNSET
-    """Per-app per-route observability flag. When true, the gateway emits
+    """ Per-app per-route observability flag. When true, the gateway emits
     gateway_request_duration_seconds{app,route,class} and serves the bounded reader at GET /v1/apps/{slug}/routes.
     Default-on for Hobby/Pro/Scale; Free customers always see this as false. PATCH-true on Free is rejected by the
-    API with 403 plan_route_metrics_not_allowed."""
+    API with 403 plan_route_metrics_not_allowed. """
     only_allow_declared_routes: bool | Unset = UNSET
-    """When true, the gateway rejects paths not present in declared_routes or the imported OpenAPI document before
-    waking an app."""
+    """ When true, the gateway rejects paths not present in declared_routes or the imported OpenAPI document before
+    waking an app. """
     declared_routes: list[DeclaredRoute] | Unset = UNSET
-    """Optional explicit route contract. When non-empty it takes precedence over the imported OpenAPI document."""
+    """ Optional explicit route contract. When non-empty it takes precedence over the imported OpenAPI document. """
     maintenance_mode: bool | Unset = UNSET
-    """Coarse per-app maintenance toggle. When true the gateway hot-path short-circuits every request to this app
+    """ Coarse per-app maintenance toggle. When true the gateway hot-path short-circuits every request to this app
     with 503 + Retry-After (default 60 s) BEFORE auth, BEFORE wake, BEFORE any kind=maintenance edge rule. Free-tier
     allowed. Surfaced in the GET /v1/apps/{slug} response so dashboards can show 'maintenance on / off' alongside
-    the streaming/WS pills."""
+    the streaming/WS pills. """
     scaling_policy: None | ScalingPolicy | Unset = UNSET
-    """Per-app scaling policy. null = legacy row, project the empty-policy shape from min_instances /
-    max_concurrency. Non-null = customer-authored policy persisted to the jsonb column `apps.scaling_policy`."""
+    """ Per-app scaling policy. null = legacy row, project the empty-policy shape from min_instances /
+    max_concurrency. Non-null = customer-authored policy persisted to the jsonb column `apps.scaling_policy`. """
     retry_policy: None | RetryPolicyDTO | Unset = UNSET
-    """App-level default for invocation retries. Queue binding and per-invocation policies override this value."""
+    """ App-level default for invocation retries. Queue binding and per-invocation policies override this value. """
     last_scale_out_at: datetime.datetime | None | Unset = UNSET
-    """RFC 3339 timestamp of the most recent scale-out event the scheduler admitted for this app, or null if the
-    app has never scaled out."""
+    """ RFC 3339 timestamp of the most recent scale-out event the scheduler admitted for this app, or null if the
+    app has never scaled out. """
     last_scale_in_at: datetime.datetime | None | Unset = UNSET
-    """RFC 3339 timestamp of the most recent scale-in event the scheduler reaped for this app, or null if the app
-    has never scaled in."""
+    """ RFC 3339 timestamp of the most recent scale-in event the scheduler reaped for this app, or null if the app
+    has never scaled in. """
     require_signed: bool | Unset = UNSET
-    """Per-app cosign signature-enforcement flag. When true, OCI image deploys must carry a valid signature from a
-    publisher in the per-app trusted_signers list. Default false."""
+    """ Per-app cosign signature-enforcement flag. When true, OCI image deploys must carry a valid signature from a
+    publisher in the per-app trusted_signers list. Default false. """
     warm_snapshot_enabled: bool | Unset = UNSET
-    """Per-app two-tier snapshot flag. False by default; Pro/Scale may opt in, Free/Hobby always false."""
+    """ Per-app two-tier snapshot flag. False by default; Pro/Scale may opt in, Free/Hobby always false. """
     warm_snapshot_min_requests: int | Unset = UNSET
-    """Effective per-app request-count threshold for warm-tier capture on this app. Range [1, 100]."""
+    """ Effective per-app request-count threshold for warm-tier capture on this app. Range [1, 100]. """
     warm_snapshot_min_ms: int | Unset = UNSET
-    """Per-app time-since-first-ready threshold for warm-tier capture, milliseconds. Range [100, 60000]."""
+    """ Per-app time-since-first-ready threshold for warm-tier capture, milliseconds. Range [100, 60000]. """
     warm_pool_size: int | Unset = UNSET
-    """Desired paused warm-pool size. Zero disables the pool; bounded by max_concurrency and available on Hobby+
-    plans."""
+    """ Desired paused warm-pool size. Zero disables the pool; bounded by max_concurrency and available on Hobby+
+    plans. """
     eviction_priority: AppResponseEvictionPriority | Unset = UNSET
-    """Per-app eviction tier. 'best_effort' (default) keeps the pre-#475 LRU-by-last_request_at reaper behaviour;
-    'reserved' protects the app from cross-account RAM-pressure eviction."""
+    """ Per-app eviction tier. 'best_effort' (default) keeps the pre-#475 LRU-by-last_request_at reaper behaviour;
+    'reserved' protects the app from cross-account RAM-pressure eviction. """
     require_authn: bool | Unset = UNSET
-    """Per-deployment token-gate flag. When true, the gateway demands `Authorization: Bearer <token>` on every
+    """ Per-deployment token-gate flag. When true, the gateway demands `Authorization: Bearer <token>` on every
     request; cross-account tokens receive 403 insufficient_scope. Pro/Scale only — Free/Hobby PATCH-true is rejected
-    with 403 plan_require_authn_not_allowed."""
+    with 403 plan_require_authn_not_allowed. """
     declared_access: AppResponseDeclaredAccess | Unset = UNSET
-    """The access the app's source declares in gregale.yaml: `public` (no Gregale API key) or `key`. Every
-    production deploy applies it. Omitted when the source declares none."""
+    """ The access the app's source declares in gregale.yaml: `public` (no Gregale API key) or `key`. Every
+    production deploy applies it. Omitted when the source declares none. """
     consumer_auth_mode: AppResponseConsumerAuthMode | Unset = "optional"
-    """End-customer credential policy. optional accepts anonymous requests and attributes valid consumer keys;
-    required mandates a valid consumer key."""
+    """ End-customer credential policy. optional accepts anonymous requests and attributes valid consumer keys;
+    required mandates a valid consumer key. """
     platform_tenant_required: bool | Unset = False
-    """Require a verified platform tenant from a linked consumer key, verified tenant surface, or opted-in JWT
-    authorization rule before app traffic is served. Default false."""
+    """ Require a verified platform tenant from a linked consumer key, verified tenant surface, or opted-in JWT
+    authorization rule before app traffic is served. Default false. """
     parked_deployment: None | ParkedDeploymentRef | Unset = UNSET
-    """Most-recently parked deployment for this app, or null if never parked. The reference surfaces the closed-set
+    """ Most-recently parked deployment for this app, or null if never parked. The reference surfaces the closed-set
     parking reason + timestamp on GET /v1/apps/{slug} so operators can answer 'why is my app evicted_cold?' without
-    grepping the audit log."""
+    grepping the audit log. """
     overflow_node: None | Unset | UUID = UNSET
-    """Per-app preferred spill target for cross-node pressure rebalance. Resolved UUID from the customer's named
+    """ Per-app preferred spill target for cross-node pressure rebalance. Resolved UUID from the customer's named
     compute_nodes.name preference (null when unset). Consulted by Engine.RebalancePressuredApps before the A9
-    fallback; falls through to A9 when the target is inactive or full."""
+    fallback; falls through to A9 when the target is inactive or full. """
     cors_default_enabled: bool | None | Unset = UNSET
     cors_default_origins: list[str] | Unset = UNSET
     public_auth: PublicAuthStatus | Unset = UNSET
-    """Read-only per-app public-URL auth shape on AppResponse. Mirrors the row contents without the plaintext
+    """ Read-only per-app public-URL auth shape on AppResponse. Mirrors the row contents without the plaintext
     credentials. The redaction posture is a load-bearing invariant — 're-redaction invariant': neither basic_user
     nor basic_pass is EVER returned on the wire, even when mode='basic'. To rotate credentials, the customer PATCHes
-    a fresh public_auth block."""
+    a fresh public_auth block. """
     auth_default_flipped_at: datetime.datetime | None | Unset = UNSET
     app_protocol: AppResponseAppProtocol | Unset = UNSET
-    """Per-app wire-protocol selector. Closed set {http1, http2, grpc}. Default 'http1' (universal). Setting 'grpc'
-    is plan-gated to Hobby+/Pro/Scale; Free customers see this as 'http1'."""
+    """ Per-app wire-protocol selector. Closed set {http1, http2, grpc}. Default 'http1' (universal). Setting 'grpc'
+    is plan-gated to Hobby+/Pro/Scale; Free customers see this as 'http1'. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

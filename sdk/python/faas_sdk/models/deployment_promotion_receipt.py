@@ -22,7 +22,7 @@ class DeploymentPromotionReceipt:
     app_id: UUID
     deployment_id: UUID
     expected_serving_deployment_id: str
-    """Original serving guard; empty requires no serving sibling."""
+    """ Original serving guard; empty requires no serving sibling. """
     scope: str
     accepted_at: datetime.datetime
     project_id: UUID | Unset = UNSET

@@ -26,19 +26,19 @@ class ReleaseApprovalStatus:
     app: str
     state: ReleaseApprovalStatusState
     approvals: int
-    """Approvals that count toward the policy."""
+    """ Approvals that count toward the policy. """
     decisions: list[ReleaseApprovalDecision]
     before_release_command: bool | Unset = UNSET
-    """The release approval applies before its release command."""
+    """ The release approval applies before its release command. """
     require_passing_sandbox_suite: bool | Unset = UNSET
-    """The release requires current passing sandbox evidence in addition to human approval."""
+    """ The release requires current passing sandbox evidence in addition to human approval. """
     required_approvals: int | Unset = UNSET
     after_stage: int | Unset = UNSET
     deployed_by: str | Unset = UNSET
     waiting_since: datetime.datetime | Unset = UNSET
-    """When the canary entered its waiting stage."""
+    """ When the canary entered its waiting stage. """
     expires_at: datetime.datetime | Unset = UNSET
-    """When a release still waiting is aborted."""
+    """ When a release still waiting is aborted. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

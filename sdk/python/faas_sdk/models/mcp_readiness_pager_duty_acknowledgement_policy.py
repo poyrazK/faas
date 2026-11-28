@@ -30,24 +30,24 @@ class MCPReadinessPagerDutyAcknowledgementPolicy:
     version: int
     enabled: bool
     webhook_path: str
-    """Relative signed callback URL for this binding; explicit destination reads always return a destination-
-    specific URL. Existing original callback URLs remain bound to their original destination."""
+    """ Relative signed callback URL for this binding; explicit destination reads always return a destination-
+    specific URL. Existing original callback URLs remain bound to their original destination. """
     sync_unacknowledgements: bool | Unset = False
-    """Whether this destination currently accepts signed provider unacknowledgements. False or absent preserves
-    acknowledgement-only behavior; true releases only matching tracked provider ownership."""
+    """ Whether this destination currently accepts signed provider unacknowledgements. False or absent preserves
+    acknowledgement-only behavior; true releases only matching tracked provider ownership. """
     destination: MCPReadinessPagerDutyAcknowledgementPolicyDestination | Unset = UNSET
-    """Selected native PagerDuty destination"""
+    """ Selected native PagerDuty destination """
     fallback_version: int | Unset = UNSET
-    """Captured fallback configuration version; present for a fallback binding."""
+    """ Captured fallback configuration version; present for a fallback binding. """
     pagerduty_version: int | Unset = UNSET
-    """Native primary receiver version captured when the acknowledgement binding was saved; omitted for fallback
-    binding."""
+    """ Native primary receiver version captured when the acknowledgement binding was saved; omitted for fallback
+    binding. """
     region: MCPReadinessPagerDutyAcknowledgementPolicyRegion | Unset = UNSET
-    """Regional PagerDuty receiver bound to this enabled webhook policy."""
+    """ Regional PagerDuty receiver bound to this enabled webhook policy. """
     service_id: str | Unset = UNSET
-    """Exact provider service accepted by the enabled webhook binding."""
+    """ Exact provider service accepted by the enabled webhook binding. """
     signing_secret_masked: MCPReadinessPagerDutyAcknowledgementPolicySigningSecretMasked | Unset = UNSET
-    """Fixed mask for an enabled signing credential; no plaintext or ciphertext is returned."""
+    """ Fixed mask for an enabled signing credential; no plaintext or ciphertext is returned. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

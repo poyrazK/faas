@@ -26,7 +26,7 @@ class OperationWorkflowReviewResponseScheduledReviewCancellationRequest:
     completed_at: datetime.datetime
     due_at: datetime.datetime
     reason: str
-    """Nonblank UTF-8 cancellation reason, at most 1024 bytes; line breaks and tabs allowed."""
+    """ Nonblank UTF-8 cancellation reason, at most 1024 bytes; line breaks and tabs allowed. """
 
     def to_dict(self) -> dict[str, Any]:
         decision_at = self.decision_at.isoformat()

@@ -17,32 +17,32 @@ class OperationWorkflowCoordinationTimelineOptions:
     """OperationWorkflowCoordinationTimelineOptions. Explicit business identity and live pagination selectors."""
 
     app_id: UUID | Unset = UNSET
-    """OperationWorkflowCoordinationTimelineOptions.app_id. Exact timeline query selector; customer identity comes
-    from authentication."""
+    """ OperationWorkflowCoordinationTimelineOptions.app_id. Exact timeline query selector; customer identity comes
+    from authentication. """
     scope: str | Unset = UNSET
-    """OperationWorkflowCoordinationTimelineOptions.scope. Exact timeline query selector; customer identity comes
-    from authentication."""
+    """ OperationWorkflowCoordinationTimelineOptions.scope. Exact timeline query selector; customer identity comes
+    from authentication. """
     tenant_id: UUID | Unset = UNSET
-    """OperationWorkflowCoordinationTimelineOptions.tenant_id. Exact timeline query selector; customer identity
-    comes from authentication."""
+    """ OperationWorkflowCoordinationTimelineOptions.tenant_id. Exact timeline query selector; customer identity
+    comes from authentication. """
     subject_type: str | Unset = UNSET
-    """OperationWorkflowCoordinationTimelineOptions.subject_type. Exact timeline query selector; customer identity
-    comes from authentication."""
+    """ OperationWorkflowCoordinationTimelineOptions.subject_type. Exact timeline query selector; customer identity
+    comes from authentication. """
     subject_id: str | Unset = UNSET
-    """OperationWorkflowCoordinationTimelineOptions.subject_id. Exact timeline query selector; customer identity
-    comes from authentication."""
+    """ OperationWorkflowCoordinationTimelineOptions.subject_id. Exact timeline query selector; customer identity
+    comes from authentication. """
     workflow: str | Unset = UNSET
-    """OperationWorkflowCoordinationTimelineOptions.workflow. Exact timeline query selector; customer identity
-    comes from authentication."""
+    """ OperationWorkflowCoordinationTimelineOptions.workflow. Exact timeline query selector; customer identity
+    comes from authentication. """
     instance_id: str | Unset = UNSET
-    """OperationWorkflowCoordinationTimelineOptions.instance_id. Exact timeline query selector; customer identity
-    comes from authentication."""
+    """ OperationWorkflowCoordinationTimelineOptions.instance_id. Exact timeline query selector; customer identity
+    comes from authentication. """
     offset: int | Unset = UNSET
-    """OperationWorkflowCoordinationTimelineOptions.offset. Exact timeline query selector; customer identity comes
-    from authentication."""
+    """ OperationWorkflowCoordinationTimelineOptions.offset. Exact timeline query selector; customer identity comes
+    from authentication. """
     limit: int | Unset = UNSET
-    """OperationWorkflowCoordinationTimelineOptions.limit. Exact timeline query selector; customer identity comes
-    from authentication."""
+    """ OperationWorkflowCoordinationTimelineOptions.limit. Exact timeline query selector; customer identity comes
+    from authentication. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

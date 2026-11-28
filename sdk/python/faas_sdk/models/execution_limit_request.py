@@ -31,18 +31,19 @@ class ExecutionLimitRequest:
     """Caller-selected execution resource limits; zero selects the plan default."""
 
     execution_class: ExecutionLimitRequestExecutionClass | Unset = UNSET
-    """Standard preserves existing plan limits; extended opts into an admission-to-result budget up to 300000 ms
-    and a smaller shared concurrency cap."""
+    """ Standard preserves existing plan limits; extended opts into an admission-to-result budget up to 300000 ms
+    and a smaller shared concurrency cap. """
     max_artifact_bytes: int | Unset = UNSET
-    """Independent stored output byte budget; requires stored output_files. Zero selects the plan default
-    constrained by scratch headroom."""
+    """ Independent stored output byte budget; requires stored output_files. Zero selects the plan default
+    constrained by scratch headroom. """
     timeout_ms: int | Unset = UNSET
-    """Zero uses the class default: standard 5000 ms, extended 300000 ms. Standard plan maxima remain unchanged."""
+    """ Zero uses the class default: standard 5000 ms, extended 300000 ms. Standard plan maxima remain unchanged.
+    """
     memory_mb: ExecutionLimitRequestMemoryMb | Unset = UNSET
     cpu_millicores: ExecutionLimitRequestCpuMillicores | Unset = UNSET
     ephemeral_disk_mb: ExecutionLimitRequestEphemeralDiskMb | Unset = UNSET
     max_output_bytes: int | Unset = UNSET
-    """Combined result/stdout/stderr/serialized-artifacts cap; zero uses the plan default."""
+    """ Combined result/stdout/stderr/serialized-artifacts cap; zero uses the plan default. """
 
     def to_dict(self) -> dict[str, Any]:
         execution_class: str | Unset = UNSET

@@ -26,31 +26,32 @@ class OperationWorkflowReadinessEscalationResponseEvent:
     """
 
     escalation_notification_id: UUID
-    """OperationWorkflowReadinessEscalationResponseEvent.escalation_notification_id. Retained acknowledgment target
-    or assignment observation; never modifies application business reports."""
+    """ OperationWorkflowReadinessEscalationResponseEvent.escalation_notification_id. Retained acknowledgment target
+    or assignment observation; never modifies application business reports. """
     escalation_sequence: int
-    """OperationWorkflowReadinessEscalationResponseEvent.escalation_sequence. Retained acknowledgment target or
-    assignment observation; never modifies application business reports."""
+    """ OperationWorkflowReadinessEscalationResponseEvent.escalation_sequence. Retained acknowledgment target or
+    assignment observation; never modifies application business reports. """
     checked_at: datetime.datetime
-    """OperationWorkflowReadinessEscalationResponseEvent.checked_at. Retained acknowledgment target or assignment
-    observation; never modifies application business reports."""
+    """ OperationWorkflowReadinessEscalationResponseEvent.checked_at. Retained acknowledgment target or assignment
+    observation; never modifies application business reports. """
     deadline_at: datetime.datetime
-    """OperationWorkflowReadinessEscalationResponseEvent.deadline_at. Retained acknowledgment target or assignment
-    observation; never modifies application business reports."""
+    """ OperationWorkflowReadinessEscalationResponseEvent.deadline_at. Retained acknowledgment target or assignment
+    observation; never modifies application business reports. """
     owner: str
-    """OperationWorkflowReadinessEscalationResponseEvent.owner. Retained acknowledgment target or assignment
-    observation; never modifies application business reports."""
+    """ OperationWorkflowReadinessEscalationResponseEvent.owner. Retained acknowledgment target or assignment
+    observation; never modifies application business reports. """
     reassigned: bool
-    """OperationWorkflowReadinessEscalationResponseEvent.reassigned. Retained acknowledgment target or assignment
-    observation; never modifies application business reports."""
+    """ OperationWorkflowReadinessEscalationResponseEvent.reassigned. Retained acknowledgment target or assignment
+    observation; never modifies application business reports. """
     business_impact: OperationWorkflowReadinessImpactEvent | Unset = UNSET
-    """OperationWorkflowReadinessImpactEvent. Protected business result monitoring of retained unresolved human
-    reviews in a scoped application environment; advisory confidence only."""
+    """ OperationWorkflowReadinessImpactEvent. Protected business result monitoring of retained unresolved human
+    reviews in a scoped application environment; advisory confidence only. """
     source: OperationWorkflowReadinessSnapshotEntry | Unset = UNSET
-    """One saved transition identity and stable evidence summaries for comparison within the same ownership scope."""
+    """ One saved transition identity and stable evidence summaries for comparison within the same ownership scope.
+    """
     playbook: OperationWorkflowPlaybookEvidenceEvent | Unset = UNSET
-    """OperationWorkflowPlaybookEvidenceEvent. Opt-in durable checklist evidence monitoring; advisory observations
-    preserve human reviews and application business authority."""
+    """ OperationWorkflowPlaybookEvidenceEvent. Opt-in durable checklist evidence monitoring; advisory observations
+    preserve human reviews and application business authority. """
 
     def to_dict(self) -> dict[str, Any]:
         escalation_notification_id = str(self.escalation_notification_id)

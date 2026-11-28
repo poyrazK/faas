@@ -20,9 +20,9 @@ class StatusUptimeBucket:
     date: datetime.datetime
     uptime_pct: float
     successful: int
-    """Complete five-minute platform intervals that were available."""
+    """ Complete five-minute platform intervals that were available. """
     total: int
-    """Complete five-minute platform intervals with telemetry."""
+    """ Complete five-minute platform intervals with telemetry. """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
