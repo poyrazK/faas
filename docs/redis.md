@@ -65,12 +65,12 @@ the account, caches included, without a binding.
 ## Run a command from your machine
 
 ```bash
-gregale redis cli sessions PING
-gregale redis cli sessions LRANGE queue 0 -1
-gregale redis cli sessions --app worker -- GET user:42
+gregale redis exec sessions PING
+gregale redis exec sessions LRANGE queue 0 -1
+gregale redis exec sessions --app worker -- GET user:42
 ```
 
-A cache has no public address, so `gregale redis cli` sends the command from a
+A cache has no public address, so `gregale redis exec` sends the command from a
 short task in an app bound to the cache (`gregale redis get` lists them under
 *Bound to*). It uses the only bound app, or the one named with `--app`. The
 command goes through the same private address and binding as the app's own
