@@ -63624,6 +63624,23 @@ COMMENT ON COLUMN public.sandbox_sessions.task_output IS 'ADR-20261116182615: th
 
 
 --
+-- Name: sandbox_storage_hours; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sandbox_storage_hours (
+    account_id uuid NOT NULL,
+    hour timestamp with time zone NOT NULL,
+    paused_sessions integer NOT NULL,
+    capture_bytes bigint NOT NULL,
+    volume_bytes bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sandbox_storage_hours_capture_bytes_check CHECK ((capture_bytes >= 0)),
+    CONSTRAINT sandbox_storage_hours_paused_sessions_check CHECK ((paused_sessions >= 0)),
+    CONSTRAINT sandbox_storage_hours_volume_bytes_check CHECK ((volume_bytes >= 0))
+);
+
+
+--
 -- Name: sandbox_templates; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -80882,6 +80899,14 @@ ALTER TABLE public.sandbox_sessions
 
 ALTER TABLE public.sandbox_sessions
     ADD CONSTRAINT sandbox_sessions_task_url_check CHECK (((task_url IS NULL) OR ((char_length(task_url) >= 1) AND (char_length(task_url) <= 2048)))) NOT VALID;
+
+
+--
+-- Name: sandbox_storage_hours sandbox_storage_hours_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_storage_hours
+    ADD CONSTRAINT sandbox_storage_hours_pkey PRIMARY KEY (account_id, hour);
 
 
 --
@@ -119742,6 +119767,14 @@ ALTER TABLE ONLY public.sandbox_sessions
 
 ALTER TABLE ONLY public.sandbox_sessions
     ADD CONSTRAINT sandbox_sessions_tenant_fkey FOREIGN KEY (account_id, tenant_id) REFERENCES public.platform_tenants(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: sandbox_storage_hours sandbox_storage_hours_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_storage_hours
+    ADD CONSTRAINT sandbox_storage_hours_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

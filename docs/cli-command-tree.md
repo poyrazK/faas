@@ -133,6 +133,7 @@ touch them. The tables below map each earlier name.
 | `gregale route-resources` | `gregale metric resources` |
 | `gregale routes` | `gregale api route` |
 | `gregale runs` | `gregale sandbox` |
+| `gregale sandbox-sessions` | `gregale sandbox session` |
 | `gregale sandbox-templates` | `gregale sandbox template` |
 | `gregale scan` | `gregale deploy --plan` |
 | `gregale scheduled-releases` | `gregale release schedule` |
@@ -176,6 +177,8 @@ touch them. The tables below map each earlier name.
 | `gregale ai app-limit` | `gregale ai app-limit set` |
 | `gregale ai content-policy` | `gregale ai content-policy get` |
 | `gregale ai content-policy` | `gregale ai content-policy set` |
+| `gregale ai integrations` | `gregale ai integration delete` |
+| `gregale ai integrations` | `gregale ai integration list` |
 | `gregale ai quality-alerts` | `gregale ai quality-alert list` |
 | `gregale ai request-policy` | `gregale ai request-policy get` |
 | `gregale ai request-policy` | `gregale ai request-policy set` |
@@ -607,6 +610,7 @@ touch them. The tables below map each earlier name.
 | `gregale queue tail` | `gregale queue watch` |
 | `gregale realtime drain-status` | `gregale realtime drain status` |
 | `gregale realtime send-principal` | `gregale realtime send --principal <PRINCIPAL>` |
+| `gregale redis cli` | `gregale redis exec` |
 | `gregale registry published` | `gregale registry deploy` |
 | `gregale rollback switch` | `gregale release rollback status` |
 | `gregale routes awake` | `gregale api route activity` |

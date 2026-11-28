@@ -142,6 +142,11 @@ type Config struct {
 	// It is on by default on Firecracker 1.16+ hosts with the tsc
 	// clocksource; FAAS_RESTORE_CLOCK_REALTIME=0 overrides TOML.
 	DisableRestoreClockRealtime bool `toml:"disable_restore_clock_realtime"`
+	// SandboxDiffSnapshots captures restored persistent sandbox sessions as
+	// Diff snapshots merged over their parent image (ADR-20261122132055).
+	// Off by default (built dark); FAAS_SANDBOX_DIFF_SNAPSHOTS=1 overrides
+	// TOML.
+	SandboxDiffSnapshots bool `toml:"sandbox_diff_snapshots"`
 	// DisableReleaseConnectionsOnDestroy stops asking an app guest to reset
 	// its TCP connections before teardown destroys it (ADR-20261109130000).
 	// It is on by default; FAAS_RELEASE_CONNECTIONS_ON_DESTROY=0 overrides TOML.
@@ -1261,6 +1266,13 @@ func loadConfig(path string, readConfig func(string) ([]byte, error)) (*Config, 
 			return nil, fmt.Errorf("vmmd: FAAS_RESTORE_CLOCK_REALTIME must be a boolean (got %q)", v)
 		}
 		c.DisableRestoreClockRealtime = !enabled
+	}
+	if v := os.Getenv("FAAS_SANDBOX_DIFF_SNAPSHOTS"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_SANDBOX_DIFF_SNAPSHOTS must be a boolean (got %q)", v)
+		}
+		c.SandboxDiffSnapshots = enabled
 	}
 	if v := os.Getenv("FAAS_RELEASE_CONNECTIONS_ON_DESTROY"); v != "" {
 		enabled, perr := strconv.ParseBool(v)

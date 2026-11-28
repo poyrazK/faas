@@ -1,6 +1,9 @@
-// sandbox.commands: commands in the session, foreground or background.
-// Gregale names a background command by a handle; this module gives each a
-// number, which is what callers know as its pid.
+// sandbox.commands and sandbox.pty: commands in the session, foreground or
+// background, and terminals. Gregale names a background command by a
+// handle; this module gives each a number, which is what callers know as its
+// pid. A terminal is a background command on a pseudo-terminal: its output is
+// polled like any background command's, and its input, end of input and
+// resizes go to POST …/exec/{handle}/input.
 
 import { type RequestArgs } from './api.js';
 import { sleep, type Connection } from './connection.js';
@@ -18,9 +21,15 @@ export type CommandStartOpts = CommandRequestOpts & {
   envs?: Record<string, string>;
   onStdout?: (data: string) => void | Promise<void>;
   onStderr?: (data: string) => void | Promise<void>;
+  /** Background commands always take input (sendStdin); a foreground one cannot. */
   stdin?: boolean;
   /** How long the command may run; 60 s by default, within the plan's cap. */
   timeoutMs?: number;
+  /**
+   * Gregale extension, background commands only: the command gets SIGUSR2 in
+   * each fork of the session, so it can reseed its own random state.
+   */
+  reseedOnFork?: boolean;
 };
 
 export type ProcessInfo = { pid: number; tag?: string; cmd: string; args: string[]; envs: Record<string, string>; cwd?: string };
@@ -28,7 +37,25 @@ export type ProcessInfo = { pid: number; tag?: string; cmd: string; args: string
 export type { CommandResult };
 
 type ExecResponse = { stdout: string; stderr: string; exit_code: number; timed_out?: boolean; killed?: boolean; wall_time_s: number };
-type GuestCommand = { handle: string; argv: string[]; running: boolean; exit_code?: number };
+type GuestCommand = { handle: string; argv: string[]; running: boolean; tty?: boolean; exit_code?: number };
+
+/** A terminal's size. */
+export type PtySize = { cols: number; rows: number };
+
+export type PtyCreateOpts = CommandRequestOpts &
+  PtySize & {
+    /** Called with the terminal's output as it arrives. */
+    onData: (data: Uint8Array) => void | Promise<void>;
+    cwd?: string;
+    envs?: Record<string, string>;
+    user?: Username;
+    /** How long the terminal may run; 60 s by default, within the plan's cap. */
+    timeoutMs?: number;
+  };
+
+type InputBody = { data?: string; eof?: boolean; rows?: number; cols?: number };
+
+const base64 = (data: string | Uint8Array) => Buffer.from(data).toString('base64');
 type ExecOutput = GuestCommand & { stdout: string | null; stderr: string | null; stdout_offset: number; stderr_offset: number };
 
 const POLL_MS = 200;
@@ -51,6 +78,7 @@ export class CommandHandle {
   readonly #handle: string;
   readonly #onStdout?: CommandStartOpts['onStdout'];
   readonly #onStderr?: CommandStartOpts['onStderr'];
+  readonly #onData?: PtyCreateOpts['onData'];
   #stdout = '';
   #stderr = '';
   #stdoutOffset = 0;
@@ -59,13 +87,21 @@ export class CommandHandle {
   #disconnected = false;
   #wait?: Promise<CommandResult>;
 
-  constructor(args: { pid: number; conn: Connection; handle: string; onStdout?: CommandStartOpts['onStdout']; onStderr?: CommandStartOpts['onStderr'] }) {
+  constructor(args: {
+    pid: number;
+    conn: Connection;
+    handle: string;
+    onStdout?: CommandStartOpts['onStdout'];
+    onStderr?: CommandStartOpts['onStderr'];
+    onData?: PtyCreateOpts['onData'];
+  }) {
     this.pid = args.pid;
     this.#conn = args.conn;
     this.#handle = args.handle;
     this.#onStdout = args.onStdout;
     this.#onStderr = args.onStderr;
-    if (this.#onStdout || this.#onStderr) {
+    this.#onData = args.onData;
+    if (this.#onStdout || this.#onStderr || this.#onData) {
       // Callbacks see output as it arrives, as with a streaming client.
       this.#wait = this.#follow();
       this.#wait.catch(() => undefined);
@@ -111,8 +147,9 @@ export class CommandHandle {
     }
   }
 
-  async sendStdin(): Promise<void> {
-    throw new UnsupportedError('commands.sendStdin', 'Gregale commands take no input yet; pass the input in the command line or a file');
+  /** Writes to the command's stdin. */
+  async sendStdin(data: string, opts: CommandRequestOpts = {}): Promise<void> {
+    await sendInput(this.#conn, this.#handle, { data: base64(data) }, opts);
   }
 
   async #follow(): Promise<CommandResult> {
@@ -120,7 +157,9 @@ export class CommandHandle {
       const out = await this.#conn.json<ExecOutput>('GET', `/exec/${this.#handle}`, {
         query: { stdout_offset: this.#stdoutOffset, stderr_offset: this.#stderrOffset },
       });
-      const stdout = out.stdout ? Buffer.from(out.stdout, 'base64').toString('utf8') : '';
+      const raw = out.stdout ? Buffer.from(out.stdout, 'base64') : undefined;
+      if (raw && this.#onData) await this.#onData(new Uint8Array(raw));
+      const stdout = raw ? raw.toString('utf8') : '';
       const stderr = out.stderr ? Buffer.from(out.stderr, 'base64').toString('utf8') : '';
       const progressed = out.stdout_offset !== this.#stdoutOffset || out.stderr_offset !== this.#stderrOffset;
       this.#stdoutOffset = out.stdout_offset;
@@ -141,6 +180,10 @@ export class CommandHandle {
       if (out.running) await sleep(POLL_MS);
     }
   }
+}
+
+async function sendInput(conn: Connection, handle: string, body: InputBody, opts: CommandRequestOpts): Promise<void> {
+  await conn.call('POST', `/exec/${handle}/input`, { json: body, signal: opts.signal });
 }
 
 export class Commands {
@@ -178,7 +221,12 @@ export class Commands {
   run(cmd: string, opts?: CommandStartOpts & { background?: false }): Promise<CommandResult>;
   run(cmd: string, opts?: CommandStartOpts): Promise<CommandHandle | CommandResult>;
   async run(cmd: string, opts: CommandStartOpts = {}): Promise<CommandHandle | CommandResult> {
-    if (opts.stdin) throw new UnsupportedError('commands.run({ stdin: true })', 'Gregale commands take no input yet');
+    if (opts.stdin && !opts.background) {
+      throw new UnsupportedError('commands.run({ stdin: true })', 'only background commands take input; run it with background: true and use sendStdin');
+    }
+    if (opts.reseedOnFork && !opts.background) {
+      throw new UnsupportedError('commands.run({ reseedOnFork: true })', 'only a background command runs on in a fork; run it with background: true');
+    }
     const envs = { ...this.#conn.envs, ...opts.envs };
     const body = {
       cmd: ['/bin/bash', '-l', '-c', cmd],
@@ -187,6 +235,7 @@ export class Commands {
       run_as: runAs(opts.user),
       timeout_ms: opts.timeoutMs || undefined,
       background: opts.background || undefined,
+      reseed_on_fork: opts.reseedOnFork || undefined,
     };
     const req: RequestArgs = { json: body, signal: opts.signal };
     if (opts.background) {
@@ -257,11 +306,64 @@ export class Commands {
     return new CommandHandle({ pid, conn: this.#conn, handle: this.#handleOf(pid), ...opts });
   }
 
-  async sendStdin(): Promise<void> {
-    throw new UnsupportedError('commands.sendStdin', 'Gregale commands take no input yet; pass the input in the command line or a file');
+  /** Writes to a background command's stdin. */
+  async sendStdin(pid: number, data: string, opts: CommandRequestOpts = {}): Promise<void> {
+    await sendInput(this.#conn, this.#handleOf(pid), { data: base64(data) }, opts);
   }
 
-  async closeStdin(): Promise<void> {
-    throw new UnsupportedError('commands.closeStdin', 'Gregale commands take no input yet');
+  /** Ends a background command's input: it reads end of file. */
+  async closeStdin(pid: number, opts: CommandRequestOpts = {}): Promise<void> {
+    await sendInput(this.#conn, this.#handleOf(pid), { eof: true }, opts);
+  }
+
+  /** @internal Starts an interactive login shell on a terminal (sandbox.pty). */
+  async startTerminal(opts: PtyCreateOpts): Promise<CommandHandle> {
+    const envs = { ...this.#conn.envs, ...opts.envs };
+    const body = {
+      cmd: ['/bin/bash', '-i', '-l'],
+      workdir: opts.cwd,
+      env: Object.keys(envs).length > 0 ? envs : undefined,
+      run_as: runAs(opts.user),
+      timeout_ms: opts.timeoutMs || undefined,
+      background: true,
+      tty: true,
+      rows: opts.rows,
+      cols: opts.cols,
+    };
+    const { handle } = await this.#conn.json<{ handle: string }>('POST', '/exec', { json: body, signal: opts.signal });
+    return new CommandHandle({ pid: this.#pid(handle), conn: this.#conn, handle, onData: opts.onData });
+  }
+
+  /** @internal Sends input, end of input or a resize to a background command. */
+  async input(pid: number, body: InputBody, opts: CommandRequestOpts = {}): Promise<void> {
+    await sendInput(this.#conn, this.#handleOf(pid), body, opts);
+  }
+}
+
+/** sandbox.pty: interactive terminals, as background commands on a pseudo-terminal. */
+export class Pty {
+  readonly #commands: Commands;
+
+  constructor(commands: Commands) {
+    this.#commands = commands;
+  }
+
+  /** Starts a login shell on a terminal of the given size; onData receives its output. */
+  async create(opts: PtyCreateOpts): Promise<CommandHandle> {
+    return this.#commands.startTerminal(opts);
+  }
+
+  /** Types into the terminal. */
+  async sendInput(pid: number, data: Uint8Array, opts: CommandRequestOpts = {}): Promise<void> {
+    await this.#commands.input(pid, { data: base64(data) }, opts);
+  }
+
+  async resize(pid: number, size: PtySize, opts: CommandRequestOpts = {}): Promise<void> {
+    await this.#commands.input(pid, { rows: size.rows, cols: size.cols }, opts);
+  }
+
+  /** Kills the terminal's shell; false when there is none. */
+  async kill(pid: number, opts: CommandRequestOpts = {}): Promise<boolean> {
+    return this.#commands.kill(pid, opts);
   }
 }

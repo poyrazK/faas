@@ -32,12 +32,21 @@ func newMetalVMM(t *testing.T, timeout time.Duration) *JailerVMM {
 			t.Fatal("mount helper requires a dynamic loader; rebuild vmmd with CGO_ENABLED=0")
 		}
 	}
-	v := NewJailerVMM(JailChrootBase, timeout)
+	// FAAS_TEST_JAIL_BASE puts the jails elsewhere, e.g. on a private tmpfs
+	// as production's /srv/fc/jail is, on a host whose /srv/fc/jail is not.
+	jailBase := JailChrootBase
+	if b := os.Getenv("FAAS_TEST_JAIL_BASE"); b != "" {
+		jailBase = b
+	}
+	v := NewJailerVMM(jailBase, timeout)
 	v.mountHelperPath = path
 	// adr: 907 — FAAS_TEST_FREE_PAGE_REPORTING=1 runs the metal suite with
 	// the free-page-reporting balloon on every cold boot, as production
 	// vmmd does on Firecracker 1.14+.
 	v.freePageReporting = os.Getenv("FAAS_TEST_FREE_PAGE_REPORTING") == "1"
+	// adr: 20261122132055 — FAAS_TEST_SANDBOX_DIFF=1 captures restored
+	// sandbox sessions as merged diffs.
+	v.WithSandboxDiffSnapshots(os.Getenv("FAAS_TEST_SANDBOX_DIFF") == "1", os.Getenv("FAAS_TEST_FC_VERSION"))
 	// Retain rings before failure cleanup unregisters them; report the bounded
 	// console tail when a metal test fails instead of losing the boot diagnosis.
 	stop, stopped := make(chan struct{}), make(chan struct{})

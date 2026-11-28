@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urlsplit
 from gregale_sandbox_e2b import (
     CommandExitException,
     NotFoundException,
+    PtySize,
     Sandbox,
     SandboxNotFoundException,
     SandboxQuery,
@@ -30,6 +31,7 @@ from gregale_sandbox_e2b import commands as commands_module
 API = "https://api.gregale.test"
 ID = "0b0e6a1c-2f6a-4c8e-9d43-6f3f1d2a9b10"
 MISSING = "11111111-0000-0000-0000-000000000000"
+FORK = "f0f0f0f0-0000-4000-8000-000000000001"
 
 
 class FakeResponse:
@@ -55,6 +57,9 @@ def js(status: int, body: Any) -> FakeResponse:
 class FakeGregale:
     def __init__(self) -> None:
         self.state = "queued"
+        self.kind = "ephemeral"
+        self.controls: List[str] = []
+        self.fork_req: Optional[Dict[str, Any]] = None
         self.created: Optional[Dict[str, Any]] = None
         self.patched: Optional[Dict[str, Any]] = None
         self.deleted = 0
@@ -62,11 +67,15 @@ class FakeGregale:
         self.files: Dict[str, bytes] = {}
         self.ports: List[Dict[str, Any]] = []
         self.background: Dict[str, Dict[str, Any]] = {}
+        self.inputs: List[Dict[str, Any]] = []
+        self.session_env: Optional[Dict[str, str]] = None
+        self.code: List[Dict[str, Any]] = []
 
     def view(self) -> Dict[str, Any]:
         v: Dict[str, Any] = {
             "id": ID,
             "state": self.state,
+            "kind": self.kind,
             "preset": "codex",
             "ram_mb": 2048,
             "network": {"mode": "registries"},
@@ -75,7 +84,7 @@ class FakeGregale:
             "created_at": "2026-11-05T00:00:00Z",
             "labels": {"team": "evals"},
         }
-        if self.state != "closed":
+        if self.state in ("queued", "ready", "frozen"):
             v["token"] = "sbx-1"
             v["token_expires_at"] = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat().replace("+00:00", "Z")
         return v
@@ -91,14 +100,29 @@ class FakeGregale:
         if auth == "Bearer key-1":
             if method == "POST" and path == "/v1/sandboxes":
                 self.created = json.loads(text)
+                if self.created.get("kind"):
+                    self.kind = self.created["kind"]
                 return js(201, self.view())
+            if method == "GET" and path == f"/v1/sandboxes/{FORK}":
+                self.state = "ready" if self.state == "queued" else self.state
+                return js(200, {**self.view(), "id": FORK, "state": "ready", "kind": "ephemeral", "forked_from": ID, "token": "sbx-1"})
+            if method == "POST" and path in (f"{base}/pause", f"{base}/resume", f"{base}/fork"):
+                op = path[len(base):]
+                self.controls.append(op)
+                if op == "/fork":
+                    self.fork_req = json.loads(text)
+                    return js(201, {"forks": [{**self.view(), "id": FORK, "state": "queued", "kind": "ephemeral"}]})
+                self.state = "pausing" if op == "/pause" else "resuming"
+                return js(202, self.view())
             if method == "GET" and path == "/v1/sandboxes":
                 return js(200, {"items": [self.view()], "next_before": ""})
             if path == f"/v1/sandboxes/{MISSING}":
                 return js(404, {"code": "sandbox_not_found", "status": 404})
             if method == "GET" and path == base:
-                if self.state == "queued":
+                if self.state in ("queued", "resuming"):
                     self.state = "ready"
+                elif self.state == "pausing":
+                    self.state = "paused"
                 return js(200, self.view())
             if method == "PATCH" and path == base:
                 self.patched = json.loads(text)
@@ -128,7 +152,8 @@ class FakeGregale:
             script = req["cmd"][-1]
             if req.get("background"):
                 handle = f"c{len(self.background) + 1}"
-                self.background[handle] = {"out": "serving\n", "polls": 0, "finish_after": 100 if "server" in script else 1, "exit": 0}
+                out = "$ " if req.get("tty") else "serving\n"
+                self.background[handle] = {"out": out, "polls": 0, "finish_after": 2 if req.get("tty") else 100 if "server" in script else 1, "exit": 0}
                 return js(202, {"handle": handle, "exit_code": 0, "wall_time_ms": 0})
             code = 1 if "false" in script else 0
             if "base64 < " in script:
@@ -139,6 +164,12 @@ class FakeGregale:
             return js(200, {"stdout": f"out:{script}", "stderr": "boom" if code else "", "exit_code": code, "wall_time_s": 0.1})
         if method == "GET" and sub == "/exec":
             return js(200, {"commands": [{"handle": h, "argv": ["/bin/bash", "-l", "-c", "npm run server"], "running": c["polls"] < c["finish_after"] and not c.get("killed")} for h, c in self.background.items()]})
+        if method == "POST" and sub.startswith("/exec/") and sub.endswith("/input"):
+            handle = sub[len("/exec/"):-len("/input")]
+            if handle not in self.background:
+                return js(404, {"code": "sandbox_entry_not_found", "status": 404})
+            self.inputs.append({"handle": handle, **json.loads(text)})
+            return js(200, {"handle": handle, "argv": [], "running": True})
         if sub.startswith("/exec/"):
             handle = sub[len("/exec/"):]
             c = self.background.get(handle)
@@ -159,6 +190,32 @@ class FakeGregale:
                 "stderr_offset": 0,
             })
         key = f"{method} {sub}"
+        if key == "POST /code":
+            req = json.loads(text)
+            self.code.append(req)
+            run = {
+                "results": [{"data": {"image/png": "iVBORw0KGgo=", "text/plain": "<Figure>"}}, {"data": {"text/plain": "42"}, "is_main_result": True}],
+                "logs": {"stdout": ["hi\n"], "stderr": []},
+                "execution_count": 2,
+            }
+            if "1/0" in req["code"]:
+                run["error"] = {"name": "ZeroDivisionError", "value": "division by zero", "traceback": "Traceback"}
+            if headers.get("Accept") == "text/event-stream":
+                final = dict(run, logs={"stdout": [], "stderr": []})
+                frames = 'event: stdout\ndata: "hi\\n"\n\n' + f"event: result\ndata: {json.dumps(final)}\n\n"
+                return FakeResponse(200, frames.encode(), "text/event-stream")
+            return js(200, run)
+        if key == "POST /code/contexts":
+            self.code.append({"create": json.loads(text)})
+            return js(201, {"id": "abc123", "language": "python", "cwd": "/workspace"})
+        if key == "GET /code/contexts":
+            return js(200, {"contexts": [{"id": "default", "language": "python", "cwd": "/workspace"}]})
+        if key in ("POST /code/contexts/abc123/restart", "DELETE /code/contexts/abc123"):
+            self.code.append({method: sub})
+            return js(200, {})
+        if key == "PUT /env":
+            self.session_env = json.loads(text)["env"]
+            return js(200, {"names": sorted(self.session_env)})
         if key == "GET /files":
             return FakeResponse(200, self.files[rel], "application/octet-stream") if rel in self.files else js(404, {"code": "sandbox_entry_not_found", "status": 404})
         if key == "PUT /files":
@@ -201,8 +258,11 @@ class ShimTest(unittest.TestCase):
         self.assertEqual(sbx.preview_token(3000), "sbxp1.tok")
         with self.assertRaisesRegex(UnsupportedException, r"expose_port\(5173\)"):
             sbx.get_host(5173)
+        # The envs are set in the session, so a command carries none of its own.
+        self.assertEqual(self.fake.session_env, {"CI": "1"})
         sbx.commands.run("env")
-        self.assertEqual(self.fake.execs[-1]["env"], {"CI": "1"})
+        self.assertNotIn("env", self.fake.execs[-1])
+        self.assertEqual(sbx.set_envs({"B": "2", "A": "1"}), ["A", "B"])
         custom = Sandbox("my-template", **self.opts)
         self.assertEqual(custom.sandbox_id, ID)
         self.assertEqual(self.fake.created, {"template": "my-template"})
@@ -300,11 +360,98 @@ class ShimTest(unittest.TestCase):
         sbx = Sandbox.create(**self.opts)
         with self.assertRaisesRegex(UnsupportedException, "freeze on their own"):
             sbx.beta_pause()
-        with self.assertRaises(UnsupportedException) as pty:
-            sbx.pty.create()
-        self.assertEqual(pty.exception.call, "pty.create")
+        with self.assertRaisesRegex(UnsupportedException, "background=True"):
+            sbx.commands.run("cat", stdin=True)
+
+    # adr: 20261027090013 step 12 — a terminal is a background command on a
+    # pty, driven through its input; background commands take stdin.
+    def test_a_persistent_session_pauses_resumes_on_connect_and_forks(self) -> None:
+        sbx = Sandbox.create(kind="persistent", volume_gb=10, vcpu=2, **self.opts)
+        assert self.fake.created is not None
+        self.assertEqual((self.fake.created["kind"], self.fake.created["volume_gb"], self.fake.created["vcpu"]), ("persistent", 10, 2))
+        self.assertTrue(sbx.beta_pause())
+        self.assertEqual(self.fake.state, "paused")
+        self.assertEqual(sbx.get_info().state, SandboxState.PAUSED)
+        self.assertFalse(sbx.is_running())
+        self.assertFalse(Sandbox.pause(ID, **self.opts), "already paused")
+        items = Sandbox.list(query=SandboxQuery(state=[SandboxState.PAUSED]), **self.opts).next_items()
+        self.assertEqual([(i.sandbox_id, i.state) for i in items], [(ID, SandboxState.PAUSED)])
+        back = Sandbox.connect(ID, **self.opts)
+        self.assertEqual(self.fake.controls, ["/pause", "/resume"])
+        self.assertTrue(back.is_running())
+        forks = back.fork(1, metadata={"run": "a"})
+        self.assertEqual(self.fake.fork_req, {"count": 1, "labels": {"run": "a"}})
+        self.assertEqual([f.sandbox_id for f in forks], [FORK])
+
+    def test_a_terminal_is_driven_through_its_input(self) -> None:
+        sbx = Sandbox.create(**self.opts)
+        term = sbx.pty.create(PtySize(rows=24, cols=80))
+        req = self.fake.execs[-1]
+        self.assertEqual((req["tty"], req["background"], req["rows"], req["cols"], req["cmd"]), (True, True, 24, 80, ["/bin/bash", "-i", "-l"]))
+        sbx.pty.send_stdin(term.pid, b"ls\n")
+        sbx.pty.resize(term.pid, PtySize(rows=40, cols=120))
+        self.assertEqual(self.fake.inputs, [
+            {"handle": "c1", "data": base64.b64encode(b"ls\n").decode()},
+            {"handle": "c1", "rows": 40, "cols": 120},
+        ])
+        seen: List[bytes] = []
+        term.wait(on_pty=seen.append)
+        self.assertEqual(seen, [b"$ "])
+        self.assertTrue(sbx.pty.kill(term.pid))
+
+    # adr: 20261027090013 step 14 — run_code answers results, logs, errors
+    # and the run's value, streams to handlers, and manages contexts.
+    def test_run_code_and_contexts(self) -> None:
+        sbx = Sandbox.create("code-interpreter", **self.opts)
+        self.assertEqual(self.fake.created, {"preset": "code-interpreter"})
+        run = sbx.run_code("x + 2")
+        self.assertEqual((run.text, run.execution_count, run.logs.stdout), ("42", 2, ["hi\n"]))
+        self.assertEqual(run.results[0].png, "iVBORw0KGgo=")
+        self.assertEqual(run.results[0].formats(), ["text", "png"])
+        seen: List[str] = []
+        failed = sbx.run_code(
+            "1/0",
+            on_stdout=lambda m: seen.append(f"out:{m.line}"),
+            on_result=lambda r: seen.append(f"result:{r.text}"),
+            on_error=lambda e: seen.append(f"error:{e.name}"),
+        )
+        self.assertEqual(failed.error.name, "ZeroDivisionError")
+        self.assertEqual(seen, ["out:hi\n", "result:<Figure>", "result:42", "error:ZeroDivisionError"])
+        ctx = sbx.create_code_context(cwd="/workspace/app")
+        sbx.run_code("y = 1", context=ctx, timeout=5)
+        self.assertEqual(self.fake.code[-1], {"code": "y = 1", "context": "abc123", "timeout_ms": 5000})
+        self.assertEqual([c.id for c in sbx.list_code_contexts()], ["default"])
+        sbx.restart_code_context(ctx)
+        sbx.remove_code_context("abc123")
+        self.assertEqual(self.fake.code[-2:], [{"POST": "/code/contexts/abc123/restart"}, {"DELETE": "/code/contexts/abc123"}])
         with self.assertRaises(UnsupportedException):
-            sbx.commands.send_stdin(1, "x")
+            sbx.run_code("1", envs={"A": "1"})
+
+    def test_background_commands_take_stdin(self) -> None:
+        sbx = Sandbox.create(**self.opts)
+        cat = sbx.commands.run("cat", background=True, stdin=True)
+        sbx.commands.send_stdin(cat.pid, "hello")
+        cat.send_stdin(" world")
+        sbx.commands.close_stdin(cat.pid)
+        self.assertEqual(self.fake.inputs, [
+            {"handle": "c1", "data": base64.b64encode(b"hello").decode()},
+            {"handle": "c1", "data": base64.b64encode(b" world").decode()},
+            {"handle": "c1", "eof": True},
+        ])
+        with self.assertRaises(NotFoundException):
+            sbx.commands.send_stdin(42, "x")
+
+    # adr: 20261122132055 §3 — a background command may ask for SIGUSR2 in forks.
+    def test_background_commands_may_ask_to_reseed_in_forks(self) -> None:
+        sbx = Sandbox.create(**self.opts)
+        sbx.commands.run("worker", background=True, reseed_on_fork=True)
+        self.assertIs(self.fake.execs[-1].get("reseed_on_fork"), True)
+        sbx.commands.run("other", background=True)
+        self.assertNotIn("reseed_on_fork", self.fake.execs[-1])
+        before = len(self.fake.execs)
+        with self.assertRaises(UnsupportedException):
+            sbx.commands.run("worker", reseed_on_fork=True)
+        self.assertEqual(len(self.fake.execs), before)
 
 
 if __name__ == "__main__":

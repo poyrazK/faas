@@ -5,7 +5,8 @@ affiliated with E2B. Not published until sandbox sessions launch.
 """
 
 from .api import DEFAULT_API_BASE, ApiError
-from .commands import CommandHandle, Commands, ProcessInfo
+from .code import Context, Execution, ExecutionError, Logs, OutputMessage, Result
+from .commands import CommandHandle, Commands, ProcessInfo, Pty, PtySize
 from .errors import (
     AuthenticationException,
     CommandExitException,
@@ -39,6 +40,14 @@ __all__ = [
     "NotEnoughSpaceException",
     "NotFoundException",
     "ProcessInfo",
+    "Context",
+    "Execution",
+    "ExecutionError",
+    "Logs",
+    "OutputMessage",
+    "Result",
+    "Pty",
+    "PtySize",
     "RateLimitException",
     "Sandbox",
     "SandboxException",

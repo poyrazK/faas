@@ -24,6 +24,8 @@ type Command = { cmd: string[]; env?: Record<string, string>; run_as?: string };
 /** An in-memory Gregale API: one session, a workspace of files, and commands. */
 class FakeGregale {
   state = 'queued';
+  kind = 'ephemeral';
+  controls: string[] = [];
   reads = 0;
   tokens = 0;
   staleTokens = new Set<string>();
@@ -34,6 +36,7 @@ class FakeGregale {
   ports: Record<string, unknown>[] = [];
   deleted = 0;
   background = new Map<string, { out: string; polls: number; finishAfter: number }>();
+  inputs: { handle: string; data: string }[] = [];
   browserUp = false;
 
   fetch = async (input: string | URL | Request, init: RequestInit = {}): Promise<Response> => {
@@ -50,12 +53,19 @@ class FakeGregale {
 
     if (control && method === 'POST' && path === '/v1/sandboxes') {
       this.created = JSON.parse(text);
+      if (this.created?.kind) this.kind = String(this.created.kind);
       return json(201, this.view());
+    }
+    if (control && method === 'POST' && (path === `${base}/pause` || path === `${base}/resume`)) {
+      this.controls.push(path.slice(base.length));
+      this.state = path.endsWith('/pause') ? 'pausing' : 'resuming';
+      return json(202, this.view());
     }
     if (control && method === 'GET' && path === base) {
       this.reads++;
       if (this.state === 'queued') this.state = 'starting';
-      else if (this.state === 'starting') this.state = 'ready';
+      else if (this.state === 'starting' || this.state === 'resuming') this.state = 'ready';
+      else if (this.state === 'pausing') this.state = 'paused';
       return json(200, this.view());
     }
     if (control && method === 'DELETE' && path === base) {
@@ -126,6 +136,11 @@ class FakeGregale {
         this.hydrated.push(new Uint8Array(body as Uint8Array));
         return json(200, { bytes: 1, entries: 1 });
     }
+    const typed = /^\/exec\/(c\d+)\/input$/.exec(sub);
+    if (method === 'POST' && typed) {
+      this.inputs.push({ handle: typed[1]!, data: Buffer.from(JSON.parse(text).data, 'base64').toString() });
+      return json(200, { handle: typed[1], argv: [], running: true });
+    }
     const out = /^\/exec\/(c\d+)$/.exec(sub);
     if (method === 'GET' && out) {
       const cmd = this.background.get(out[1]!)!;
@@ -152,13 +167,13 @@ class FakeGregale {
     return {
       id: ID,
       state: this.state,
-      kind: 'ephemeral',
+      kind: this.kind,
       preset: 'codex',
       ram_mb: 1024,
       network: { mode: 'registries' },
       expires_at: '2026-11-05T04:00:00Z',
       labels: {},
-      ...(this.state !== 'closed' ? { token, token_expires_at: new Date(Date.now() + (placed ? 900_000 : 900_000)).toISOString() } : {}),
+      ...(this.state !== 'closed' && this.state !== 'paused' && this.state !== 'pausing' && this.state !== 'resuming' ? { token, token_expires_at: new Date(Date.now() + (placed ? 900_000 : 900_000)).toISOString() } : {}),
     };
   }
 }
@@ -208,11 +223,12 @@ test('commands run to completion or yield a session ID that write_stdin polls', 
   const quick = await session.execCommand({ cmd: 'ls', yieldTimeMs: 2_000 });
   assert.match(quick, /Process exited with code 3/);
   assert.match(quick, /ran ls/);
-  const server = await session.execCommand({ cmd: 'npm run server', yieldTimeMs: 0 });
+  const server = await session.execCommand({ cmd: 'npm run server', yieldTimeMs: 0, tty: true });
   assert.match(server, /Process running with session ID 1/);
   assert.match(server, /listening/);
-  await assert.rejects(session.writeStdin({ sessionId: 1, chars: 'q' }), SandboxUnsupportedFeatureError);
-  const done = await session.writeStdin({ sessionId: 1, yieldTimeMs: 5_000 });
+  assert.equal((fake.commands.at(-1) as { tty?: boolean }).tty, true);
+  const done = await session.writeStdin({ sessionId: 1, chars: 'q', yieldTimeMs: 5_000 });
+  assert.deepEqual(fake.inputs, [{ handle: 'c2', data: 'q' }]);
   assert.match(done, /Process exited with code 3/);
   await assert.rejects(session.writeStdin({ sessionId: 1 }), /no running command/);
   assert.equal(session.supportsPty(), true);
@@ -309,6 +325,32 @@ test('state serializes to its identity and resumes only on this API', async () =
   assert.equal(fake.deleted, 1);
   assert.equal(await resumed.running(), false);
   await assert.rejects(client.resume(state), /is closed/);
+});
+
+test('a persistent session pauses on stop and resume resumes it', async () => {
+  const { fake, client } = setup();
+  const session = await client.create({ options: { kind: 'persistent', volumeGb: 10, vcpu: 2 } });
+  assert.deepEqual([fake.created?.kind, fake.created?.volume_gb, fake.created?.vcpu], ['persistent', 10, 2]);
+  await session.stop();
+  assert.equal(fake.state, 'paused');
+  assert.equal(fake.deleted, 0, 'stop keeps a persistent session');
+  assert.equal(await session.running(), false);
+  assert.equal(await session.pause(), false, 'already paused');
+  const state = await client.deserializeSessionState({ ...(await client.serializeSessionState(session.state)), manifest: { root: '/workspace' } });
+  const resumed = await client.resume(state);
+  assert.deepEqual(fake.controls, ['/pause', '/resume']);
+  assert.equal(fake.state, 'ready');
+  assert.equal(await resumed.running(), true);
+  await resumed.close();
+  assert.equal(fake.deleted, 1);
+});
+
+test('an ephemeral session does not pause; stop closes it', async () => {
+  const { fake, client } = setup();
+  const session = await client.create();
+  await assert.rejects(session.pause(), /freezes on its own/);
+  await session.stop();
+  assert.equal(fake.deleted, 1);
 });
 
 test('the workspace round-trips as an archive', async () => {

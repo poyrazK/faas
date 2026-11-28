@@ -535,6 +535,7 @@ var AuthRestartRetryWindow = &authRestartRetryWindow
 var AuthSigningKeyName = &authSigningKeyName
 var BillingRunPollInterval = &billingRunPollInterval
 var SandboxTemplatePoll = &sandboxTemplatePoll
+var SandboxSessionPoll = &sandboxSessionPoll
 var CampaignTrendTemplate = &campaignTrendTemplate
 var CliCommands = &cliCommands
 var CorsDefaultMethods = &corsDefaultMethods

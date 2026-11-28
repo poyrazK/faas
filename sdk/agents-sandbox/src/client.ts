@@ -45,6 +45,17 @@ export interface GregaleSandboxClientOptions extends SandboxClientOptions {
   portVisibility?: 'private' | 'public';
   /** How long create and resume wait for the VM; 120 s by default. */
   readyTimeoutMs?: number;
+  /**
+   * persistent keeps the session's memory and /workspace volume across
+   * pauses (ADR-20261122132055): session.stop() and session.pause() pause
+   * it, and resume() resumes it. ephemeral (the default) ends with its
+   * lifetime. A persistent session takes no lifetimeS.
+   */
+  kind?: 'ephemeral' | 'persistent';
+  /** A persistent session's /workspace volume in GB, within the plan. */
+  volumeGb?: number;
+  /** A persistent session's vCPUs, within the plan. */
+  vcpu?: number;
 }
 
 const SANDBOX_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -90,6 +101,9 @@ export class GregaleSandboxClient implements SandboxClient<GregaleSandboxClientO
         tenant: options.tenant,
         snapshot_id: options.snapshotId,
         browser: options.browser || undefined,
+        kind: options.kind,
+        volume_gb: options.volumeGb,
+        vcpu: options.vcpu,
       },
     });
     const session = this.#session(
@@ -117,6 +131,8 @@ export class GregaleSandboxClient implements SandboxClient<GregaleSandboxClientO
       { ...this.#defaults, ...options?.clientOptions },
     );
     try {
+      // A paused persistent session is resumed, then waited for.
+      await session.resumeIfPaused();
       await session.waitReady();
     } catch (err) {
       if (err instanceof GregaleApiError && err.status === 404) {

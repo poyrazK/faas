@@ -68,6 +68,25 @@ records the refused send), and clears the setting. Experiment decisions,
 rollback alerts, the weekly digest's text and retries stay with the
 apidserver and `pkg/flagnotify` tests.
 
+Sandbox sessions (ADR-20261027090013) are switched off in production, so they
+are not a GA row either. `TestSandboxes` (full tier) skips when the sandbox
+routes answer 404, `capacity_unavailable` or the plan's zero session limit.
+Through the public API with a `deploy:write` key and the session token, it
+creates a `codex` preset session, then checks commands as the guest user and
+as root (and `sudo`), exit status and streams, a background command's handle
+and output, workspace file write/read/list with paths and symlinks outside
+`/workspace` refused, `registries` egress (npm reachable, the open web not),
+an idle freeze and the thaw on the next command (logged, not yet budgeted),
+workspace persist and a second session started from it, a private preview
+port reachable with its token and 404 without it, and close revoking the data
+plane. On its own persistent session (ADR-20261122132055) it pauses, resumes
+with a file and a running process kept (not `resumed_cold`), and forks one
+ephemeral session that holds both. Persist, previews and persistent sessions
+skip when their switches are off (`sandbox_unsupported`,
+`sandbox_previews_off`) or the plan has none (`SandboxPersistentMax`,
+`SandboxForkMax`). The OpenAI Agents SDK client
+and the E2B shim are not driven here yet.
+
 Application Auth (ADR-1190) is dark-launched, so it is not a GA row either.
 `TestApplicationAuth` runs when the account's `gregale feature list` does not
 report `application-auth` hidden (the `application_auth` platform flag), and

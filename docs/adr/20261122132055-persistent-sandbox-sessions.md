@@ -216,7 +216,7 @@ Each step is one PR on the sandbox branches until the owner asks for PRs. Every 
 - **Start.** A fork is claimable only once the shared store holds its whole capture and the volume backup (`uploaded_at`, set by the agentd sweep). It restores on any node as `Resume{fork}` with the source's vCPUs, and its volume restores from the source's backup (`volume_source_sandbox_id`). An ephemeral fork's volume is still recorded, so it is deleted when the fork ends.
 - **Lifetime of what forks share.** A capture, the backup it names and the source's volume row stay while a queued or starting fork names the capture, even after the source resumed or ended. Once none does, a fork capture is consumed (after a minute's grace) and the capture sweep deletes its objects. A fork whose source ended before it was captured fails with `fork_source_ended`.
 - **Measured** (EC2 nested KVM, 512 MB guest with a 2 GB volume): live fork capture 7.6 s node-first; two forks restored in 318 ms and 279 ms with distinct host IPs, the source's memory and files, and writes isolated both ways.
-- **Not yet (fork):** ~~the reflink fast path~~ (amendment "same-node forks"); ~~the `GREGALE_FORKED_FROM` marker and `SIGUSR2` reseed hook~~ and ~~`sandbox_fork_seconds` and `sandbox_forks_total`~~ (amendment "fork marker and metrics"); clients (step 10).
+- **Not yet (fork):** ~~the reflink fast path~~ (amendment "same-node forks"); ~~the `GREGALE_FORKED_FROM` marker and `SIGUSR2` reseed hook~~ and ~~`sandbox_fork_seconds` and `sandbox_forks_total`~~ (amendment "fork marker and metrics"); ~~clients~~ (E2B shims: `reseedOnFork` / `reseed_on_fork`).
 
 ### Step 7 as built (evacuation)
 
@@ -233,7 +233,23 @@ Each step is one PR on the sandbox branches until the owner asks for PRs. Every 
 - **Declared nodes.** Until `compute_nodes` carries the agents role, an agent-pool node declares large shapes by being listed in schedd's `FAAS_SCHEDD_SANDBOX_LARGE_NODES` (IDs or names, a subset of `FAAS_SCHEDD_AGENT_RUN_NODES`).
 - **Large.** A session above `SandboxLargeShapeRAMMB` (4,096 MB, the largest ephemeral shape) or `SandboxLargeShapeVCPU` (2) is placed only on those nodes: a new session, a resume, a fork and a drain's move alike. With none declared it is refused for capacity and queues, failing after `SandboxQueueMaxSec` as any session no node can place. A reattach goes to the node it runs on.
 - **Unchanged:** invariant 2 per node, measured admission, and the plan limits (`SandboxPersistentRAMMBMax`, `SandboxPersistentVCPUMax`).
-- **Not yet:** packing large sessions before small ones (small sessions may still land on a large node); a per-node maximum shape; the manifest and Ansible key for the list.
+- **Not yet (large shapes):** packing large sessions before small ones (small sessions may still land on a large node); a per-node maximum shape; the manifest and Ansible key for the list.
+
+### Step 9 as built (dark: metered, not billed)
+
+- **Owner's choice (2026-11-23): build it dark.** Stored bytes are metered and shown; nothing prices or bills them until the GB-month price is set (open question 1).
+- **What counts.** A session's stored bytes are its live pause capture (memory and vmstate bytes as captured; the compressed upload size is not recorded yet, so this over-counts what the store holds) plus its newest volume backup's data (data chunks × 4 MiB, before compression). Fork captures are not counted to the source; a fork pays for itself once it runs.
+- **Metering.** agentd's sweep writes `sandbox_storage_hours`: per account and UTC hour, its paused sessions and their capture and volume bytes. The first sweep of an hour wins; an hour without paused sessions has no row. Running sessions are not metered here (their compute is).
+- **Showing it.** A session's view has `stored_bytes`. `GET /v1/sandbox-storage?from=&to=` lists an account's metered hours (the current UTC month by default, at most 31 days), their GB-hours, the plan's `SandboxPausedBytesFreePerAccount` in GB, and `billable: false`.
+- **Not yet:** the price, the statement line and meterd's export to billing; the compressed capture size; deduplication across a fork tree.
+
+### Step 10 as built (clients)
+
+- **E2B shims (TS and Python).** `Sandbox.create` takes `kind`, `volumeGb`/`volume_gb` and `vcpu`. `pause`/`betaPause` (`beta_pause`), on an instance or by ID, pause a persistent session and wait until it is paused, answering false when it already was; an ephemeral session keeps the refusal, whose message now names `kind: "persistent"`. `connect` asks for a paused session's resume before it waits. `fork(n)` starts and waits for the forks. Paused sessions show as `paused` in info and list; `isRunning` is false for them.
+- **Agents SDK client.** `options.kind` (with `volumeGb`, `vcpu`) creates a persistent session. `session.stop()` pauses a persistent session instead of closing it, so a run that ends keeps it; `session.pause()` is the explicit form. `client.resume(state)` asks for a paused session's resume, then waits.
+- **CLI (owner's call, 2026-11-23).** `gregale sandbox` is already the agent runs group, so sessions are `gregale sandbox session list [--paused]|get|pause|resume|fork|delete` (legacy name `sandbox-sessions`). `pause` and `resume` wait unless `--no-wait`; no command prints a session token.
+- **Docs and journey.** `docs/sandbox-migration.md` has a pause, resume and fork section. `TestSandboxes` gains `persistent_pause_resume_fork`, on its own session: a file and a running process survive a pause and resume (not `resumed_cold`), and an ephemeral fork holds both. It skips where persistent sessions are off or the plan has none.
+- **Not yet:** session create in the CLI; `fork` with labels in the CLI; an async Python client.
 
 ### Amendment: prompt requests and fork starts
 
@@ -257,10 +273,34 @@ A fork of a running session still waited for its capture's upload to the shared 
 - **Reseed hook.** `POST …/exec` takes `reseed_on_fork` for a background command. A foreground command ends with its call, so it never runs on in a fork, and the flag is refused there. On `forked`, guest-init sends `SIGUSR2` to the process group of each running command that asked. Commands that did not ask are left alone.
 - **Metrics.** `sandbox_fork_seconds{count_bucket=1|2-4|5+}` is the time from agentd asking for a running session's fork capture to vmmd recording it. `sandbox_forks_total{outcome}` counts fork starts: `node` (restored on the capture's node), `remote` (from the shared store), `cold`, `refused_node` (the capture's node refused it and it waits for the upload) and `orphaned` (its source ended before the capture). Both are on the agent runs dashboard.
 
+### Amendment: diff captures merged at capture time (built dark)
+
+§3's "Diffs" said a pause captures only the pages written since the last restore, merged into a full image in the background. As built, the merge happens during the capture and costs little, so no chain and no background job exist:
+
+- **Load.** A session restored from its capture loads with KVM dirty page tracking (`track_dirty_pages` on Firecracker 1.14+, `enable_diff_snapshots` before). Only a session's restore from its own pause capture tracks (a resume, or a fork's restore); app wakes, template restores, native recovery and sealed restores do not. The verified load accepts the field only as the literal `true`.
+- **Capture.** vmmd keeps a parent image for each tracked VM. Until the first capture, the parent is the restored image already staged in the jail. The next capture asks Firecracker for a `Diff`, which writes only the dirtied pages. While the guest is still paused, vmmd clones the parent (FICLONE on the node's XFS) into a temp file under `TMPDIR` and writes the diff's data extents over it. A dirtied page that is now all zeros becomes a hole. The result is an ordinary full memory image, which goes through the same export, cache, upload and restore as a Full capture. Restores never read a chain.
+- **Parent after a capture.** Any capture resets Firecracker's dirty bitmap, Full or Diff. The image a capture produces therefore becomes the next parent. vmmd holds it open, so the published temp file and cache eviction cannot remove it under a running session (fork sources keep running). An image on tmpfs is not held, since it would pin a guest's worth of RAM; the next capture is then Full. A capture that fails after `/snapshot/create` drops the parent, so the next capture is Full.
+- **Fallback.** A failed merge (a size mismatch, I/O) retakes a Full capture of the still-paused guest. A Full capture does not depend on the bitmap, so it matches the drive frozen at the same pause. A cold-booted session, or one with no parent, captures Full as before.
+- **Switch.** vmmd's `sandbox_diff_snapshots` (`FAAS_SANDBOX_DIFF_SNAPSHOTS=1`), off by default.
+- **Measured** (2026-11-23, EC2 m7i-flex box, Firecracker 1.10, laid out as production: tmpfs jail, XFS `/srv/fc`; `TestMetalSandboxPauseAndResume` with `FAAS_TEST_SANDBOX_DIFF=1`). Each round writes 32 MiB of random data in the guest, so about 40 MB of pages are dirty.
+
+  | Session RAM | Full pause (create + export) | Diff pause (create + merge) | Resume |
+  |---|---|---|---|
+  | 1 GB | 1.40 s (706 + 448 ms) | 0.25 s (16–19 + 22–27 ms) | 166–180 ms |
+  | 4 GB | 3.76 s (2360 + 1270 ms) | 0.25–0.28 s (20–25 + 27–31 ms) | 159–213 ms |
+
+  Pause time now follows the pages written since the last restore, not the session's RAM. The upload to the shared store still sends the full image, about 0.9–2.6 s.
+
+  The same test also ran on Firecracker 1.17.0 (the upstream release; production's only patch is in virtio-net) with production's 6.18.54 guest kernel and free page reporting on. It passed at 1 and 4 GB. A 4 GB session's diff pauses took 235–244 ms against 3.37 s for a Full pause. A diff over 423 MB of dirty pages took 579 ms (create 139 ms, merge 113 ms).
+
+  To measure the cost of dirty tracking, a 384 MiB write in the restored guest ran with tracking off and on. The first write to untouched pages took 1638 vs 1643 ms; rewrites took 80–87 vs 78–87 ms. A repeat untracked run measured 1240 and 69–76 ms. Another session's metal run shared the host during these runs. Any difference was inside the run-to-run noise: KVM logs each page once per capture interval and restored memory is already mapped in 4 KiB pages, so tracking costs little.
+
+  Before turning the switch on: watch `vmm: diff capture merged` (`diff_bytes`, `merge_ms`) on a canary node.
+
 ## Open questions
 
 1. **Prices:** GB-month for stored bytes and the free allowance, alongside `k` and the 256 MB floor.
 2. **Fork tree storage:** dedup of shared capture pages across forks beyond the shared base image. Measure first.
-3. **Diff snapshot chain length** before a background merge; measure restore time against chain length on the reference node.
+3. ~~**Diff snapshot chain length** before a background merge.~~ Answered by the diff capture amendment: captures merge at capture time, so there is no chain. The cost of dirty tracking measured within noise on Firecracker 1.17.
 4. **Cross-CPU restores:** a capture is pinned to `cpu_template`/`cpu_model` (ADR-20261024225612). On a pool with mixed CPUs, does resume prefer a matching node or fall back to cold? Proposed: prefer, then cold.
 5. **GPU** stays phase 3 (ADR-20261027090014 §5).

@@ -1,7 +1,10 @@
-"""sandbox.commands: commands in the session, foreground or background.
+"""sandbox.commands and sandbox.pty: commands in the session, and terminals.
 
 Gregale names a background command by a handle; this module gives each a
-number, which is what callers know as its pid.
+number, which is what callers know as its pid. A terminal is a background
+command on a pseudo-terminal: its output is polled like any background
+command's, and its input, end of input and resizes go to
+POST .../exec/{handle}/input.
 """
 
 from __future__ import annotations
@@ -18,6 +21,15 @@ from .errors import CommandExitException, CommandResult, NotFoundException, Unsu
 POLL_S = 0.2
 
 OutputHandler = Callable[[str], None]
+PtyHandler = Callable[[bytes], None]
+
+
+@dataclass
+class PtySize:
+    """A terminal's size."""
+
+    rows: int
+    cols: int
 
 
 @dataclass
@@ -59,10 +71,19 @@ class CommandHandle:
     iteration follows the command.
     """
 
-    def __init__(self, pid: int, conn: Connection, handle: str, on_stdout: Optional[OutputHandler] = None, on_stderr: Optional[OutputHandler] = None) -> None:
+    def __init__(
+        self,
+        pid: int,
+        conn: Connection,
+        handle: str,
+        on_stdout: Optional[OutputHandler] = None,
+        on_stderr: Optional[OutputHandler] = None,
+        tty: bool = False,
+    ) -> None:
         self.pid = pid
         self._conn = conn
         self._handle = handle
+        self._tty = tty
         self._on_stdout = on_stdout
         self._on_stderr = on_stderr
         self._stdout = ""
@@ -87,15 +108,22 @@ class CommandHandle:
     def error(self) -> Optional[str]:
         return None
 
-    def __iter__(self) -> Iterator[Tuple[Optional[str], Optional[str], None]]:
-        """Yields (stdout, stderr, pty) chunks until the command ends."""
+    def __iter__(self) -> Iterator[Tuple[Optional[str], Optional[str], Optional[bytes]]]:
+        """Yields (stdout, stderr, pty) chunks until the command ends.
+
+        A terminal's output comes as pty bytes; other commands' as text.
+        """
         while True:
             out = self._conn.json("GET", f"/exec/{self._handle}", query={"stdout_offset": self._offsets[0], "stderr_offset": self._offsets[1]})
-            stdout, stderr = _decode(out.get("stdout")), _decode(out.get("stderr"))
+            raw = base64.b64decode(out["stdout"]) if out.get("stdout") else b""
+            stdout, stderr = raw.decode("utf-8", "replace"), _decode(out.get("stderr"))
             offsets = (int(out.get("stdout_offset", 0)), int(out.get("stderr_offset", 0)))
             progressed = offsets != self._offsets
             self._offsets = offsets
-            if stdout:
+            if raw and self._tty:
+                self._stdout += stdout
+                yield None, None, raw
+            elif stdout:
                 self._stdout += stdout
                 yield stdout, None, None
             if stderr:
@@ -109,11 +137,18 @@ class CommandHandle:
             if out.get("running"):
                 time.sleep(POLL_S)
 
-    def wait(self, on_stdout: Optional[OutputHandler] = None, on_stderr: Optional[OutputHandler] = None) -> CommandResult:
+    def wait(
+        self,
+        on_stdout: Optional[OutputHandler] = None,
+        on_stderr: Optional[OutputHandler] = None,
+        on_pty: Optional[PtyHandler] = None,
+    ) -> CommandResult:
         """Waits for the command to end. A non-zero exit raises CommandExitException."""
         on_stdout = on_stdout or self._on_stdout
         on_stderr = on_stderr or self._on_stderr
-        for stdout, stderr, _ in self:
+        for stdout, stderr, pty in self:
+            if pty and on_pty:
+                on_pty(pty)
             if stdout and on_stdout:
                 on_stdout(stdout)
             if stderr and on_stderr:
@@ -136,8 +171,17 @@ class CommandHandle:
         except NotFoundException:
             return False
 
-    def send_stdin(self, data: str) -> None:
-        raise UnsupportedException("commands.send_stdin", "Gregale commands take no input yet; pass the input in the command line or a file")
+    def send_stdin(self, data: str, request_timeout: Optional[float] = None) -> None:
+        """Writes to the command's stdin."""
+        _send_input(self._conn, self._handle, {"data": _b64(data)}, request_timeout)
+
+
+def _b64(data: Any) -> str:
+    return base64.b64encode(data.encode() if isinstance(data, str) else bytes(data)).decode()
+
+
+def _send_input(conn: Connection, handle: str, body: Dict[str, Any], request_timeout: Optional[float]) -> None:
+    conn.call("POST", f"/exec/{handle}/input", json_body=body, timeout=request_timeout).close()
 
 
 class Commands:
@@ -171,16 +215,21 @@ class Commands:
         stdin: bool = False,
         timeout: Optional[float] = None,
         request_timeout: Optional[float] = None,
+        reseed_on_fork: bool = False,
     ) -> Any:
         """Runs a shell command.
 
         In the foreground it answers a CommandResult, and a non-zero exit
         raises CommandExitException; with background=True it answers a
         CommandHandle at once. timeout is how long the command may run, in
-        seconds (60 by default, within the plan's cap).
+        seconds (60 by default, within the plan's cap). reseed_on_fork, a
+        Gregale extension for background commands, sends the command SIGUSR2
+        in each fork of the session so it can reseed its own random state.
         """
-        if stdin:
-            raise UnsupportedException("commands.run(stdin=True)", "Gregale commands take no input yet")
+        if stdin and not background:
+            raise UnsupportedException("commands.run(stdin=True)", "only background commands take input; run it with background=True and use send_stdin")
+        if reseed_on_fork and not background:
+            raise UnsupportedException("commands.run(reseed_on_fork=True)", "only a background command runs on in a fork; run it with background=True")
         merged = {**self._conn.envs, **(envs or {})}
         body = {
             "cmd": ["/bin/bash", "-l", "-c", cmd],
@@ -189,6 +238,7 @@ class Commands:
             "run_as": _run_as(user),
             "timeout_ms": int(timeout * 1000) if timeout else None,
             "background": True if background else None,
+            "reseed_on_fork": True if reseed_on_fork else None,
         }
         if background:
             res = self._conn.json("POST", "/exec", json_body=body, timeout=request_timeout)
@@ -256,5 +306,74 @@ class Commands:
         """Follows a background command again, from the start of its kept output."""
         return CommandHandle(pid, self._conn, self._handle_of(pid), on_stdout, on_stderr)
 
-    def send_stdin(self, pid: int, data: str) -> None:
-        raise UnsupportedException("commands.send_stdin", "Gregale commands take no input yet; pass the input in the command line or a file")
+    def send_stdin(self, pid: int, data: str, request_timeout: Optional[float] = None) -> None:
+        """Writes to a background command's stdin."""
+        _send_input(self._conn, self._handle_of(pid), {"data": _b64(data)}, request_timeout)
+
+    def close_stdin(self, pid: int, request_timeout: Optional[float] = None) -> None:
+        """Ends a background command's input: it reads end of file."""
+        _send_input(self._conn, self._handle_of(pid), {"eof": True}, request_timeout)
+
+    def _input(self, pid: int, body: Dict[str, Any], request_timeout: Optional[float]) -> None:
+        _send_input(self._conn, self._handle_of(pid), body, request_timeout)
+
+    def _start_terminal(
+        self,
+        size: PtySize,
+        user: Optional[str],
+        cwd: Optional[str],
+        envs: Optional[Dict[str, str]],
+        timeout: Optional[float],
+        request_timeout: Optional[float],
+    ) -> CommandHandle:
+        merged = {**self._conn.envs, **(envs or {})}
+        body = {
+            "cmd": ["/bin/bash", "-i", "-l"],
+            "workdir": cwd,
+            "env": merged or None,
+            "run_as": _run_as(user),
+            "timeout_ms": int(timeout * 1000) if timeout else None,
+            "background": True,
+            "tty": True,
+            "rows": size.rows,
+            "cols": size.cols,
+        }
+        handle = self._conn.json("POST", "/exec", json_body=body, timeout=request_timeout)["handle"]
+        return CommandHandle(self._pid(handle), self._conn, handle, tty=True)
+
+
+class Pty:
+    """sandbox.pty: interactive terminals, as background commands on a pseudo-terminal.
+
+    Read a terminal's output by iterating its handle (the third item of each
+    chunk) or with handle.wait(on_pty=...).
+    """
+
+    def __init__(self, commands: Commands) -> None:
+        self._commands = commands
+
+    def create(
+        self,
+        size: PtySize,
+        user: Optional[str] = None,
+        cwd: Optional[str] = None,
+        envs: Optional[Dict[str, str]] = None,
+        timeout: Optional[float] = 60,
+        request_timeout: Optional[float] = None,
+    ) -> CommandHandle:
+        """Starts a login shell on a terminal of the given size.
+
+        timeout is how long it may run, in seconds, within the plan's cap.
+        """
+        return self._commands._start_terminal(size, user, cwd, envs, timeout, request_timeout)
+
+    def send_stdin(self, pid: int, data: bytes, request_timeout: Optional[float] = None) -> None:
+        """Types into the terminal."""
+        self._commands._input(pid, {"data": _b64(data)}, request_timeout)
+
+    def resize(self, pid: int, size: PtySize, request_timeout: Optional[float] = None) -> None:
+        self._commands._input(pid, {"rows": size.rows, "cols": size.cols}, request_timeout)
+
+    def kill(self, pid: int, request_timeout: Optional[float] = None) -> bool:
+        """Kills the terminal's shell; False when there is none."""
+        return bool(self._commands.kill(pid, request_timeout=request_timeout))

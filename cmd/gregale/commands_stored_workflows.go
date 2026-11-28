@@ -530,7 +530,7 @@ func cmdStoredWorkflowsPublish(args []string) int {
 		return printErr("Invalid stored workflow scenarios", errors.New("--scenarios requires a nonempty suite path"))
 	}
 	if strings.TrimSpace(*app) == "" || strings.TrimSpace(*name) == "" || *expectedVersion < 0 {
-		PrintUsage(os.Stderr, "usage: gregale workflow stored publish --app <slug> --name <name> --expected-version <n> [--environment <env>] [--take-over-manifest] [--scenarios <path>] [--require-coverage]", "stored-workflows")
+		PrintUsage(os.Stderr, "usage: gregale workflow stored publish --app <slug> --name <name> --expected-version <n> [--env <env>] [--take-over-manifest] [--scenarios <path>] [--require-coverage]", "stored-workflows")
 		return 1
 	}
 	var scenarios []loadedStoredWorkflowScenario

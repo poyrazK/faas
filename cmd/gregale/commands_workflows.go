@@ -172,7 +172,7 @@ func cmdWorkflowsRun(args []string) int {
 	// `workflows run --app <slug> <workflow-name>`).
 	flagArgs, positional := splitArgsForFlags(args, "wait")
 	if len(positional) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale workflow run <workflow_name> [--app <slug>] [--environment <env>] [--input JSON | --input-file PATH|-] [--idempotency-key <key>] [--wait [--timeout 5m] [--poll-interval 2s]]", "workflows")
+		PrintUsage(os.Stderr, "usage: gregale workflow run <workflow_name> [--app <slug>] [--env <env>] [--input JSON | --input-file PATH|-] [--idempotency-key <key>] [--wait [--timeout 5m] [--poll-interval 2s]]", "workflows")
 		return 1
 	}
 	workflowName := positional[0]

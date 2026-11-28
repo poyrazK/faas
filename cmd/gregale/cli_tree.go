@@ -174,6 +174,9 @@ var cliTreeAliases = []cliTreeAlias{
 	{"sandbox run", "run"},
 	{"sandbox template publish", "sandbox-templates build"},
 	{"sandbox template", "sandbox-templates"},
+	// ADR-20261122132055: sessions sit under `sandbox session`, since
+	// `sandbox` alone is the agent runs group (owner's call).
+	{"sandbox session", "sandbox-sessions"},
 	{"sandbox", "runs"},
 	{"invocation run", "invoke"},
 	{"invocation watch", "tail"},
@@ -670,6 +673,9 @@ var cliTreeAliases = []cliTreeAlias{
 	{"ai tag-limit set", "ai tag-limits"},
 	{"ai app-limit get", "ai app-limit"},
 	{"ai app-limit set", "ai app-limit"},
+	{"redis exec", "redis cli"},
+	{"ai integration list", "ai integrations"},
+	{"ai integration delete", "ai integrations"},
 	{"ai request-policy get", "ai request-policy"},
 	{"ai request-policy set", "ai request-policy"},
 	{"api tenant activation get", "platform-tenants activation"},

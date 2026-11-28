@@ -5166,6 +5166,33 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		// ADR-20261122132055 step 10.
+		Name:    "sandbox-sessions",
+		DocSlug: "sandbox-sessions",
+		Short:   "List, pause, resume, fork and close sandbox sessions",
+		Subcommands: []cliSub{
+			{Name: subList, Short: "List sandbox sessions, newest first", Flags: []cliFlag{
+				{Name: "paused", Short: "only paused persistent sessions", Bool: true},
+				{Name: "state", Short: "only sessions in this state", Value: "STATE"},
+				{Name: "limit", Short: "sessions per page (default 50)", Value: "N"},
+			}, Examples: []string{"gregale sandbox session list --paused"}},
+			{Name: subGet, Short: "Show one session", Positionals: []string{"<id>"}},
+			{Name: "pause", Short: "Pause a persistent session, keeping its memory and /workspace", Positionals: []string{"<id>"}, Flags: []cliFlag{
+				{Name: "no-wait", Short: "ask and return without waiting", Bool: true},
+				{Name: "wait-timeout", Short: "maximum time to wait", Value: "D"},
+			}},
+			{Name: "resume", Short: "Resume a paused session", Positionals: []string{"<id>"}, Flags: []cliFlag{
+				{Name: "no-wait", Short: "ask and return without waiting", Bool: true},
+				{Name: "wait-timeout", Short: "maximum time to wait", Value: "D"},
+			}},
+			{Name: "fork", Short: "Start sessions from a session's memory and /workspace", Positionals: []string{"<id>"}, Flags: []cliFlag{
+				{Name: "count", Short: "sessions to start, within the plan's SandboxForkMax", Value: "N"},
+				{Name: "kind", Short: "the forks' kind: ephemeral (default) or persistent", Value: "KIND", ClosedSet: []string{"ephemeral", "persistent"}},
+			}, Examples: []string{"gregale sandbox session fork 0b0e6a1c-2f6a-4c8e-9d43-6f3f1d2a9b10 --count 3"}},
+			{Name: subRm, Short: "Close a session; its memory and workspace go with it", Positionals: []string{"<id>"}},
+		},
+	},
+	{
 		// ADR-20261027090016 amendment 2. The internal agents capability
 		// (pkg/productcap/catalog.json) keeps it out of customer discovery.
 		Name:    "agents",
@@ -6543,7 +6570,7 @@ var cliCommands = []cliCommand{
 			}, Notes: []string{
 				"The command runs in a short task VM of the bound app and reaches the cache over its private address, so it obeys the same binding and command rules as the app.",
 				"One command per call; commands that stream (SUBSCRIBE, MONITOR) are refused. Put `--` before a command whose first word starts with a dash.",
-			}, Examples: []string{"gregale redis cli sessions PING", "gregale redis cli sessions --app web LRANGE queue 0 -1"}},
+			}, Examples: []string{"gregale redis exec sessions PING", "gregale redis exec sessions --app web LRANGE queue 0 -1"}},
 			{Name: "update", Short: "Move a cache to the current Valkey release; its data is kept", Positionals: []string{"<name>"}},
 			{Name: "restart", Short: "Restart a managed Redis cache; its data is kept", Positionals: []string{"<name>"}},
 			{Name: "delete", Short: "Delete a managed Redis cache and its data", Positionals: []string{"<name>"}, Flags: []cliFlag{

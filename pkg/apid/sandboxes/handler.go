@@ -38,6 +38,7 @@ type Store interface {
 	ResumeSandbox(ctx context.Context, accountID, id string) (agentstore.Sandbox, error)
 	GrowPausedSandboxVolume(ctx context.Context, accountID, id string, volumeGB int) (bool, error)
 	ForkSandbox(ctx context.Context, a agentstore.SandboxForkAdmission) ([]agentstore.Sandbox, error)
+	SandboxStorageHours(ctx context.Context, accountID string, from, to time.Time) ([]agentstore.SandboxStorageHour, error)
 	SandboxSnapshot(ctx context.Context, accountID, id string) (agentstore.SandboxSnapshot, error)
 	SandboxSnapshots(ctx context.Context, accountID string, f agentstore.SandboxSnapshotFilter) ([]agentstore.SandboxSnapshot, error)
 	RequestSandboxSnapshotDelete(ctx context.Context, accountID, id string) error
@@ -396,7 +397,7 @@ func (h *Handler) view(acct state.Account, sb agentstore.Sandbox, withToken bool
 		ExpiresAt: sb.ExpiresAt, Labels: sb.Labels, CloseRequestedAt: sb.CloseRequestedAt, CreatedAt: sb.CreatedAt,
 		UpdatedAt: sb.UpdatedAt, ClosedAt: sb.ClosedAt, SnapshotID: sb.WorkspaceSnapshotID, Browser: sb.Browser,
 		VCPU: sb.VCPU, VolumeGB: sb.VolumeGB, PauseRequestedAt: sb.PauseRequestedAt, ResumeRequestedAt: sb.ResumeRequestedAt,
-		PausedAt: sb.PausedAt, Durability: sb.Durability, ResumedCold: sb.ResumedCold, ForkedFrom: sb.ForkedFrom}
+		PausedAt: sb.PausedAt, Durability: sb.Durability, ResumedCold: sb.ResumedCold, ForkedFrom: sb.ForkedFrom, StoredBytes: sb.StoredBytes}
 	if name, ok := strings.CutPrefix(sb.ImageRef, api.SandboxTemplateRefPrefix); ok {
 		out.Template = name
 	} else {

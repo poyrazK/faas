@@ -101,8 +101,28 @@ func TestVerifiedSnapshotLoadCommandClockRealtime(t *testing.T) {
 		}
 	}
 	extra := v.snapshotLoadBody(vmstateSnapshotName, memSnapshotName, true)
-	extra["track_dirty_pages"] = true
+	extra["huge_pages"] = "2M"
 	if _, err := verifiedSnapshotLoadCommand(RestoreSpec{}, extra); !errors.Is(err, runtimeadmission.ErrInvalid) {
 		t.Fatalf("extra field accepted: %v", err)
+	}
+}
+
+// adr: 20261122132055 — a sandbox session's dirty tracking passes the
+// verified load only as the literal true.
+func TestVerifiedSnapshotLoadDirtyTracking(t *testing.T) {
+	v := &JailerVMM{}
+	for _, key := range []string{"track_dirty_pages", "enable_diff_snapshots"} {
+		body := v.snapshotLoadBody(vmstateSnapshotName, memSnapshotName, true)
+		body[key] = true
+		if _, err := verifiedSnapshotLoadCommand(RestoreSpec{}, body); err != nil {
+			t.Errorf("%s=true rejected: %v", key, err)
+		}
+		for name, value := range map[string]any{"false": false, "string": "true"} {
+			bad := v.snapshotLoadBody(vmstateSnapshotName, memSnapshotName, true)
+			bad[key] = value
+			if _, err := verifiedSnapshotLoadCommand(RestoreSpec{}, bad); !errors.Is(err, runtimeadmission.ErrInvalid) {
+				t.Errorf("%s=%s accepted: %v", key, name, err)
+			}
+		}
 	}
 }

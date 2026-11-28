@@ -1,8 +1,9 @@
 // adr: 20261027090013 §12 — E2B-style code runs on Gregale by changing the
 // import and the API key: Sandbox.create/connect/list/kill, commands in the
 // foreground (streamed when callbacks are given) and background, files in
-// and outside /workspace, ports and their preview tokens; unsupported calls
-// fail with an error naming the call and the alternative.
+// and outside /workspace, ports and their preview tokens, terminals and
+// command input (step 12); unsupported calls fail with an error naming the
+// call and the alternative.
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -11,10 +12,26 @@ import { CommandExitError, NotFoundError, Sandbox, SandboxNotFoundError, Unsuppo
 const API = 'https://api.gregale.test';
 const ID = '0b0e6a1c-2f6a-4c8e-9d43-6f3f1d2a9b10';
 
-type Exec = { cmd: string[]; env?: Record<string, string>; run_as?: string; workdir?: string; timeout_ms?: number; background?: boolean };
+type Exec = {
+  cmd: string[];
+  env?: Record<string, string>;
+  run_as?: string;
+  workdir?: string;
+  timeout_ms?: number;
+  background?: boolean;
+  tty?: boolean;
+  rows?: number;
+  cols?: number;
+  reseed_on_fork?: boolean;
+};
+
+const FORK = 'f0f0f0f0-0000-4000-8000-000000000001';
 
 class FakeGregale {
   state = 'queued';
+  kind = 'ephemeral';
+  controls: string[] = [];
+  forkReq?: Record<string, unknown>;
   created?: Record<string, unknown>;
   patched?: Record<string, unknown>;
   deleted = 0;
@@ -22,6 +39,9 @@ class FakeGregale {
   files = new Map<string, Uint8Array>();
   ports: Record<string, unknown>[] = [];
   background = new Map<string, { out: string; polls: number; finishAfter: number; exit: number; killed?: boolean }>();
+  inputs: { handle: string; data?: string; eof?: boolean; rows?: number; cols?: number }[] = [];
+  sessionEnv?: Record<string, string>;
+  code: Record<string, unknown>[] = [];
 
   fetch = async (input: string | URL | Request, init: RequestInit = {}): Promise<Response> => {
     const url = new URL(String(input));
@@ -35,12 +55,26 @@ class FakeGregale {
     if (auth === 'Bearer key-1') {
       if (method === 'POST' && path === '/v1/sandboxes') {
         this.created = JSON.parse(text);
+        if (this.created?.kind) this.kind = String(this.created.kind);
         return json(201, this.view());
+      }
+      if (method === 'GET' && path === `/v1/sandboxes/${FORK}`) return json(200, { ...this.view(), id: FORK, state: 'ready', kind: 'ephemeral', forked_from: ID });
+      if (method === 'POST' && /^\/(pause|resume|fork)$/.test(path.slice(base.length))) {
+        const op = path.slice(base.length);
+        this.controls.push(op);
+        if (op === '/pause') this.state = 'pausing';
+        else if (op === '/resume') this.state = 'resuming';
+        else if (op === '/fork') {
+          this.forkReq = JSON.parse(text);
+          return json(201, { forks: [{ ...this.view(), id: FORK, state: 'queued', kind: 'ephemeral', forked_from: ID }] });
+        }
+        return json(202, this.view());
       }
       if (method === 'GET' && path === '/v1/sandboxes') return json(200, { items: [this.view()], next_before: '' });
       if (path === `/v1/sandboxes/${'1'.repeat(8)}-0000-0000-0000-000000000000`) return json(404, { code: 'sandbox_not_found', status: 404 });
       if (method === 'GET' && path === base) {
-        if (this.state === 'queued') this.state = 'ready';
+        if (this.state === 'queued' || this.state === 'resuming') this.state = 'ready';
+        else if (this.state === 'pausing') this.state = 'paused';
         return json(200, this.view());
       }
       if (method === 'PATCH' && path === base) {
@@ -68,7 +102,8 @@ class FakeGregale {
       const script = req.cmd.at(-1) ?? '';
       if (req.background) {
         const handle = `c${this.background.size + 1}`;
-        this.background.set(handle, { out: 'serving\n', polls: 0, finishAfter: script.includes('server') ? 100 : 1, exit: 0 });
+        const out = req.tty ? '$ ' : 'serving\n';
+        this.background.set(handle, { out, polls: 0, finishAfter: script.includes('server') || req.tty ? 100 : 1, exit: 0 });
         return json(202, { handle, exit_code: 0, wall_time_ms: 0 });
       }
       const exit = script.includes('false') ? 1 : 0;
@@ -81,6 +116,13 @@ class FakeGregale {
     }
     if (method === 'GET' && sub === '/exec') {
       return json(200, { commands: [...this.background].map(([handle, c]) => ({ handle, argv: ['/bin/bash', '-l', '-c', 'npm run server'], running: c.polls < c.finishAfter && !c.killed })) });
+    }
+    const toInput = /^\/exec\/(c\d+)\/input$/.exec(sub);
+    if (toInput && method === 'POST') {
+      const c = this.background.get(toInput[1]!);
+      if (!c) return json(404, { code: 'sandbox_entry_not_found', status: 404 });
+      this.inputs.push({ handle: toInput[1]!, ...JSON.parse(text) });
+      return json(200, { handle: toInput[1], argv: [], running: true });
     }
     const one = /^\/exec\/(c\d+)$/.exec(sub);
     if (one) {
@@ -105,6 +147,36 @@ class FakeGregale {
       });
     }
     switch (`${method} ${sub}`) {
+      case 'POST /code': {
+        const req = JSON.parse(text);
+        this.code.push(req);
+        const exec = {
+          results: [
+            { data: { 'image/png': 'iVBORw0KGgo=', 'text/plain': '<Figure>' } },
+            { data: { 'text/plain': '42' }, is_main_result: true },
+          ],
+          logs: { stdout: ['hi\n'], stderr: [] },
+          ...(req.code.includes('1/0') ? { error: { name: 'ZeroDivisionError', value: 'division by zero', traceback: 'Traceback' } } : {}),
+          execution_count: 2,
+        };
+        if (headers.get('Accept') === 'text/event-stream') {
+          const body = `event: stdout\ndata: "hi\\n"\n\nevent: result\ndata: ${JSON.stringify({ ...exec, logs: { stdout: [], stderr: [] } })}\n\n`;
+          return new Response(body, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+        }
+        return json(200, exec);
+      }
+      case 'POST /code/contexts':
+        this.code.push({ create: JSON.parse(text) });
+        return json(201, { id: 'abc123', language: 'python', cwd: '/workspace' });
+      case 'GET /code/contexts':
+        return json(200, { contexts: [{ id: 'default', language: 'python', cwd: '/workspace' }] });
+      case 'POST /code/contexts/abc123/restart':
+      case 'DELETE /code/contexts/abc123':
+        this.code.push({ [method]: sub });
+        return json(200, {});
+      case 'PUT /env':
+        this.sessionEnv = JSON.parse(text).env;
+        return json(200, { names: Object.keys(this.sessionEnv ?? {}).sort() });
       case 'GET /files': {
         const f = this.files.get(rel);
         return f ? new Response(f) : json(404, { code: 'sandbox_entry_not_found', status: 404 });
@@ -139,6 +211,7 @@ class FakeGregale {
     return {
       id: ID,
       state: this.state,
+      kind: this.kind,
       preset: 'codex',
       ram_mb: 2048,
       network: { mode: 'registries' },
@@ -146,7 +219,7 @@ class FakeGregale {
       expires_at: '2026-11-05T04:00:00Z',
       created_at: '2026-11-05T00:00:00Z',
       labels: { team: 'evals' },
-      ...(this.state === 'closed' ? {} : { token: 'sbx-1', token_expires_at: new Date(Date.now() + 900_000).toISOString() }),
+      ...(this.state !== 'ready' && this.state !== 'frozen' && this.state !== 'queued' ? {} : { token: 'sbx-1', token_expires_at: new Date(Date.now() + 900_000).toISOString() }),
     };
   }
 }
@@ -165,8 +238,11 @@ test('Sandbox.create maps E2B options and waits for the VM', async () => {
   assert.equal(sbx.getHost(3000), `3000-${ID}.preview.test`);
   assert.equal(sbx.previewToken(3000), 'sbxp1.tok');
   assert.throws(() => sbx.getHost(5173), (err) => err instanceof UnsupportedError && /exposePort\(5173\)/.test(err.message));
+  // The envs are set in the session, so a command carries none of its own.
+  assert.deepEqual(fake.sessionEnv, { CI: '1' });
   await sbx.commands.run('env');
-  assert.deepEqual(fake.execs.at(-1)?.env, { CI: '1' });
+  assert.equal(fake.execs.at(-1)?.env, undefined);
+  assert.deepEqual(await sbx.setEnvs({ B: '2', A: '1' }), ['A', 'B']);
   const custom = await Sandbox.create('my-template', opts);
   assert.equal(custom.sandboxId, ID);
   assert.deepEqual(fake.created, { template: 'my-template' });
@@ -258,6 +334,103 @@ test('unsupported calls name the call and the alternative', async () => {
   const { opts } = setup();
   const sbx = await Sandbox.create(opts);
   await assert.rejects(sbx.betaPause(), (err) => err instanceof UnsupportedError && /freeze on their own/.test(err.message));
-  await assert.rejects(sbx.pty.create(), (err) => err instanceof UnsupportedError && err.call === 'pty.create');
-  await assert.rejects(sbx.commands.sendStdin(), UnsupportedError);
+  await assert.rejects(sbx.commands.run('cat', { stdin: true }), (err) => err instanceof UnsupportedError && /background: true/.test(err.message));
+});
+
+test('a terminal is a background command on a pty, driven through its input', async () => {
+  const { fake, opts } = setup();
+  const sbx = await Sandbox.create(opts);
+  const seen: Uint8Array[] = [];
+  const term = await sbx.pty.create({ cols: 80, rows: 24, onData: (d) => void seen.push(d) });
+  const exec = fake.execs.at(-1)!;
+  assert.deepEqual([exec.tty, exec.background, exec.rows, exec.cols, exec.cmd], [true, true, 24, 80, ['/bin/bash', '-i', '-l']]);
+  await sbx.pty.sendInput(term.pid, new TextEncoder().encode('ls\n'));
+  await sbx.pty.resize(term.pid, { cols: 120, rows: 40 });
+  assert.deepEqual(fake.inputs, [
+    { handle: 'c1', data: Buffer.from('ls\n').toString('base64') },
+    { handle: 'c1', rows: 40, cols: 120 },
+  ]);
+  for (let i = 0; i < 50 && seen.length === 0; i++) await new Promise((r) => setTimeout(r, 10));
+  assert.equal(Buffer.from(seen[0]!).toString(), '$ ');
+  assert.equal(await sbx.pty.kill(term.pid), true);
+  await assert.rejects(term.wait(), CommandExitError);
+});
+
+test('runCode answers results, logs, errors and the value; contexts are managed', async () => {
+  const { fake, opts } = setup();
+  const sbx = await Sandbox.create('code-interpreter', opts);
+  assert.deepEqual(fake.created, { preset: 'code-interpreter' });
+  const exec = await sbx.runCode('x + 2');
+  assert.equal(exec.text, '42');
+  assert.equal(exec.executionCount, 2);
+  assert.deepEqual(exec.logs, { stdout: ['hi\n'], stderr: [] });
+  assert.equal(exec.results[0]!.png, 'iVBORw0KGgo=');
+  assert.deepEqual(exec.results[0]!.formats(), ['text', 'png']);
+  const seen: string[] = [];
+  const failed = await sbx.runCode('1/0', {
+    onStdout: (m) => void seen.push(`out:${m.line}`),
+    onResult: (r) => void seen.push(`result:${r.text}`),
+    onError: (e) => void seen.push(`error:${e.name}`),
+  });
+  assert.equal(failed.error?.name, 'ZeroDivisionError');
+  assert.deepEqual(seen, ['out:hi\n', 'result:<Figure>', 'result:42', 'error:ZeroDivisionError']);
+  assert.deepEqual(failed.logs.stdout, ['hi\n']);
+  const ctx = await sbx.createCodeContext({ cwd: '/workspace/app' });
+  await sbx.runCode('y = 1', { context: ctx, timeoutMs: 5_000 });
+  assert.deepEqual(fake.code.at(-1), { code: 'y = 1', context: 'abc123', timeout_ms: 5_000 });
+  assert.deepEqual((await sbx.listCodeContexts()).map((c) => c.id), ['default']);
+  await sbx.restartCodeContext(ctx);
+  await sbx.removeCodeContext('abc123');
+  assert.deepEqual(fake.code.slice(-2), [{ POST: '/code/contexts/abc123/restart' }, { DELETE: '/code/contexts/abc123' }]);
+  await assert.rejects(sbx.runCode('1', { envs: { A: '1' } }), UnsupportedError);
+});
+
+test('background commands take stdin and its end', async () => {
+  const { fake, opts } = setup();
+  const sbx = await Sandbox.create(opts);
+  const cat = await sbx.commands.run('cat', { background: true, stdin: true });
+  await sbx.commands.sendStdin(cat.pid, 'hello');
+  await cat.sendStdin(' world');
+  await sbx.commands.closeStdin(cat.pid);
+  assert.deepEqual(fake.inputs, [
+    { handle: 'c1', data: Buffer.from('hello').toString('base64') },
+    { handle: 'c1', data: Buffer.from(' world').toString('base64') },
+    { handle: 'c1', eof: true },
+  ]);
+  await assert.rejects(sbx.commands.sendStdin(42, 'x'), NotFoundError);
+});
+
+// adr: 20261122132055 §3 — a background command may ask for SIGUSR2 in forks.
+test('background commands may ask to reseed in forks', async () => {
+  const { fake, opts } = setup();
+  const sbx = await Sandbox.create(opts);
+  await sbx.commands.run('worker', { background: true, reseedOnFork: true });
+  assert.equal(fake.execs.at(-1)?.reseed_on_fork, true);
+  await sbx.commands.run('other', { background: true });
+  assert.equal(fake.execs.at(-1)?.reseed_on_fork, undefined);
+  const before = fake.execs.length;
+  await assert.rejects(sbx.commands.run('worker', { reseedOnFork: true }), UnsupportedError);
+  assert.equal(fake.execs.length, before);
+});
+
+test('a persistent session pauses, resumes on connect and forks', async () => {
+  const { fake, opts } = setup();
+  const sbx = await Sandbox.create({ ...opts, kind: 'persistent', volumeGb: 10, vcpu: 2 });
+  assert.equal(fake.created?.kind, 'persistent');
+  assert.equal(fake.created?.volume_gb, 10);
+  assert.equal(fake.created?.vcpu, 2);
+  assert.equal(await sbx.betaPause(), true);
+  assert.equal(fake.state, 'paused');
+  assert.equal((await sbx.getInfo()).state, 'paused');
+  assert.equal(await sbx.isRunning(), false);
+  assert.equal(await Sandbox.betaPause(ID, opts), false, 'already paused');
+  const page = await Sandbox.list({ ...opts, query: { state: ['paused'] } }).nextItems();
+  assert.deepEqual(page.map((i) => [i.sandboxId, i.state]), [[ID, 'paused']]);
+  const back = await Sandbox.connect(ID, opts);
+  assert.deepEqual(fake.controls, ['/pause', '/resume']);
+  assert.equal(fake.state, 'ready');
+  assert.equal(await back.isRunning(), true);
+  const forks = await back.fork(1, { metadata: { run: 'a' } });
+  assert.deepEqual(fake.forkReq, { count: 1, labels: { run: 'a' } });
+  assert.deepEqual(forks.map((f) => f.sandboxId), [FORK]);
 });

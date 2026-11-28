@@ -511,7 +511,13 @@ SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '
   coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref, browser,
   coalesce(egress_allow, '{}')::text[] AS egress_allow, coalesce(egress_deny, '{}')::text[] AS egress_deny,
   coalesce(vcpu, 0)::integer AS vcpu, coalesce(volume_gb, 0)::integer AS volume_gb, pause_requested_at, resume_requested_at,
-  paused_at, coalesce(durability, '')::text AS durability, resumed_cold, coalesce(forked_from::text, '')::text AS forked_from
+  paused_at, coalesce(durability, '')::text AS durability, resumed_cold, coalesce(forked_from::text, '')::text AS forked_from,
+  -- ADR-20261122132055 §8: what the session keeps stored (4194304 is
+  -- volbackup.ChunkBytes).
+  (coalesce((SELECT c.mem_bytes + c.vmstate_bytes FROM sandbox_session_captures c
+    WHERE c.session_id=sandbox_sessions.id AND c.state='live' AND c.purpose='pause'), 0)::bigint
+  + coalesce((SELECT b.data_chunks::bigint * 4194304 FROM sandbox_volumes v JOIN sandbox_volume_backups b ON b.id=v.latest_backup_id
+    WHERE v.session_id=sandbox_sessions.id AND b.state <> 'deleted'), 0)::bigint)::bigint AS stored_bytes
  FROM sandbox_sessions WHERE id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
 
 -- name: ListSandboxSessions :many
@@ -522,7 +528,13 @@ SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '
   coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref, browser,
   coalesce(egress_allow, '{}')::text[] AS egress_allow, coalesce(egress_deny, '{}')::text[] AS egress_deny,
   coalesce(vcpu, 0)::integer AS vcpu, coalesce(volume_gb, 0)::integer AS volume_gb, pause_requested_at, resume_requested_at,
-  paused_at, coalesce(durability, '')::text AS durability, resumed_cold, coalesce(forked_from::text, '')::text AS forked_from
+  paused_at, coalesce(durability, '')::text AS durability, resumed_cold, coalesce(forked_from::text, '')::text AS forked_from,
+  -- ADR-20261122132055 §8: what the session keeps stored (4194304 is
+  -- volbackup.ChunkBytes).
+  (coalesce((SELECT c.mem_bytes + c.vmstate_bytes FROM sandbox_session_captures c
+    WHERE c.session_id=sandbox_sessions.id AND c.state='live' AND c.purpose='pause'), 0)::bigint
+  + coalesce((SELECT b.data_chunks::bigint * 4194304 FROM sandbox_volumes v JOIN sandbox_volume_backups b ON b.id=v.latest_backup_id
+    WHERE v.session_id=sandbox_sessions.id AND b.state <> 'deleted'), 0)::bigint)::bigint AS stored_bytes
  FROM sandbox_sessions
  WHERE account_id=sqlc.arg(account_id)::text::uuid
  AND (sqlc.narg(state)::text IS NULL OR state=sqlc.narg(state)::text)
@@ -1009,6 +1021,30 @@ UPDATE sandbox_volume_backups SET state='deleted', deleted_at=now()
 DELETE FROM sandbox_volumes v USING sandbox_sessions sb
  WHERE v.session_id=sqlc.arg(session_id)::text::uuid AND sb.id=v.session_id AND sb.state IN ('closed','expired','failed')
    AND NOT EXISTS (SELECT 1 FROM sandbox_volume_backups b WHERE b.session_id=v.session_id AND b.state <> 'deleted');
+
+-- name: RecordSandboxStorageHour :execrows
+-- ADR-20261122132055 §8: each account's paused sessions and the bytes they
+-- keep stored this UTC hour; the first sweep of the hour wins. A capture
+-- counts its memory and vmstate bytes, a volume the data chunks of its
+-- newest backup (4194304 is volbackup.ChunkBytes).
+INSERT INTO sandbox_storage_hours (account_id, hour, paused_sessions, capture_bytes, volume_bytes)
+SELECT sb.account_id, date_trunc('hour', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC', count(*)::integer,
+  coalesce(sum(cap.bytes), 0)::bigint, coalesce(sum(vol.bytes), 0)::bigint
+  FROM sandbox_sessions sb
+  LEFT JOIN LATERAL (SELECT c.mem_bytes + c.vmstate_bytes AS bytes FROM sandbox_session_captures c
+    WHERE c.session_id=sb.id AND c.state='live' AND c.purpose='pause') cap ON true
+  LEFT JOIN LATERAL (SELECT b.data_chunks::bigint * 4194304 AS bytes FROM sandbox_volumes v
+    JOIN sandbox_volume_backups b ON b.id=v.latest_backup_id WHERE v.session_id=sb.id AND b.state <> 'deleted') vol ON true
+ WHERE sb.state='paused'
+ GROUP BY sb.account_id
+ON CONFLICT (account_id, hour) DO NOTHING;
+
+-- name: ListSandboxStorageHours :many
+-- An account's metered hours from from_hour (inclusive) to to_hour
+-- (exclusive), oldest first.
+SELECT hour, paused_sessions, capture_bytes, volume_bytes FROM sandbox_storage_hours
+ WHERE account_id=sqlc.arg(account_id)::text::uuid AND hour >= sqlc.arg(from_hour)::timestamptz AND hour < sqlc.arg(to_hour)::timestamptz
+ ORDER BY hour;
 
 -- name: GetSandboxForkSource :one
 -- ADR-20261122132055 §3: the session a fork request names, locked so its

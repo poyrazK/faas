@@ -36,6 +36,9 @@ var cliTreeVerbs = []string{
 	"sign",
 	// `postgres query` runs one SQL query (alias `postgres sql`).
 	"query",
+	// `sandbox session fork` starts copies of a paused or running persistent
+	// session (ADR-20261122132055).
+	"fork",
 	// branch: a lazy copy of a project environment (ADR-20261031193635 and the
 	// ADR-20261026145832 glossary); a --branch flag still names a Git branch.
 	"branch",

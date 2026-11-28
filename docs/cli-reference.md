@@ -43,6 +43,7 @@ Read retries: put `--http-retries 3` before the command for up to three addition
 | [`github`](#github) | Connect GitHub and bind apps to repositories |
 | [`registry`](#registry) | Manage registry credentials, signing keys and published images |
 | [`app`](#app) | Inspect, change, scale and operate apps |
+| [`sandbox`](#sandbox) | Run code in disposable sandboxes and inspect past runs |
 | [`invocation`](#invocation) | Run apps and functions, inspect calls and wait for results |
 | [`function`](#function) | Generate typed clients for calls between a project&#39;s functions |
 | [`env`](#env) | Set, list and sync an app&#39;s sealed variables |
@@ -3318,6 +3319,86 @@ Check observed network health without sending probe traffic
 Show policy convergence and fresh gateway traffic wiring
 
 `gregale app traffic-status [<app>]`
+
+
+## sandbox
+
+Run code in disposable sandboxes and inspect past runs
+
+`gregale sandbox [<subcommand>]`
+
+### sandbox session
+
+List, pause, resume, fork and close sandbox sessions
+
+#### sandbox session list
+
+List sandbox sessions, newest first
+
+`gregale sandbox session list [--paused] [--state <STATE>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--paused` | only paused persistent sessions |  |
+| `--state <STATE>` | only sessions in this state |  |
+| `--limit <N>` | sessions per page (default 50) |  |
+
+Examples:
+
+```sh
+gregale sandbox session list --paused
+```
+
+#### sandbox session get
+
+Show one session
+
+`gregale sandbox session get <id>`
+
+#### sandbox session pause
+
+Pause a persistent session, keeping its memory and /workspace
+
+`gregale sandbox session pause [--no-wait] [--wait-timeout <D>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--no-wait` | ask and return without waiting |  |
+| `--wait-timeout <D>` | maximum time to wait |  |
+
+#### sandbox session resume
+
+Resume a paused session
+
+`gregale sandbox session resume [--no-wait] [--wait-timeout <D>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--no-wait` | ask and return without waiting |  |
+| `--wait-timeout <D>` | maximum time to wait |  |
+
+#### sandbox session fork
+
+Start sessions from a session&#39;s memory and /workspace
+
+`gregale sandbox session fork [--count <N>] [--kind <KIND>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--count <N>` | sessions to start, within the plan&#39;s SandboxForkMax |  |
+| `--kind <KIND>` | the forks&#39; kind: ephemeral (default) or persistent | one of `ephemeral` · `persistent` |
+
+Examples:
+
+```sh
+gregale sandbox session fork 0b0e6a1c-2f6a-4c8e-9d43-6f3f1d2a9b10 --count 3
+```
+
+#### sandbox session delete
+
+Close a session; its memory and workspace go with it
+
+`gregale sandbox session delete <id>`
 
 
 ## invocation

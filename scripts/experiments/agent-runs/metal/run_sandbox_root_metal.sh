@@ -15,11 +15,23 @@
 # refuses to start while another session's Firecracker VMs run, runs
 # leakcheck before and after, and removes its work directory.
 #
+# Timings (pause, fork, warm snapshots) match production only when DIR is on
+# the node's reflink-capable /srv/fc (XFS) and FAAS_TEST_JAIL_BASE names a
+# tmpfs, as production's /srv/fc/jail is: on ext4 every session drive is
+# copied, and with a disk-backed jail Firecracker writes all guest memory to
+# disk (a 1 GB pause took 12.5 s that way, 1.3 s laid out as production).
+# FAAS_TEST_SANDBOX_MEM_MIB sizes the pause test's session;
+# FAAS_TEST_SANDBOX_DIFF=1 adds diff capture rounds and
+# FAAS_TEST_SANDBOX_BENCH=1 a guest write benchmark (ADR-20261122132055).
+#
+# FC_BIN_DIR=<dir> puts a private firecracker/jailer pair first on PATH, to
+# test another release without touching the host's /usr/local/bin symlinks.
+#
 # KERNEL=<vmlinux> skips the kernel build and uses that kernel; with a
 # kernel that loads modules the "loads no kernel code" subtest fails, so
 # pair it with RUN=<-test.run pattern> to pick the subtests to run.
 set -euo pipefail
-export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH=${FC_BIN_DIR:+$FC_BIN_DIR:}/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 dir=$1
 bin=$dir/bin work=$dir/work

@@ -22,7 +22,11 @@ with Sandbox.create(timeout=300, ports=[3000]) as sbx:  # GREGALE_API_KEY
 - Files inside `/workspace` use Gregale's files API; other paths go through commands and are capped at 256 KB.
 - The default network mode is `registries`; `allow_internet_access=False` is `none`.
 - A background command's `on_stdout`/`on_stderr` run while you `wait()` on it or iterate it.
-- Unsupported calls (`pty`, stdin, `files.watch_dir`, `pause`, MCP) raise `UnsupportedException` naming the call and the alternative.
+- `Sandbox.create("code-interpreter")` boots the code interpreter: `run_code` runs Python in a Jupyter kernel and returns an `Execution` (results with `text`, `png`, `html`, ..., logs, error, `execution_count`); `create_code_context`, `list_code_contexts`, `restart_code_context` and `remove_code_context` manage kernels.
+- `Sandbox.create(envs=...)` sets the envs in the session once it runs (`PUT .../env`, kept in the session's memory only), so `Sandbox.connect` from another process sees them; `sandbox.set_envs(envs)` replaces them.
+- `pty.create(PtySize(rows, cols))` starts a login shell on a terminal as a background command; `send_stdin`, `resize` and `kill` drive it, and its output comes from iterating the handle (the third item) or `handle.wait(on_pty=...)`. Background commands take input with `commands.send_stdin` and `close_stdin`; a foreground command takes none.
+- `pause`/`beta_pause` work on sessions created with `kind="persistent"` (memory and `/workspace` kept; `Sandbox.connect` resumes); `fork(n)` is Gregale-only. In a fork, commands see `GREGALE_FORKED_FROM`, and a background command run with `reseed_on_fork=True` gets `SIGUSR2` to reseed its own random state. An ephemeral session freezes on its own instead.
+- Unsupported calls (`files.watch_dir`, `pause` on an ephemeral session, MCP) raise `UnsupportedException` naming the call and the alternative.
 
 Gregale options: `network`, `ram_mb`, `lifetime`, `ports`, `port_visibility`, `snapshot_id`, `ready_timeout`, `api_base` (default `GREGALE_API_BASE`, then `https://api.gregale.dev`).
 

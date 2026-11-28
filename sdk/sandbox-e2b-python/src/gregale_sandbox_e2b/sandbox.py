@@ -16,18 +16,23 @@ from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlsplit
 
 from .api import Api, ApiError, Transport, to_sandbox_error
-from .commands import Commands
-from .connection import Connection, parse_time
-from .errors import InvalidArgumentException, NotFoundException, UnsupportedException
+from .code import CodeInterpreter, Context, Execution
+from .commands import Commands, Pty
+import time
+
+from .connection import PAUSED, Connection, parse_time
+from .errors import InvalidArgumentException, NotFoundException, SandboxNotFoundException, TimeoutException, UnsupportedException
 from .filesystem import Filesystem
 
 #: The harness presets a template name may be.
-PRESETS = {"codex", "opencode", "claude-code"}
+PRESETS = {"codex", "opencode", "claude-code", "code-interpreter"}
 #: Template names E2B code commonly passes for the stock image.
 DEFAULT_TEMPLATES = {"base", "default"}
 
 _SANDBOX_ID = re.compile(r"^[0-9a-f-]{36}$")
 _LIVE = {"queued", "starting", "ready", "frozen"}
+#: Sessions Sandbox.list shows: running ones and paused persistent ones.
+_LISTED = _LIVE | PAUSED
 
 
 class SandboxState(str, Enum):
@@ -73,14 +78,20 @@ def _info(view: Dict[str, Any]) -> SandboxInfo:
         metadata=dict(view.get("labels") or {}),
         started_at=parse_time(view["created_at"]),
         end_at=parse_time(view["expires_at"]),
-        state=SandboxState.PAUSED if view.get("state") == "frozen" else SandboxState.RUNNING,
-        cpu_count=max(1, round(ram / 1024)),
+        state=SandboxState.PAUSED if view.get("state") == "frozen" or view.get("state") in PAUSED else SandboxState.RUNNING,
+        cpu_count=int(view.get("vcpu") or 0) or max(1, round(ram / 1024)),
         memory_mb=ram,
     )
 
 
 def _is_live(view: Dict[str, Any]) -> bool:
     return view.get("state") in _LIVE and not view.get("close_requested_at")
+
+
+def _resume_if_paused(conn: Connection) -> None:
+    """Asks for a paused persistent session's resume; wait_ready then waits for it."""
+    if conn.read().get("state") in ("paused", "pausing"):
+        conn.control("POST", "/resume")
 
 
 def _check_id(sandbox_id: str) -> None:
@@ -107,8 +118,9 @@ class SandboxPaginator:
             return []
         params: Dict[str, Any] = {"limit": self._limit, "before": self._before}
         states = self._query.state
-        if states and len(states) == 1:
-            params["state"] = "frozen" if states[0] == SandboxState.PAUSED else "ready"
+        # A paused session is frozen or paused (persistent): filtered here.
+        if states and len(states) == 1 and states[0] == SandboxState.RUNNING:
+            params["state"] = "ready"
         if self._query.metadata:
             params["selector"] = ",".join(f"{k}={v}" for k, v in self._query.metadata.items())
         try:
@@ -117,8 +129,8 @@ class SandboxPaginator:
             raise to_sandbox_error(err, "Sandbox.list") from err
         self._before = page.get("next_before") or None
         self._done = not self._before
-        infos = [_info(v) for v in page.get("items", []) if _is_live(v)]
-        return [i for i in infos if not states or len(states) != 2 or i.state in states]
+        infos = [_info(v) for v in page.get("items", []) if v.get("state") in _LISTED and not v.get("close_requested_at")]
+        return [i for i in infos if not states or i.state in states]
 
 
 class _ClassOrInstance:
@@ -132,23 +144,6 @@ class _ClassOrInstance:
         if obj is None:
             return lambda *a, **k: self._on_class(objtype, *a, **k)
         return lambda *a, **k: self._on_instance(obj, *a, **k)
-
-
-class _Pty:
-    def _no(self, call: str) -> UnsupportedException:
-        return UnsupportedException(f"pty.{call}", "interactive terminals are not available on Gregale yet; run commands with commands.run")
-
-    def create(self, *a: Any, **k: Any) -> None:
-        raise self._no("create")
-
-    def send_stdin(self, *a: Any, **k: Any) -> None:
-        raise self._no("send_stdin")
-
-    def resize(self, *a: Any, **k: Any) -> None:
-        raise self._no("resize")
-
-    def kill(self, *a: Any, **k: Any) -> None:
-        raise self._no("kill")
 
 
 class Sandbox:
@@ -175,13 +170,15 @@ class Sandbox:
         ports: Optional[List[int]] = None,
         port_visibility: str = "private",
         snapshot_id: Optional[str] = None,
+        kind: Optional[str] = None,
+        volume_gb: Optional[int] = None,
+        vcpu: Optional[int] = None,
         ready_timeout: float = 120.0,
         transport: Optional[Transport] = None,
         _conn: Optional[Connection] = None,
     ) -> None:
         self._port_visibility = port_visibility
         self._ports: Dict[int, Dict[str, Any]] = {}
-        self.pty = _Pty()
         if _conn is not None:
             self._attach(_conn)
             return
@@ -203,13 +200,19 @@ class Sandbox:
                     "lifetime_s": math.ceil(lifetime) if lifetime else None,
                     "labels": metadata,
                     "snapshot_id": snapshot_id,
+                    "kind": kind,
+                    "volume_gb": volume_gb,
+                    "vcpu": vcpu,
                 },
             )
         except ApiError as err:
             raise to_sandbox_error(err, "Sandbox.create") from err
-        self._attach(Connection(api, view["id"], envs, ready_timeout))
+        self._attach(Connection(api, view["id"], None, ready_timeout))
         try:
             self._conn.wait_ready()
+            # The envs are set in the session, so a later connect sees them.
+            if envs:
+                self.set_envs(envs)
             for port in ports or []:
                 self.expose_port(port)
         except BaseException:
@@ -224,6 +227,8 @@ class Sandbox:
         self.sandbox_id = conn.sandbox_id
         self.files = Filesystem(conn)
         self.commands = Commands(conn)
+        self.pty = Pty(self.commands)
+        self._code = CodeInterpreter(conn)
 
     @classmethod
     def create(cls, template: Optional[str] = None, **opts: Any) -> "Sandbox":
@@ -232,7 +237,9 @@ class Sandbox:
         template is a preset (codex, opencode, claude-code), "base" for the
         default preset, or the name of a template built with
         `gregale sandbox template publish`. timeout is the idle time in
-        seconds before the session freezes.
+        seconds before the session freezes. kind="persistent" keeps the
+        session's memory and /workspace volume (volume_gb) across pauses:
+        pause() stops it and connect() resumes it; it has no lifetime.
         """
         return cls(template, **opts)
 
@@ -249,9 +256,13 @@ class Sandbox:
         ready_timeout: float = 120.0,
         transport: Optional[Transport] = None,
     ) -> "Sandbox":
-        """Connects to a live session; its token is re-minted with your API key."""
+        """Connects to a live session; its token is re-minted with your API key.
+
+        A paused persistent session is resumed first, as E2B's connect does.
+        """
         _check_id(sandbox_id)
         conn = Connection(_ApiOpts(api_key, api_base, request_timeout, transport).api(), sandbox_id, envs, ready_timeout)
+        _resume_if_paused(conn)
         conn.wait_ready()
         sandbox = cls(_conn=conn, port_visibility=port_visibility)
         for p in sandbox._list_ports():
@@ -314,20 +325,109 @@ class Sandbox:
 
     set_timeout = _ClassOrInstance(_set_timeout, _set_timeout_by_id)
 
+    def run_code(self, code: str, **opts: Any) -> Execution:
+        """Runs code in a code context's Jupyter kernel.
+
+        The session must come from template "code-interpreter". Variables and
+        imports persist between runs of one context. Takes E2B's language,
+        context, on_stdout, on_stderr, on_result, on_error, timeout and
+        request_timeout.
+        """
+        return self._code.run_code(code, **opts)
+
+    def create_code_context(self, cwd: Optional[str] = None, language: Optional[str] = None, request_timeout: Optional[float] = None) -> Context:
+        """Creates a code context: its own kernel, in cwd (default /workspace)."""
+        return self._code.create_code_context(cwd, language, request_timeout)
+
+    def list_code_contexts(self, request_timeout: Optional[float] = None) -> List[Context]:
+        return self._code.list_code_contexts(request_timeout)
+
+    def restart_code_context(self, context: Any, request_timeout: Optional[float] = None) -> None:
+        self._code.restart_code_context(context, request_timeout)
+
+    def remove_code_context(self, context: Any, request_timeout: Optional[float] = None) -> None:
+        self._code.remove_code_context(context, request_timeout)
+
+    def set_envs(self, envs: Dict[str, str], request_timeout: Optional[float] = None) -> List[str]:
+        """Gregale only: replaces the session's environment.
+
+        Every later command gets it under its own envs. It is kept in the
+        session's memory, not stored; an empty dict clears it. Returns the
+        names now set.
+        """
+        return list(self._conn.json("PUT", "/env", json_body={"env": envs}, timeout=request_timeout)["names"])
+
     def is_running(self) -> bool:
         try:
             return _is_live(self._conn.read())
         except NotFoundException:
             return False
 
-    def pause(self) -> None:
-        raise UnsupportedException(
-            "pause",
-            "idle sessions freeze on their own and resume on the next call; long memory-keeping pauses need persistent sessions, which are not available yet",
-        )
+    def _pause(self) -> bool:
+        """Pauses a persistent session: its memory and /workspace are kept and
+        Sandbox.connect resumes it (ADR-20261122132055). Returns once it is
+        paused; False when it already was. An ephemeral session cannot pause:
+        it freezes on its own when idle.
+        """
+        view = self._conn.read()
+        if view.get("kind") != "persistent":
+            raise UnsupportedException(
+                "pause",
+                'idle sessions freeze on their own and resume on the next call; create the session with kind="persistent" to pause it and keep its memory',
+            )
+        if view.get("state") == "paused":
+            return False
+        self._conn.control("POST", "/pause")
+        deadline = time.monotonic() + self._conn.ready_timeout
+        delay = 0.25
+        while True:
+            now = self._conn.read()
+            state = now.get("state")
+            if state == "paused":
+                return True
+            if state not in PAUSED and state not in ("ready", "frozen"):
+                outcome = now.get("outcome") or {}
+                code = f" ({outcome['code']})" if outcome.get("code") else ""
+                raise SandboxNotFoundException(f"sandbox {self.sandbox_id} is {state}{code}")
+            if time.monotonic() >= deadline:
+                raise TimeoutException(f"sandbox {self.sandbox_id} did not pause within {self._conn.ready_timeout:g} s")
+            time.sleep(delay)
+            delay = min(delay * 2, 2.0)
 
-    def beta_pause(self) -> None:
-        self.pause()
+    @staticmethod
+    def _pause_by_id(cls: Any, sandbox_id: str, **opts: Any) -> bool:
+        _check_id(sandbox_id)
+        return cls(_conn=Connection(_ApiOpts(**opts).api(), sandbox_id))._pause()
+
+    pause = _ClassOrInstance(_pause, _pause_by_id)
+    beta_pause = _ClassOrInstance(_pause, _pause_by_id)
+
+    def fork(
+        self,
+        count: int = 1,
+        *,
+        kind: Optional[str] = None,
+        metadata: Optional[Dict[str, str]] = None,
+        ready_timeout: Optional[float] = None,
+    ) -> List["Sandbox"]:
+        """Gregale only: starts count new sessions from this one's memory and
+        /workspace as they are now, and waits until they run.
+
+        A running session is captured without stopping; a paused one forks
+        from its pause. Forks are ephemeral unless kind="persistent"; their
+        labels are the source's unless metadata is given.
+        """
+        res = self._conn.control("POST", "/fork", json_body={"count": count, "kind": kind, "labels": metadata})
+        forks = [
+            type(self)(
+                _conn=Connection(self._conn.api, v["id"], None, ready_timeout or self._conn.ready_timeout),
+                port_visibility=self._port_visibility,
+            )
+            for v in res["forks"]
+        ]
+        for f in forks:
+            f._conn.wait_ready()
+        return forks
 
     def expose_port(self, port: int, visibility: Optional[str] = None) -> str:
         """Exposes a port at its preview URL and answers its host.
