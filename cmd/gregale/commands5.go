@@ -392,13 +392,10 @@ func envPush(args []string) int {
 	waitForAck := fs.Bool("wait-for-ack", false, "wait for application acknowledgements for uploaded keys")
 	timeout := fs.Duration("timeout", 2*time.Minute, "maximum restart and acknowledgement wait after uploading")
 	restart := fs.Bool("restart", false, "restart app after applying changes (otherwise changes apply on next cold wake)")
-	// --secret-scan mirrors the deploy-side flag. Default ON because the
-	// failure mode (a Stripe key pasted into a `gregale env push`
-	// heredoc) is the same as the deploy-side case — the value lands in
-	// the platform's sealed secret store where the customer expects
-	// "SECRET_KEY", not "my live Stripe key". Override with
-	// --secret-scan=off for local-dev sandbox keys (e.g. sk_test_…).
-	secretScan := fs.String("secret-scan", "on", "scan pairs for known credential patterns before pushing (on|off|strict|source-tree; default on)")
+	// --secret-scan reports pairs that look like known credentials. env push
+	// seals every value, so in the default mode a finding is a note and the
+	// pair is still pushed; strict refuses the whole push.
+	secretScan := fs.String("secret-scan", "on", "note pairs that match known credential patterns; all pushed values are sealed (on|off|strict|source-tree; strict refuses the push)")
 	noGuard := fs.Bool("no-guard", false, "do not open a config guard for these changes (ADR-1451)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -532,10 +529,10 @@ func envPush(args []string) int {
 	}
 	// Secret-scan pass: scan the parsed pairs (in-memory; no file I/O
 	// because the values are already in hand) for known credential
-	// patterns. Findings cause the pair to be dropped from the upload
-	// and a stderr warning to be rendered. The origin string is the
-	// input path or "<stdin>" so the warning says `File: <stdin>` for
-	// pipe input (matches how envPush surfaces other parse errors).
+	// patterns. env push writes every pair to the sealed store, so a
+	// finding is reported as a note on what is being sealed and the pair
+	// is still pushed; dropping it left apps without the credential the
+	// .env file was pushed to deliver. Strict mode still refuses the push.
 	if secretScanMode.isScanEnabled() {
 		origin := envPushOrigin(*in, *fromStdin)
 		scanPairs := make([]secretscan.Pair, len(pairs))
@@ -567,31 +564,7 @@ func envPush(args []string) int {
 				&StrictSecretScanError{Findings: wireFindings,
 					Hint: "move detected secrets to `gregale env set` (see " + cliDocsURL + ")"})
 		}
-		if len(findings) > 0 {
-			renderEnvPushScanWarnings(findings, osStderr)
-			PrintWarn(osStderr, "%s", envPushSecretHint(*app, origin))
-			// Build a drop set keyed by (key, value) so a duplicate
-			// KEY with a different VALUE pair is treated distinctly —
-			// the pair table is small (handful of entries per .env
-			// file) so a linear scan is fine.
-			drop := make(map[int]bool, len(findings))
-			for _, f := range findings {
-				if f.Line >= 1 && f.Line <= len(pairs) {
-					drop[f.Line-1] = true
-				}
-			}
-			kept := pairs[:0]
-			for i, p := range pairs {
-				if !drop[i] {
-					kept = append(kept, p)
-				}
-			}
-			pairs = kept
-		}
-	}
-	if len(pairs) == 0 {
-		PrintFail(os.Stderr, "all KEY=VALUE pairs contained detected secrets; none were pushed. %s", envPushSecretHint(*app, envPushOrigin(*in, *fromStdin)))
-		return 1
+		renderEnvPushScanNotes(findings, osStderr)
 	}
 	// prod 2026-11-20: an `EMPTY=` line was refused by the API after the
 	// keys before it were saved, so the push half-applied and --restart
@@ -674,54 +647,16 @@ func envPushOrigin(path string, fromStdin bool) string {
 	return path
 }
 
-// envPushSecretHint tells the caller where detected secrets belong. env push
-// drops them; `gregale env set` seals a value deliberately and does not scan
-// it, which is the path the strict-mode rejection already names. Pointing
-// only at --secret-scan=off taught coding agents to turn the scan off for
-// real credentials (agent eval rc.357, Django task).
-func envPushSecretHint(app, origin string) string {
-	appFlag := ""
-	if app != "" {
-		appFlag = " --app " + app
-	}
-	input := " KEY=VALUE"
-	switch {
-	case origin == "<stdin>":
-		input = " --from-stdin"
-	case origin != "":
-		input = " --file " + origin
-	}
-	return "Set detected secrets deliberately with `gregale env set" + appFlag + input +
-		"`; use --secret-scan=off only for test keys the scan misreads"
-}
-
-// renderEnvPushScanWarnings is the envPush-side twin of
-// renderSecretScanWarnings in commands2.go. Same two-line shape per
-// finding, but the summary line ends with "pushed." rather than
-// "upload." because envPush ships to the platform secret store, not a
-// tarball. Stderr-only so `gregale env push --json | jq` keeps a clean
-// stdout JSON envelope.
+// renderEnvPushScanNotes tells the caller which pushed values look like
+// known credentials. They are sealed like every env push value, so this is
+// information, not a warning to act on. Stderr-only so
+// `gregale env push --json | jq` keeps a clean stdout JSON envelope.
 //
-// Each line:
-//
-//	! Secret detected in .env:12 (STRIPE_SECRET_KEY → stripe_live, high)
-//	  ↳ sk_liv…p7dc
-//
-// Summary line (only if any findings fired):
-//
-//	! 1 secret(s) skipped from the push. Move to: skip
-func renderEnvPushScanWarnings(findings []secretscan.Finding, w io.Writer) {
-	if len(findings) == 0 {
-		return
-	}
+//	→ STRIPE_SECRET_KEY (.env:12) looks like a stripe_live credential; sealed
+func renderEnvPushScanNotes(findings []secretscan.Finding, w io.Writer) {
 	for _, f := range findings {
-		PrintWarn(w, "Secret detected in %s:%d (%s → %s, %s)",
-			f.File, f.Line, f.Key, f.Provider, f.Severity)
-		// Same convention as renderSecretScanWarnings in commands2.go:
-		// the snippet is a continuation line, Fprintf errors discarded.
-		_, _ = fmt.Fprintf(w, "  ↳ %s\n", f.Snippet)
+		writeStatus(w, "→", "%s (%s:%d) looks like a %s credential; sealed", f.Key, f.File, f.Line, f.Provider)
 	}
-	PrintWarn(w, "%d secret(s) skipped from the push.", len(findings))
 }
 
 // openCustomerFile opens any customer-supplied file path with defense

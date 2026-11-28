@@ -93,7 +93,9 @@ func previewEnvPush(app, scope string, pairs []secretsPair, origin string, mode 
 			existing[secret.Key] = true
 		}
 	}
-	dropped := map[int]bool{}
+	// env push writes only to the sealed store, so a scanner hit is a note
+	// on what is being sealed, not a reason to drop the pair. Strict mode
+	// still refuses the whole upload.
 	if mode.isScanEnabled() {
 		scanPairs := make([]secretscan.Pair, len(pairs))
 		for i, pair := range pairs {
@@ -106,25 +108,12 @@ func previewEnvPush(app, scope string, pairs []secretsPair, origin string, mode 
 				key = "(invalid key)"
 			}
 			preview.Findings = append(preview.Findings, envPushPreviewFinding{Key: key, Pair: finding.Line, Provider: finding.Provider, Severity: finding.Severity.String()})
-			if finding.Line >= 1 && finding.Line <= len(pairs) {
-				dropped[finding.Line-1] = true
-			}
 		}
 		if mode.isStrict() && len(findings) > 0 {
 			preview.Blockers = append(preview.Blockers, "Strict secret scan rejects this upload.")
 		}
 	}
-	kept := 0
 	for i, pair := range pairs {
-		if dropped[i] {
-			key := pair.Key
-			if api.ValidateSecretKey(key) != nil {
-				key = "(invalid key)"
-			}
-			preview.Changes = append(preview.Changes, envPushPreviewChange{Key: key, Action: "skipped_by_scan"})
-			continue
-		}
-		kept++
 		if api.ValidateSecretKey(pair.Key) != nil {
 			preview.Blockers = append(preview.Blockers, fmt.Sprintf("Input pair %d has an invalid secret key.", i+1))
 			continue
@@ -140,13 +129,10 @@ func previewEnvPush(app, scope string, pairs []secretsPair, origin string, mode 
 		}
 		preview.Changes = append(preview.Changes, envPushPreviewChange{Key: pair.Key, Action: action})
 	}
-	if kept == 0 {
-		preview.Blockers = append(preview.Blockers, "All input pairs are skipped by secret scan; nothing would be uploaded.")
-	}
 	if preview.ProjectedCount > preview.CurrentCount && preview.ProjectedCount > preview.Quota {
 		preview.Blockers = append(preview.Blockers, "Projected secret count exceeds the app quota across all scopes.")
 	}
-	preview.Requirements = evaluateEnvRequiredKeys(required, requiredFile, scope, pairs, dropped, list, limits.SecretValueMaxBytes)
+	preview.Requirements = evaluateEnvRequiredKeys(required, requiredFile, scope, pairs, nil, list, limits.SecretValueMaxBytes)
 	if len(preview.Requirements.Missing) > 0 {
 		preview.Blockers = append(preview.Blockers, "Required secret keys would remain missing; fill the missing required names before uploading.")
 	}
@@ -166,7 +152,7 @@ func previewEnvPush(app, scope string, pairs []secretsPair, origin string, mode 
 			_, _ = fmt.Fprintf(osStdout, "  %s  %s\n", change.Action, change.Key)
 		}
 		for _, finding := range preview.Findings {
-			_, _ = fmt.Fprintf(osStdout, "  Scan: pair %d, %s (%s, %s)\n", finding.Pair, finding.Key, finding.Provider, finding.Severity)
+			_, _ = fmt.Fprintf(osStdout, "  Scan: pair %d, %s looks like %s (%s); it is sealed like every pushed value\n", finding.Pair, finding.Key, finding.Provider, finding.Severity)
 		}
 		PrintProgress(osStdout, "Secrets across all scopes: %d -> %d / %d", preview.CurrentCount, preview.ProjectedCount, preview.Quota)
 		renderEnvRequiredConfiguration(preview.Requirements)

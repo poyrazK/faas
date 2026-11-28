@@ -3783,7 +3783,7 @@ Push KEY=VALUE pairs to sealed secrets
 | `-f <PATH>` | input file (default .env) |  |
 | `--from-stdin` | read KEY=VALUE pairs from stdin |  |
 | `--restart` | restart app after applying changes (otherwise changes apply on next cold wake) |  |
-| `--secret-scan <MODE>` | scan pairs before pushing | one of `on` · `off` · `strict` · `source-tree` |
+| `--secret-scan <MODE>` | note pairs that look like credentials (all values are sealed) | one of `on` · `off` · `strict` · `source-tree` |
 | `--no-guard` | do not open a config guard for these changes |  |
 
 Examples:

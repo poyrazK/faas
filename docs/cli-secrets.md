@@ -189,7 +189,7 @@ gregale env set --from-stdin --restart --wait-for-ack --timeout 2m < secrets.env
 ## Waiting after env push
 
 `env push --wait-for-ack --timeout 2m` shares the acknowledgement engine used
-by `secrets set`. It waits only for keys actually uploaded after secret scanning,
+by `secrets set`. It waits for every key it uploaded,
 and combines with `--restart` to request one fresh restart and follow its wake.
 A shared timeout starts after uploading and covers version reads, restart, and
 acknowledgement polling. Without restart, confirmation requires application
