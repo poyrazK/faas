@@ -555,19 +555,44 @@ func restoreMatchesSourceDefinition(target, source Database) bool {
 		(target.ProviderResourceID == "" || target.ProviderResourceID != source.ProviderResourceID && target.ProviderResourceID != databaseDataResource(source))
 }
 
-// leasedRestore is a restore's copy that another worker is making right now:
-// still provisioning under a live lease, not waiting out a retry. Restore
-// answers its conflict with that row so a caller can tell a copy in progress
-// from a failed one (an environment branch waits instead of backing off; prod
-// 2026-11-27, two backoffs held a branch's data for 24 s). Any other conflict
-// (a failed, deleting or backed-off copy) keeps the empty row.
+// leasedRestore is a restore's copy still being made: another worker holds
+// its lease right now, or the provider accepted it and it waits for its next
+// check (released with no error code). Restore answers its conflict with that
+// row so a caller can tell a copy in progress from a failed one (an
+// environment branch waits instead of backing off; prod 2026-11-27 and
+// 2026-11-28, backoffs held a branch's data for 24 s). Any other conflict (a
+// failed, deleting or backed-off copy) keeps the empty row.
 func (s *Service) leasedRestore(ctx context.Context, existing Database) Database {
 	current, err := s.store.Get(ctx, existing.AccountID, existing.ID)
 	now := s.now()
-	if err != nil || current.State != StateProvisioning || current.LeaseToken == "" || !current.LeaseUntil.After(now) || current.RetryAt.After(now) {
+	if err != nil || current.State != StateProvisioning {
+		return Database{}
+	}
+	leased := current.LeaseToken != "" && current.LeaseUntil.After(now) && !current.RetryAt.After(now)
+	polling := current.ProviderResourceID != "" && current.LastErrorCode == "" && current.RetryAt.After(now)
+	if !leased && !polling {
 		return Database{}
 	}
 	return current
+}
+
+// A restore the provider accepted but has not finished is checked again
+// every restorePendingQuickPoll for its first restorePendingQuickWindow: a
+// point-in-time branch is usually ready within seconds, and the poll interval
+// kept a copy that was ready waiting 15 s for its next check (prod
+// 2026-11-28: an environment branch's data took 22 s, 16 of them waiting).
+const (
+	restorePendingQuickPoll   = time.Second
+	restorePendingQuickWindow = 30 * time.Second
+)
+
+// pendingPollDelay is when a database the provider is still making is
+// checked again.
+func pendingPollDelay(database Database, now time.Time, poll time.Duration) time.Duration {
+	if database.RestoreSourceResourceID != "" && now.Sub(database.CreatedAt) < restorePendingQuickWindow {
+		return min(poll, restorePendingQuickPoll)
+	}
+	return poll
 }
 
 func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (Database, error) {
@@ -703,7 +728,7 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 	}
 	switch observed.Status {
 	case ProviderStatusPending, ProviderStatusDeleting:
-		if err := s.release(ctx, database.ID, leaseToken, StateProvisioning, "", s.pollInterval); err != nil {
+		if err := s.release(ctx, database.ID, leaseToken, StateProvisioning, "", pendingPollDelay(database, now, s.pollInterval)); err != nil {
 			return Database{}, err
 		}
 		return s.store.Get(ctx, accountID, databaseID)
