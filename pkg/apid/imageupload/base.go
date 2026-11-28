@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -27,10 +28,44 @@ var ErrNoBase = errors.New("imageupload: the app has no image base")
 // BaseStore keeps image bases in the deployment's storage backend.
 type BaseStore struct {
 	be storage.StorageBackend
+
+	// saves orders SaveAsync per app: one save at a time, and a save
+	// that a newer commit overtook is dropped.
+	mu    sync.Mutex
+	seq   uint64
+	saves map[string]*appSaves
+}
+
+type appSaves struct {
+	mu     sync.Mutex
+	latest uint64 // newest commit's sequence number, guarded by BaseStore.mu
 }
 
 // NewBaseStore stores bases in be.
-func NewBaseStore(be storage.StorageBackend) *BaseStore { return &BaseStore{be: be} }
+func NewBaseStore(be storage.StorageBackend) *BaseStore {
+	return &BaseStore{be: be, saves: map[string]*appSaves{}}
+}
+
+// FullPath is where a thin upload's rebuilt archive sits next to its .part
+// file. The thin .part stays as uploaded, so its checksum still verifies and
+// a retried commit rebuilds again; removing the upload removes both.
+func FullPath(partPath string) string { return partPath + ".full" }
+
+// Rebuild and staging temps in the spool. sourcespool removes leftovers
+// (a crash mid-rebuild) by these names.
+const (
+	baseTempPattern = ".image-base-*.tar"
+	fullTempPattern = ".image-full-*.tar"
+)
+
+// CommitWorkBytes is how many bytes a commit may have to process: a thin
+// upload is rebuilt to at most the largest plan's image cap.
+func CommitWorkBytes(totalSize int64, reuse bool) int64 {
+	if reuse {
+		return max(totalSize, api.MustLimitsFor(api.PlanScale).ImageArchiveMaxBytes())
+	}
+	return totalSize
+}
 
 // OpenBaseStore uses the remote backend a split-box install selects
 // (FAAS_STORAGE_BACKEND oci, gcs or s3), else a directory under the upload
@@ -81,7 +116,7 @@ func (s *BaseStore) Fetch(ctx context.Context, appID, dir string) (*os.File, err
 		return nil, fmt.Errorf("read image base: %w", err)
 	}
 	defer func() { _ = rc.Close() }()
-	f, err := os.CreateTemp(dir, "image-base-*.tar") //nolint:forbidigo // server-owned upload spool dir.
+	f, err := os.CreateTemp(dir, baseTempPattern) //nolint:forbidigo // server-owned upload spool dir.
 	if err != nil {
 		return nil, fmt.Errorf("stage image base: %w", err)
 	}
@@ -132,21 +167,21 @@ func (s *BaseStore) Delete(ctx context.Context, appID string) error {
 }
 
 // RebuildProblem rebuilds the full archive from the thin upload at partPath
-// and the app's base, and replaces the upload with it. It returns the full
-// archive's size. A layer the base lacks answers image_base_changed.
+// and the app's base into FullPath(partPath), leaving the upload as it is,
+// and returns the full archive's size. Anything wrong on the base's side (a
+// missing layer, no base, a storage error) answers image_base_changed, which
+// the CLI answers with a full upload; image_archive_invalid is kept for
+// faults in the uploaded bytes.
 func (s *BaseStore) RebuildProblem(ctx context.Context, appID, partPath string, maxBytes int64) (int64, *api.Problem) {
 	dir := filepath.Dir(partPath)
 	base, err := s.Fetch(ctx, appID, dir)
-	if errors.Is(err, ErrNoBase) {
-		return 0, api.ErrImageBaseChanged()
-	}
 	if err != nil {
-		return 0, api.ErrImageArchiveInvalid("the app's image base could not be read; upload the full image")
+		return 0, api.ErrImageBaseChanged()
 	}
 	defer func() { _ = base.Close(); _ = os.Remove(base.Name()) }()
 	info, err := base.Stat()
 	if err != nil {
-		return 0, api.ErrImageArchiveInvalid("the app's image base could not be read; upload the full image")
+		return 0, api.ErrImageBaseChanged()
 	}
 	idx, err := ociarchive.IndexBase(base, info.Size())
 	if err != nil {
@@ -157,7 +192,7 @@ func (s *BaseStore) RebuildProblem(ctx context.Context, appID, partPath string, 
 		return 0, api.ErrImageArchiveInvalid("the uploaded archive is unreadable")
 	}
 	defer func() { _ = thin.Close() }()
-	full, err := os.CreateTemp(dir, "image-full-*.tar") //nolint:forbidigo // server-owned upload spool dir.
+	full, err := os.CreateTemp(dir, fullTempPattern) //nolint:forbidigo // server-owned upload spool dir.
 	if err != nil {
 		return 0, api.ErrImageArchiveInvalid("the uploaded archive could not be staged")
 	}
@@ -173,14 +208,12 @@ func (s *BaseStore) RebuildProblem(ctx context.Context, appID, partPath string, 
 	case errors.Is(err, ociarchive.ErrInvalid):
 		return 0, api.ErrImageArchiveInvalid(err.Error())
 	case err != nil || closeErr != nil:
-		return 0, api.ErrImageArchiveInvalid("the image could not be rebuilt from the app's image base; upload the full image")
+		return 0, api.ErrImageBaseChanged()
 	}
-	// Replace the thin upload: a retried commit rebuilds from a full
-	// archive, which takes nothing from the base and comes out the same.
-	if err := os.Rename(fullPath, partPath); err != nil { //nolint:forbidigo // server-owned upload spool paths.
+	if err := os.Rename(fullPath, FullPath(partPath)); err != nil { //nolint:forbidigo // server-owned upload spool paths.
 		return 0, api.ErrImageArchiveInvalid("the rebuilt image could not be staged")
 	}
-	st, err := os.Stat(partPath) //nolint:forbidigo // server-owned upload spool path.
+	st, err := os.Stat(FullPath(partPath)) //nolint:forbidigo // server-owned upload spool path.
 	if err != nil {
 		return 0, api.ErrImageArchiveInvalid("the rebuilt image could not be staged")
 	}
@@ -188,10 +221,32 @@ func (s *BaseStore) RebuildProblem(ctx context.Context, appID, partPath string, 
 }
 
 // SaveAsync stores the accepted archive as the app's base in the background.
-// It is best effort: on failure the next upload sends every layer.
+// It is best effort: on failure the next upload sends every layer. Saves of
+// one app run one at a time in commit order, and one a newer commit
+// overtook is skipped, so the summary and archive come from the same image
+// and the newest image wins. (Two apid replicas can still interleave; a
+// summary naming layers the archive lacks only costs a full upload.)
 func (s *BaseStore) SaveAsync(ctx context.Context, appID, path string, summary ociarchive.Summary, onErr func(error)) {
+	s.mu.Lock()
+	s.seq++
+	mine := s.seq
+	app := s.saves[appID]
+	if app == nil {
+		app = &appSaves{}
+		s.saves[appID] = app
+	}
+	app.latest = mine
+	s.mu.Unlock()
 	ctx = context.WithoutCancel(ctx)
 	go func() {
+		app.mu.Lock()
+		defer app.mu.Unlock()
+		s.mu.Lock()
+		overtaken := app.latest != mine
+		s.mu.Unlock()
+		if overtaken {
+			return
+		}
 		ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 		defer cancel()
 		if err := s.Save(ctx, appID, path, summary); err != nil && onErr != nil {

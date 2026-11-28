@@ -763,12 +763,13 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	var imageSummary *ociarchive.Summary
 	if imageArchive && opts.ReuseImageBase {
 		// A thin upload left out layers the app's image base holds: rebuild
-		// the full archive in place before inspecting it.
+		// the full archive next to it, and inspect and deploy that.
 		fullBytes, prob := s.rebuildImageUpload(r.Context(), app, row.PartPath, limits)
 		if prob != nil {
 			api.WriteProblem(w, prob)
 			return
 		}
+		row.PartPath = imageupload.FullPath(row.PartPath)
 		row.ReceivedBytes = fullBytes
 	}
 	if imageArchive {

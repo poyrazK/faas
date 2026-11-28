@@ -55,9 +55,15 @@ func (img *localImageDeploy) thinArchive(ctx context.Context, client *Client, sl
 	return path
 }
 
-// isImageBaseChanged reports a thin upload apid could not fill from the
-// app's current image base.
+// isImageBaseChanged reports a thin upload apid did not deploy: it could not
+// fill it from the app's current image base, or it refused it as an invalid
+// archive, which an apid without layer reuse (release N-1 beside N, or a
+// rollback after the image-base lookup) answers to a thin archive. Both are
+// refusals before a deployment exists, so a full upload is safe.
 func isImageBaseChanged(err error) bool {
 	var apiErr *api.APIError
-	return errors.As(err, &apiErr) && apiErr.Problem.Code == api.CodeImageBaseChanged
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	return apiErr.Problem.Code == api.CodeImageBaseChanged || apiErr.Problem.Code == api.CodeSourceInvalid
 }

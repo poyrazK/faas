@@ -35,6 +35,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/apid/imageupload"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -204,4 +205,8 @@ func sweepUploadSessions(ctx context.Context, s *server, log *slog.Logger) {
 
 // removeUploadPart is os.Remove wrapped so tests can swap it
 // without monkey-patching the global os package.
-var removeUploadPart = func(path string) error { return os.Remove(path) }
+var removeUploadPart = func(path string) error {
+	// A thin image upload's rebuilt archive sits next to it.
+	_ = os.Remove(imageupload.FullPath(path))
+	return os.Remove(path)
+}

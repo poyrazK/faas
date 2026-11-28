@@ -38,7 +38,7 @@ type Layout int
 const (
 	// BuildSpool is apid's and builderd's FAAS_SPOOL_ROOT: top-level
 	// <token>.tar.gz source archives (and their .tmp leftovers), gregale dev
-	// sources, builderd download temps, projects/** staged workload
+	// sources, builderd download temps, apid image rebuild temps, projects/** staged workload
 	// archives, and <deployment or build id>/build.log directories.
 	BuildSpool Layout = iota
 	// GithubdStaging is githubd's build-sources tree:
@@ -50,6 +50,7 @@ var (
 	spoolArchive   = regexp.MustCompile(`^[0-9a-f]{24}\.tar\.gz(\.tmp)?$`)
 	devArchive     = regexp.MustCompile(`^dev-source-[^/]+\.tar\.gz$`)
 	downloadTemp   = regexp.MustCompile(`^\.source-download-[^/]+$`)
+	imageTemp      = regexp.MustCompile(`^\.image-(base|full)-[^/]+\.tar$`) // apid imageupload rebuild temps
 	githubdArchive = regexp.MustCompile(`^(source\.tar\.gz|\.source-[^/]+\.tar\.gz)$`)
 	projectArchive = regexp.MustCompile(`\.tar\.gz$`)
 )
@@ -132,7 +133,7 @@ func (sw *sweep) buildSpool(ctx context.Context) error {
 		}
 		p := filepath.Join(sw.Root, e.Name())
 		switch {
-		case e.Type().IsRegular() && (spoolArchive.MatchString(e.Name()) || devArchive.MatchString(e.Name()) || downloadTemp.MatchString(e.Name())):
+		case e.Type().IsRegular() && (spoolArchive.MatchString(e.Name()) || devArchive.MatchString(e.Name()) || downloadTemp.MatchString(e.Name()) || imageTemp.MatchString(e.Name())):
 			sw.file(p)
 		case e.IsDir() && e.Name() == "projects":
 			if err := sw.tree(ctx, p, projectArchive); err != nil {

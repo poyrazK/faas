@@ -328,10 +328,9 @@ type server struct {
 	purgeDeletedApp func(ctx context.Context, appID, actor string) error
 	// imageBases keeps each app's latest uploaded image so a redeploy can
 	// leave out the layers it shares (ADR-20261127120000 amendment 1);
-	// opened once by imageBaseStore.
-	imageBasesOnce sync.Once
-	imageBases     *imageupload.BaseStore
-	imageBasesErr  error
+	// opened on first use by imageBaseStore.
+	imageBasesMu sync.Mutex
+	imageBases   *imageupload.BaseStore
 	// databaseSwitchDrainOverride feeds the database switch worker drain
 	// evidence on stores without schedd's drain plans (tests).
 	databaseSwitchDrainOverride      state.DatabaseSwitchDrainStore

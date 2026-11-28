@@ -89,16 +89,23 @@ func TestBaseStoreRoundTrip(t *testing.T) {
 	if prob != nil {
 		t.Fatal(prob)
 	}
-	got, err := os.ReadFile(part)
+	got, err := os.ReadFile(imageupload.FullPath(part))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if size != int64(len(v2)) || !bytes.Equal(got, v2) || inspect(t, got).ManifestDigest != digest {
-		t.Fatal("the rebuilt upload is not the full image")
+		t.Fatal("the rebuilt archive is not the full image")
 	}
-	// A retried commit rebuilds the full archive again, unchanged.
+	// The upload stays as sent, so its checksum still verifies and a
+	// retried commit rebuilds the same archive again.
+	if kept, _ := os.ReadFile(part); !bytes.Equal(kept, thin) {
+		t.Fatal("the rebuild changed the uploaded bytes")
+	}
 	if _, prob := store.RebuildProblem(ctx, "app1", part, 1<<30); prob != nil {
 		t.Fatalf("retry: %v", prob)
+	}
+	if again, _ := os.ReadFile(imageupload.FullPath(part)); !bytes.Equal(again, v2) {
+		t.Fatal("the retried rebuild differs")
 	}
 
 	if err := store.Delete(ctx, "app1"); err != nil {
@@ -130,7 +137,7 @@ func TestBaseStoreRebuildRefuses(t *testing.T) {
 		maxBytes int64
 		code     string
 	}{
-		"no base":       {app: "other", maxBytes: 1 << 30, code: api.CodeImageBaseChanged},
+		"no base": {app: "other", maxBytes: 1 << 30, code: api.CodeImageBaseChanged},
 		"base replaced": {app: "app1", maxBytes: 1 << 30, code: api.CodeImageBaseChanged, setup: func() {
 			other, _ := ociarchivetest.CanonicalLayers(t, "something else")
 			saveBase(t, store, "app1", other)

@@ -149,12 +149,18 @@ app's previous uploaded image already has.
    deployment's source. builderd and imaged see exactly what a full upload
    produces and do not change. A layer that is in neither the upload nor the
    current base (for example, another deploy replaced the base in between)
-   refuses the commit with `409 image_base_changed`. The CLI then uploads the
-   full archive. Without `reuse_image_base`, a missing blob is refused as
-   before.
+   refuses the commit with `409 image_base_changed`, and so does any other
+   fault on the base's side, such as a storage error. The CLI then uploads
+   the full archive. Without `reuse_image_base`, a missing blob is refused
+   as before. The rebuilt archive is written next to the upload (`.full`),
+   not over it. The upload keeps its checksum, so a retried commit rebuilds
+   again.
 5. **Rollout.** This rides on the `local_image_deploys` flag. The CLI uses a
    thin archive only when the image-base endpoint answers. An older apid has
-   no endpoint, so the CLI falls back to a full upload. An older CLI never
+   no endpoint, so the CLI falls back to a full upload. When the commit
+   lands on an older apid after the lookup found a base (N-1 beside N, or a
+   rollback), the thin archive is refused as invalid. The CLI also answers
+   that refusal with a full upload. An older CLI never
    sets `reuse_image_base` and always uploads in full.
 
 Consequences: a redeploy uploads only the changed layers, at the cost of up to

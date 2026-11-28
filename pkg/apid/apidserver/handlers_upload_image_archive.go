@@ -117,10 +117,18 @@ func (b srvImageBases) Delete(ctx context.Context, appID string) error {
 // imageBaseStore opens the store of apps' image bases once
 // (ADR-20261127120000 amendment 1).
 func (s *server) imageBaseStore(ctx context.Context) (*imageupload.BaseStore, error) {
-	s.imageBasesOnce.Do(func() {
-		s.imageBases, s.imageBasesErr = imageupload.OpenBaseStore(context.WithoutCancel(ctx), spoolRoot())
-	})
-	return s.imageBases, s.imageBasesErr
+	s.imageBasesMu.Lock()
+	defer s.imageBasesMu.Unlock()
+	if s.imageBases == nil {
+		// A failed open (a transient storage credential error) is retried
+		// on the next use rather than kept until restart.
+		store, err := imageupload.OpenBaseStore(context.WithoutCancel(ctx), spoolRoot())
+		if err != nil {
+			return nil, err
+		}
+		s.imageBases = store
+	}
+	return s.imageBases, nil
 }
 
 // handleGetAppImageBase is GET /v1/apps/{slug}/image-base: the layers of the
@@ -197,8 +205,6 @@ func uploadCommitWorkBytes(row sqlc.UploadSession) int64 {
 	var opts struct {
 		Reuse bool `json:"reuse_image_base"`
 	}
-	if json.Unmarshal(row.DeployOptions, &opts) == nil && opts.Reuse {
-		return max(row.TotalSize, api.MustLimitsFor(api.PlanScale).ImageArchiveMaxBytes())
-	}
-	return row.TotalSize
+	reuse := json.Unmarshal(row.DeployOptions, &opts) == nil && opts.Reuse
+	return imageupload.CommitWorkBytes(row.TotalSize, reuse)
 }

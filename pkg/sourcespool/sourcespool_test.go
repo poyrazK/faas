@@ -64,6 +64,8 @@ func TestSweepBuildSpool(t *testing.T) {
 		writeAged(t, root, "0123456789abcdef01234568.tar.gz.tmp", stale),
 		writeAged(t, root, "dev-source-42.tar.gz", stale),
 		writeAged(t, root, ".source-download-9", stale),
+		writeAged(t, root, ".image-base-123.tar", stale),
+		writeAged(t, root, ".image-full-456.tar", stale),
 		writeAged(t, root, "projects/acct/proj/app.tar.gz", stale),
 		writeAged(t, root, logID+"/build.log", stale),
 	}

@@ -25,15 +25,15 @@ type reuseUpload struct {
 }
 
 // reuseStub serves an image base and records every upload session; with
-// refuseThin it answers a thin commit with image_base_changed.
+// refuseThin it answers a thin commit with that problem.
 type reuseStub struct {
 	base       []byte
-	refuseThin bool
+	refuseThin *api.Problem
 	uploads    []*reuseUpload
 	commits    int
 }
 
-func newReuseStub(t *testing.T, base []byte, refuseThin bool) *reuseStub {
+func newReuseStub(t *testing.T, base []byte, refuseThin *api.Problem) *reuseStub {
 	t.Helper()
 	got := &reuseStub{base: base, refuseThin: refuseThin}
 	stub := main.NewZeroConfigStubServer(t, func(w http.ResponseWriter, r *http.Request, _ *main.ZeroConfigStubServer) {
@@ -66,8 +66,8 @@ func newReuseStub(t *testing.T, base []byte, refuseThin bool) *reuseStub {
 			w.Header().Set("Upload-Offset", strconv.Itoa(cur().body.Len()))
 		case r.Method == http.MethodPost && filepath.Base(r.URL.Path) == "commit":
 			got.commits++
-			if cur().opts.ReuseImageBase && got.refuseThin {
-				api.WriteProblem(w, api.ErrImageBaseChanged())
+			if cur().opts.ReuseImageBase && got.refuseThin != nil {
+				api.WriteProblem(w, got.refuseThin)
 				return
 			}
 			w.WriteHeader(http.StatusCreated)
@@ -109,7 +109,7 @@ func TestDeployLocalImageReusesBaseLayers(t *testing.T) {
 	localImageRepo(t)
 	base, _ := ociarchivetest.CanonicalLayers(t, "os", "runtime", "app v1")
 	next, digest := ociarchivetest.CanonicalLayers(t, "os", "runtime", "app v2")
-	stub := newReuseStub(t, base, false)
+	stub := newReuseStub(t, base, nil)
 	if code := deployArchive(t, next); code != 0 {
 		t.Fatalf("code=%d", code)
 	}
@@ -126,19 +126,29 @@ func TestDeployLocalImageReusesBaseLayers(t *testing.T) {
 	}
 }
 
-func TestDeployLocalImageFallsBackWhenBaseChanged(t *testing.T) {
-	localImageRepo(t)
-	base, _ := ociarchivetest.CanonicalLayers(t, "os", "app v1")
-	next, digest := ociarchivetest.CanonicalLayers(t, "os", "app v2")
-	stub := newReuseStub(t, base, true)
-	if code := deployArchive(t, next); code != 0 {
-		t.Fatalf("code=%d", code)
-	}
-	if len(stub.uploads) != 2 || !stub.uploads[0].opts.ReuseImageBase || stub.uploads[1].opts.ReuseImageBase {
-		t.Fatalf("uploads=%d, want a thin upload then a full one", len(stub.uploads))
-	}
-	if s, err := ociarchive.Inspect(bytes.NewReader(stub.uploads[1].body.Bytes())); err != nil || s.ManifestDigest != digest {
-		t.Fatalf("the fallback upload is not the full image: %v", err)
+// A thin commit apid refuses before a deployment exists falls back to the
+// full upload: the base changed meanwhile, or an apid without layer reuse
+// (N-1 beside N) took it for an invalid archive.
+func TestDeployLocalImageFallsBackWhenThinRefused(t *testing.T) {
+	for name, refusal := range map[string]*api.Problem{
+		"base changed":       api.ErrImageBaseChanged(),
+		"apid without reuse": api.ErrImageArchiveInvalid("missing layer blob"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			localImageRepo(t)
+			base, _ := ociarchivetest.CanonicalLayers(t, "os", "app v1")
+			next, digest := ociarchivetest.CanonicalLayers(t, "os", "app v2")
+			stub := newReuseStub(t, base, refusal)
+			if code := deployArchive(t, next); code != 0 {
+				t.Fatalf("code=%d", code)
+			}
+			if len(stub.uploads) != 2 || !stub.uploads[0].opts.ReuseImageBase || stub.uploads[1].opts.ReuseImageBase {
+				t.Fatalf("uploads=%d, want a thin upload then a full one", len(stub.uploads))
+			}
+			if s, err := ociarchive.Inspect(bytes.NewReader(stub.uploads[1].body.Bytes())); err != nil || s.ManifestDigest != digest {
+				t.Fatalf("the fallback upload is not the full image: %v", err)
+			}
+		})
 	}
 }
 
@@ -146,7 +156,7 @@ func TestDeployLocalImageNoSharedLayersUploadsInFull(t *testing.T) {
 	localImageRepo(t)
 	base, _ := ociarchivetest.CanonicalLayers(t, "something else")
 	next, _ := ociarchivetest.CanonicalLayers(t, "os", "app")
-	stub := newReuseStub(t, base, false)
+	stub := newReuseStub(t, base, nil)
 	if code := deployArchive(t, next); code != 0 {
 		t.Fatalf("code=%d", code)
 	}
