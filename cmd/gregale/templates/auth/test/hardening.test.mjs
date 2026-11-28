@@ -168,6 +168,7 @@ function memorySeen(users = { 'ann@example.com': user }) {
     async query(sql, args) {
       queries.push(sql)
       if (sql.includes('FROM auth.users')) return { rows: users[args[0]] ? [{ id: users[args[0]] }] : [] }
+      if (sql.includes('WHERE network = $1 AND trusted')) return { rowCount: [...rows.values()].some(row => row.network?.equals(args[0]) && row.trusted && recent(row, args[1] * 86400)) ? 1 : 0, rows: [] }
       if (sql.includes('key = ANY($1)')) {
         const accounts = new Set([...rows.values()].filter(row => row.network?.equals(args[2]) && recent(row, args[1] * 86400)).map(row => row.user))
         const hit = args[0].some(key => { const row = rows.get(key.toString('hex')); return row?.trusted && recent(row, args[1] * 86400) })
@@ -343,6 +344,47 @@ test('a trusted network passes a spent recipient budget only up to a ceiling', a
   const outcomes = []
   for (let i = 0; i < limits.trustedBudgetMultiplier + 1; i++) outcomes.push((await sends.take(['phone:15550100'], '203.0.113.1')).refused?.name ?? 'sent')
   assert.deepEqual(outcomes, [...Array(limits.trustedBudgetMultiplier).fill('sent'), 'recipient'])
+})
+
+test('a profile save that changes no address sends nothing and spends nothing', async t => {
+  const attempts = memoryAttempts()
+  const sends = createSends({ attempts, pool: null, budgets: messageBudgets({ messagesPerRecipient: 1 }) })
+  const { base } = await harness(t, { attempts, sends })
+  const bearer = `Bearer ${jwt({ sub: user, session_id: user })}`
+  for (let i = 0; i < 3; i++) {
+    const saved = await fetch(`${base}/auth/v1/user`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: bearer, 'User-Agent': 'Mozilla/5.0' }, body: JSON.stringify({ email: 'ann@example.com', data: { name: 'Ann' } }) })
+    assert.equal(saved.status, 200, String(i))
+  }
+  assert.deepEqual([...attempts.counts.values()].filter(Boolean), [])
+})
+
+test('a held password attempt reports its limit, count and docs', async t => {
+  const attempts = memoryAttempts()
+  const { base } = await harness(t, { attempts })
+  for (let i = 0; i < limits.passwordFailuresPerAddress; i++) await post(base, '/token?grant_type=password', { email: 'ann@example.com', password: 'wrong' })
+  const held = await post(base, '/token?grant_type=password', { email: 'ann@example.com', password: 'wrong' })
+  const body = await held.json()
+  assert.equal(held.status, 429)
+  assert.equal(body.error_code, 'too_many_attempts')
+  assert.equal(body.limit, limits.passwordFailuresPerAddress)
+  assert.equal(body.observed, limits.passwordFailuresPerAddress)
+  assert.match(body.docs_url, /current-limits/)
+})
+
+test('an answer GoTrue drops midway gives back and answers 502', async t => {
+  const upstream = http.createServer((req, res) => {
+    req.resume()
+    req.on('end', () => { res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': '100' }); res.write('{"partial":'); setTimeout(() => res.socket.destroy(), 20) })
+  })
+  const attempts = memoryAttempts()
+  const sends = createSends({ attempts, pool: null, budgets: messageBudgets({}) })
+  const front = createServer({ upstreamPort: await listen(upstream), attempts, sends })
+  const port = await listen(front)
+  t.after(() => { front.close(); upstream.close() })
+  const answer = await post(`http://127.0.0.1:${port}`, '/otp', { email: 'ann@example.com' })
+  assert.equal(answer.status, 502)
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.deepEqual([...attempts.counts.values()].filter(Boolean), [])
 })
 
 test('budgets are given back when GoTrue never answers', async t => {

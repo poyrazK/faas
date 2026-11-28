@@ -328,9 +328,7 @@ async function guardAttempt({ req, res, path, upstreamPort, body, oauth, attempt
         if (await signIns?.trusted(subject, clientAddress(req))) continue
       }
       await giveBack()
-      if (res.headersSent) return res.destroy()
-      res.writeHead(429, { 'Content-Type': 'application/problem+json', 'Cache-Control': 'no-store', 'Retry-After': String(wait) })
-      return res.end(JSON.stringify({ status: 429, code: 'too_many_attempts', error_code: 'too_many_attempts', retry_after: wait }))
+      return limited(res, 'too_many_attempts', entry.budget, count - 1, wait, { error_code: 'too_many_attempts' })
     }
   } catch (err) {
     logFailure('attempt_budget_failed')(err)
@@ -389,7 +387,9 @@ async function forwardSend({ req, res, path, upstreamPort, body, oauth, signedIn
   const giveBack = () => taken.length ? sends.release(taken).catch(logFailure('message_budget_failed')) : undefined
   // A sign-up that signs the person in at once hands over a session.
   const observe = async (status, answer) => {
-    if (status >= 400) await giveBack()
+    // An email or phone change GoTrue applied without writing to anyone
+    // (the same value, or no confirmation needed) sent nothing.
+    if (status >= 400 || (send?.user && status === 200 && !answer?.new_email && !answer?.new_phone)) await giveBack()
     if (status === 200) signedIn(req, sessionFromAnswer(answer))
   }
   upstreamRequest(req, res, path, upstreamPort, { ...headers, 'content-length': String(body.length) }, { oauth, observe, signedIn, onError: giveBack }).end(body)
@@ -401,10 +401,20 @@ async function forwardSend({ req, res, path, upstreamPort, body, oauth, signedIn
 // redirect that hands the browser a session in its fragment is recorded
 // with signedIn.
 function upstreamRequest(req, res, path, upstreamPort, headers, { oauth = null, observe = null, signedIn = null, onError = null } = {}) {
+  let failed = false
+  const dropped = () => {
+    if (failed) return
+    failed = true
+    onError?.()
+    problem(res, 502, 'auth_unavailable')
+  }
   const upstream = http.request({ host: gotrue.host, port: upstreamPort, method: req.method, path, headers }, response => {
     const responseHeaders = forwardHeaders(response.headers)
     if (signedIn && typeof responseHeaders.location === 'string' && responseHeaders.location.includes('access_token=')) signedIn(req, sessionFromLocation(responseHeaders.location), { alert: false, trust: false })
     if (oauth && responseHeaders.location) responseHeaders.location = oauth.location(responseHeaders.location)
+    // A dropped answer gives back what the request counted and answers 502.
+    response.on('error', dropped)
+    response.on('aborted', dropped)
     if (observe) return observed(response, res, responseHeaders, observe)
     const details = oauth && req.method === 'GET' && response.statusCode === 200 ? authorizationDetails.exec(path.split('?')[0]) : null
     if (details) return withResource(response, res, responseHeaders, oauth, details[1])
@@ -412,7 +422,7 @@ function upstreamRequest(req, res, path, upstreamPort, headers, { oauth = null, 
     res.writeHead(response.statusCode, responseHeaders)
     response.pipe(res)
   })
-  upstream.on('error', () => { onError?.(); problem(res, 502, 'auth_unavailable') })
+  upstream.on('error', dropped)
   return upstream
 }
 
@@ -438,6 +448,7 @@ function observed(response, res, headers, observe) {
   let size = 0
   response.on('data', chunk => { size += chunk.length; if (size <= limits.bodyBytes) chunks.push(chunk) })
   response.on('end', async () => {
+    if (response.aborted) return
     if (size > limits.bodyBytes) return problem(res, 502, 'auth_unavailable')
     const payload = Buffer.concat(chunks)
     let answer = null

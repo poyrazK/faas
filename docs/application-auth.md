@@ -494,8 +494,9 @@ parking and waking:
 | Wrong passwords for one account from any address | 50 |
 | Wrong authenticator, SMS or recovery codes for one user | 10 |
 
-A spent budget answers `429` with `error_code` `too_many_attempts` and a
-`Retry-After` header until its window ends, before GoTrue checks the
+A spent budget answers `429` with `error_code` `too_many_attempts`, the
+limit, the count, this page's address and a `Retry-After` header until its
+window ends, before GoTrue checks the
 password; a correct password from the same address is held too. Held
 attempts are not counted, so hammering a held address does not spend the
 account's budget.
@@ -549,7 +550,8 @@ A spent budget answers `429` with `code` and `error_code`
 page's address, before GoTrue sends anything. A request GoTrue refuses is
 not counted, nor is one GoTrue never answered. An email or phone change
 also counts against the signed-in user, since GoTrue writes to the current
-address too; a forged token's count is given back when GoTrue refuses it.
+address too; a forged token's count is given back when GoTrue refuses it,
+and a profile save that leaves the email and phone unchanged is not counted.
 An email address's budget is its inbox's: `ann+1@example.com` shares
 `ann@example.com`'s, and Gmail addresses ignore dots. So that a stranger asking
 for someone's links cannot keep them from signing in, a request from a

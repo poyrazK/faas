@@ -94,6 +94,11 @@ export function createSignInSecurity({ pool, mailer = null, alerts = true, app, 
     // share. GoTrue finds the account as it does for a password sign-in: by
     // lowercased email among users who are not SSO users, or by phone.
     async trusted(subject, address) {
+      // One indexed probe first: most refused guesses come from networks
+      // no account trusts, and skip the account lookup.
+      const { rowCount: anyone } = await pool.query(`SELECT 1 FROM gregale_auth.sign_in_seen
+        WHERE network = $1 AND trusted AND last_seen > now() - make_interval(days => $2) LIMIT 1`, [networkOnly(address), limits.trustedNetworkDays])
+      if (!anyone) return false
       const at = subject.indexOf(':'), kind = subject.slice(0, at), value = subject.slice(at + 1)
       let ids
       if (kind === 'user') ids = uuid.test(value) ? [value.toLowerCase()] : []
