@@ -5951,6 +5951,9 @@ var cliCommands = []cliCommand{
 				{Name: "single-session", Value: "on|off", Short: "keep only each user's most recently used session", ClosedSet: []string{"on", "off"}},
 				{Name: "org-domains", Value: "on|off", Short: "let organizations verify email domains and let people at them join (needs --autoconfirm off)", ClosedSet: []string{"on", "off"}},
 				{Name: "service-accounts", Value: "on|off", Short: "let organizations make service accounts that get tokens with the client-credentials grant", ClosedSet: []string{"on", "off"}},
+				{Name: "new-device-alerts", Value: "on|off", Short: "email people when their account signs in from a new network and device", ClosedSet: []string{"on", "off"}},
+				{Name: "messages-per-recipient", Value: "N|default", Short: "sign-in codes, links and resets one address or number may be sent an hour"},
+				{Name: "messages-per-network", Value: "N|off", Short: "sign-in messages one network may ask for an hour (off by default)"},
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 			}, Examples: []string{"gregale auth config shop-auth", "gregale auth config shop-auth --events on", "gregale auth config shop-auth --password-min-length 12 --password-require lower,upper,digit --mfa on"}},
 			{Name: "providers", Short: "Manage OAuth sign-in providers such as Google or GitHub", Subcommands: []cliSub{

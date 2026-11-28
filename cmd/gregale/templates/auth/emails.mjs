@@ -35,7 +35,7 @@ function view(type, stored) {
 // point at the Auth app but hold no working token.
 function sampleValues(type, { api, external, app }, to) {
   const all = {
-    app, email: to, new_email: 'new.address@example.com', org: 'Acme', event: 'Your password was changed', code: '123456',
+    app, email: to, new_email: 'new.address@example.com', org: 'Acme', event: 'Your password was changed', code: '123456', device: 'Firefox on macOS', network: '203.0.113.7', time: '2026-01-02 03:04 UTC',
     link: type === 'organization_invitation' ? `${external}/ui/invitation#token=preview` : type === 'signup_approved' ? `${external}/ui/sign-up` : `${api}/verify?token=preview&type=${type}`,
   }
   return Object.fromEntries(emailTypes[type].placeholders.map(name => [name, all[name]]))

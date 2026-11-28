@@ -18508,6 +18508,40 @@ const (
 	// look up an admin key's scopes by ID in an hour, so IDs cannot be
 	// enumerated.
 	AuthAdminKeyLookupsPerAddress = 60
+	// AuthTrustedNetworkDays is how long a network (an IPv4 address or IPv6
+	// /64) a user signed in from stays trusted: from it, the user's password
+	// sign-ins pass even while their account-wide failure budget is spent,
+	// so a stranger guessing from elsewhere cannot lock them out.
+	AuthTrustedNetworkDays = 30
+	// AuthTrustedNetworkMaxAccounts: a network more accounts than this
+	// signed in from in AuthTrustedNetworkDays (an app's own server, a shared
+	// egress) is trusted for none of them.
+	AuthTrustedNetworkMaxAccounts = 20
+	// AuthTrustedBudgetMultiplier caps the exceptions to a spent budget: a
+	// solved CAPTCHA passes a spent account-wide password budget, and a
+	// trusted network a spent message budget for one recipient, only up to
+	// this many times the budget.
+	AuthTrustedBudgetMultiplier = 4
+	// AuthNewDeviceDays is how long an Auth app remembers the networks and
+	// device kinds a user signed in from; a sign-in from both a network and a
+	// device kind unseen that long emails the user (new-device alerts).
+	// AuthSignInSeenRefreshSeconds is how often one sign-in record is
+	// refreshed, so frequent token refreshes do not each write.
+	AuthNewDeviceDays            = 90
+	AuthSignInSeenRefreshSeconds = 3600
+	// AuthMessagesPerRecipientDefault bounds the sign-in codes, magic links,
+	// password resets and confirmations an Auth app sends in
+	// AuthMessageWindowSeconds to one email address or phone number, unless
+	// the owner sets AUTH_MESSAGES_PER_RECIPIENT, up to
+	// AuthMessagesPerRecipientMax. AUTH_MESSAGES_PER_NETWORK, off by default
+	// because an app sending from its own server asks from one network for
+	// all its users, bounds those one network asks for, up to
+	// AuthMessagesPerNetworkMax. Each message costs the owner money and may
+	// land in a stranger's inbox.
+	AuthMessagesPerRecipientDefault = 5
+	AuthMessagesPerRecipientMax     = 50
+	AuthMessagesPerNetworkMax       = 1000
+	AuthMessageWindowSeconds        = 3600
 	// AuthAnonymousRetentionMaxDays bounds how long idle anonymous users may
 	// be kept before the Auth app deletes them, when the owner sets a limit.
 	AuthAnonymousRetentionMaxDays = 3650
