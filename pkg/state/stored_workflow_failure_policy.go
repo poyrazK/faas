@@ -132,6 +132,10 @@ func (m *MemStore) failurePolicyResponseLocked(appID, name string, now time.Time
 		if r.AppID != appID || r.WorkflowName != name {
 			continue
 		}
+		// A stage's runs never count against production's failure policy.
+		if dep, ok := m.deployments[r.DeploymentID]; ok && r.DeploymentID != "" && !IsProductionScope(dep.Scope) {
+			continue
+		}
 		switch r.Status {
 		case WorkflowRunStatusPending:
 			out.PendingRuns++

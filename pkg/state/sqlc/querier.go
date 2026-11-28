@@ -3534,6 +3534,8 @@ type Querier interface {
 	InsertStoredWorkflowLiveBaselineRetirement(ctx context.Context, db DBTX, arg InsertStoredWorkflowLiveBaselineRetirementParams) error
 	InsertStoredWorkflowLiveSuite(ctx context.Context, db DBTX, arg InsertStoredWorkflowLiveSuiteParams) (StoredWorkflowLiveSuite, error)
 	InsertStoredWorkflowLiveVerification(ctx context.Context, db DBTX, arg InsertStoredWorkflowLiveVerificationParams) (StoredWorkflowLiveVerification, error)
+	// The revision names its workflow's environment; the trigger fills it for a
+	// release that does not (ADR-20261104120000 amendment 2026-11-28).
 	InsertStoredWorkflowRevision(ctx context.Context, db DBTX, arg InsertStoredWorkflowRevisionParams) error
 	// ADR-748: synthetic check definitions (apid is the only writer).
 	// The per-app cap is enforced inside the insert, like app_slos.
@@ -8680,6 +8682,9 @@ type Querier interface {
 	SaveServiceRolloutHandoff(ctx context.Context, db DBTX, arg SaveServiceRolloutHandoffParams) error
 	SaveSnapshotPrimeHandoff(ctx context.Context, db DBTX, arg SaveSnapshotPrimeHandoffParams) (int64, error)
 	// environment_id is set on insert only; a workflow keeps its environment.
+	// The conflict target is the per-environment name index, which outlives the
+	// (app_id, name) key the next release drops (ADR-20261104120000 amendment
+	// 2026-11-28).
 	SaveStoredWorkflow(ctx context.Context, db DBTX, arg SaveStoredWorkflowParams) error
 	SaveStoredWorkflowLiveReport(ctx context.Context, db DBTX, arg SaveStoredWorkflowLiveReportParams) (int64, error)
 	// Observation only: suite/definition changes advance version through SaveStoredWorkflow.
@@ -9046,6 +9051,7 @@ type Querier interface {
 	StoredWorkflowEnvironmentByName(ctx context.Context, db DBTX, arg StoredWorkflowEnvironmentByNameParams) (pgtype.UUID, error)
 	StoredWorkflowFailurePaused(ctx context.Context, db DBTX, arg StoredWorkflowFailurePausedParams) (bool, error)
 	StoredWorkflowFailureRetainedEvents(ctx context.Context, db DBTX, arg StoredWorkflowFailureRetainedEventsParams) (int64, error)
+	// A stage's runs never count against production's failure policy.
 	StoredWorkflowFailureSignals(ctx context.Context, db DBTX, arg StoredWorkflowFailureSignalsParams) (StoredWorkflowFailureSignalsRow, error)
 	StoredWorkflowFailureTargetExists(ctx context.Context, db DBTX, arg StoredWorkflowFailureTargetExistsParams) (bool, error)
 	StoredWorkflowLiveDeployment(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.UUID, error)

@@ -16669,15 +16669,17 @@ func (q *Queries) DeleteStaticEgressProvisioningSource(ctx context.Context, db D
 
 const deleteStoredWorkflow = `-- name: DeleteStoredWorkflow :exec
 DELETE FROM stored_workflows WHERE app_id=$1 AND name=$2
+  AND environment_id IS NOT DISTINCT FROM $3::uuid
 `
 
 type DeleteStoredWorkflowParams struct {
-	AppID pgtype.UUID
-	Name  string
+	AppID         pgtype.UUID
+	Name          string
+	EnvironmentID pgtype.UUID
 }
 
 func (q *Queries) DeleteStoredWorkflow(ctx context.Context, db DBTX, arg DeleteStoredWorkflowParams) error {
-	_, err := db.Exec(ctx, deleteStoredWorkflow, arg.AppID, arg.Name)
+	_, err := db.Exec(ctx, deleteStoredWorkflow, arg.AppID, arg.Name, arg.EnvironmentID)
 	return err
 }
 
@@ -40580,8 +40582,9 @@ func (q *Queries) InsertStaticEgressProvisioningGrant(ctx context.Context, db DB
 
 const insertStoredWorkflowRevision = `-- name: InsertStoredWorkflowRevision :exec
 INSERT INTO stored_workflow_revisions(
- app_id,name,version,definition,recorded_at,legacy_snapshot,published_by_account_id,published_by_api_key_id,check_evidence
-) VALUES($1,$2,$3,$4,$5,false,$6,$7,$8)
+ app_id,name,version,definition,recorded_at,legacy_snapshot,published_by_account_id,published_by_api_key_id,check_evidence,environment_id
+) VALUES($1,$2,$3,$4,$5,false,
+ $6,$7,$8,$9::uuid)
 `
 
 type InsertStoredWorkflowRevisionParams struct {
@@ -40593,8 +40596,11 @@ type InsertStoredWorkflowRevisionParams struct {
 	PublishedByAccountID pgtype.UUID
 	PublishedByApiKeyID  pgtype.UUID
 	CheckEvidence        []byte
+	EnvironmentID        pgtype.UUID
 }
 
+// The revision names its workflow's environment; the trigger fills it for a
+// release that does not (ADR-20261104120000 amendment 2026-11-28).
 func (q *Queries) InsertStoredWorkflowRevision(ctx context.Context, db DBTX, arg InsertStoredWorkflowRevisionParams) error {
 	_, err := db.Exec(ctx, insertStoredWorkflowRevision,
 		arg.AppID,
@@ -40605,6 +40611,7 @@ func (q *Queries) InsertStoredWorkflowRevision(ctx context.Context, db DBTX, arg
 		arg.PublishedByAccountID,
 		arg.PublishedByApiKeyID,
 		arg.CheckEvidence,
+		arg.EnvironmentID,
 	)
 	return err
 }
@@ -111377,7 +111384,7 @@ func (q *Queries) SaveSnapshotPrimeHandoff(ctx context.Context, db DBTX, arg Sav
 const saveStoredWorkflow = `-- name: SaveStoredWorkflow :exec
 INSERT INTO stored_workflows(app_id,name,version,draft,published,published_version,enabled,updated_at,test_suite,test_report,environment_id)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::uuid)
-ON CONFLICT(app_id,name) DO UPDATE SET version=excluded.version,draft=excluded.draft,
+ON CONFLICT(app_id,name,(COALESCE(environment_id,'00000000-0000-0000-0000-000000000000'::uuid))) DO UPDATE SET version=excluded.version,draft=excluded.draft,
  published=excluded.published,published_version=excluded.published_version,enabled=excluded.enabled,updated_at=excluded.updated_at,
  test_suite=excluded.test_suite,test_report=excluded.test_report
 `
@@ -111397,6 +111404,9 @@ type SaveStoredWorkflowParams struct {
 }
 
 // environment_id is set on insert only; a workflow keeps its environment.
+// The conflict target is the per-environment name index, which outlives the
+// (app_id, name) key the next release drops (ADR-20261104120000 amendment
+// 2026-11-28).
 func (q *Queries) SaveStoredWorkflow(ctx context.Context, db DBTX, arg SaveStoredWorkflowParams) error {
 	_, err := db.Exec(ctx, saveStoredWorkflow,
 		arg.AppID,
@@ -114085,6 +114095,7 @@ SELECT count(*) FILTER(WHERE status IN ('failed','dead') AND cancelled_at IS NUL
  count(*) FILTER(WHERE status='running')::bigint AS running_runs,
  count(*) FILTER(WHERE status='awaiting_event')::bigint AS waiting_runs
 FROM workflow_runs WHERE app_id=$3::uuid AND workflow_name=$4::text
+AND NOT EXISTS(SELECT 1 FROM deployments d WHERE d.id=workflow_runs.deployment_id AND d.scope NOT IN ('','default','production'))
 `
 
 type StoredWorkflowFailureSignalsParams struct {
@@ -114102,6 +114113,7 @@ type StoredWorkflowFailureSignalsRow struct {
 	WaitingRuns   int64
 }
 
+// A stage's runs never count against production's failure policy.
 func (q *Queries) StoredWorkflowFailureSignals(ctx context.Context, db DBTX, arg StoredWorkflowFailureSignalsParams) (StoredWorkflowFailureSignalsRow, error) {
 	row := db.QueryRow(ctx, storedWorkflowFailureSignals,
 		arg.SinceAt,

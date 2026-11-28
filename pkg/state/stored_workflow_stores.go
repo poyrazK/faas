@@ -367,7 +367,7 @@ func mutateStoredWorkflowTx(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, app
 		next.PublishedVersion = next.Version
 	}
 	if mutation.Action == "delete" {
-		err = q.DeleteStoredWorkflow(ctx, tx, sqlc.DeleteStoredWorkflowParams{AppID: mustPgUUID(appID), Name: name})
+		err = q.DeleteStoredWorkflow(ctx, tx, sqlc.DeleteStoredWorkflowParams{AppID: mustPgUUID(appID), Name: name, EnvironmentID: nullablePgUUID(next.EnvironmentID)})
 	} else {
 		err = q.SaveStoredWorkflow(ctx, tx, sqlc.SaveStoredWorkflowParams{TestSuite: next.TestSuite, TestReport: next.TestReport, AppID: mustPgUUID(appID), Name: name, Version: next.Version, Draft: next.Draft, Published: next.Published, PublishedVersion: next.PublishedVersion, Enabled: next.Enabled, UpdatedAt: pgtype.Timestamptz{Time: next.UpdatedAt, Valid: true}, EnvironmentID: nullablePgUUID(next.EnvironmentID)})
 	}
@@ -384,6 +384,7 @@ func mutateStoredWorkflowTx(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, app
 			CheckEvidence: storedWorkflowCheckEvidenceJSON(mutation.CheckEvidence),
 			Definition:    next.Published, RecordedAt: pgtype.Timestamptz{Time: next.UpdatedAt, Valid: true},
 			PublishedByAccountID: mustPgUUID(mutation.ActorAccountID), PublishedByApiKeyID: apiKeyID,
+			EnvironmentID: nullablePgUUID(next.EnvironmentID),
 		}); err != nil {
 			return StoredWorkflow{}, err
 		}
