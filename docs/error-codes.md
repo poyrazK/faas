@@ -1730,6 +1730,10 @@ See [Event-driven workloads](event-driven.md).
 
 ## M
 
+### `managed_cache_app`
+
+HTTP 409 Conflict · Managed Redis cache
+
 ### `managed_postgres_ambiguous`
 
 HTTP 409 Conflict · Managed PostgreSQL database reference is ambiguous

@@ -132,8 +132,13 @@ running to restart; its next connection starts it with its data.
   `SAVE`, `BGSAVE`, `BGREWRITEAOF`, `REPLICAOF`, `SLAVEOF`, `FAILOVER`,
   `CLUSTER`, `ACL`, `MONITOR`, `SYNC`, `PSYNC`, `REPLCONF`) are refused. Lua scripts,
   functions, pub/sub, streams and transactions work.
-- You cannot deploy your own image to a cache. Use `gregale redis resize` to
-  change its size.
+- Only `gregale redis` commands change a cache. App commands that would
+  change it (`deploy`, `app restart`, `app rename`, `app delete`, `env set`,
+  `domains add`, scaling and auth settings) answer `409 managed_cache_app`
+  and name the `gregale redis` command to use: `resize` to change its size,
+  `update` to move it to the current Valkey release, `restart` to restart it
+  with its data, `delete` to delete it. Reads such as `gregale logs` and
+  `gregale ps` work.
 
 ## Delete a cache
 
