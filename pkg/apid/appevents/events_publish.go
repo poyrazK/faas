@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"fmt"
 	"strings"
 	"time"
 
@@ -73,6 +74,13 @@ func NormalizePublishRequest(req api.PublishEventRequest, accountID string) (eve
 	var occurredAt time.Time
 	if req.Time != nil {
 		occurredAt = *req.Time
+	}
+	// `billing.` and `billing..x` were accepted and `billing.` matched the
+	// subscription `billing.*` (prod hunt r82). Dotted names need every segment.
+	for name, value := range map[string]string{"source": req.Source, "type": req.Type} {
+		if strings.HasPrefix(value, ".") || strings.HasSuffix(value, ".") || strings.Contains(value, "..") {
+			return events.Envelope{}, fmt.Errorf("%s %q has an empty dot-separated segment; use names like billing.invoice", name, value)
+		}
 	}
 	return (events.Envelope{ID: req.ID, Source: req.Source, Type: req.Type, Time: occurredAt,
 		DataContentType: req.DataContentType, Data: req.Data, AccountID: req.AccountID,
