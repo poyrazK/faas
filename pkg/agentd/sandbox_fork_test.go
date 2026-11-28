@@ -93,20 +93,33 @@ func TestSandboxForkOfARunningSession(t *testing.T) {
 	}
 	mem := "snap/sandbox-session-" + account + "/captures/" + captureID + "/v2/mem"
 	// Either claimer may take either fork: the one driving the refused fork
-	// returns, the other holds the first fork until it closes.
-	holdA, holdB := holdSandbox(t, sbx), holdSandbox(t, sbx)
-	waitFor(t, "the first fork ready on the capture's node", func() bool {
-		return sandboxState(t, store, first).State == agentstore.SandboxReady
+	// returns, the other holds the first fork until it closes. A claim made
+	// while the other fork is starting may find nothing, so a claimer that
+	// returns is replaced until both forks were driven.
+	live := map[<-chan bool]bool{holdSandbox(t, sbx): true, holdSandbox(t, sbx): true}
+	reap := func() {
+		for h := range live {
+			select {
+			case <-h:
+				delete(live, h)
+			default:
+			}
+		}
+	}
+	waitFor(t, "the first fork ready on the capture's node and the second refused", func() bool {
+		reap()
+		if sandboxState(t, store, first).State == agentstore.SandboxReady && forkLocalRefused(t, pool, second) {
+			return true
+		}
+		if len(live) < 2 {
+			live[holdSandbox(t, sbx)] = true
+		}
+		return false
 	})
-	waitFor(t, "the second fork refused", func() bool { return forkLocalRefused(t, pool, second) })
+	waitFor(t, "only the first fork's claim left", func() bool { reap(); return len(live) == 1 })
 	var forkDone <-chan bool
-	select {
-	case <-holdA:
-		forkDone = holdB
-	case <-holdB:
-		forkDone = holdA
-	case <-time.After(10 * time.Second):
-		t.Fatal("the refused fork's claim did not return")
+	for h := range live {
+		forkDone = h
 	}
 	for _, id := range []string{first, second} {
 		r := lastStart(t, fake, id).GetResume()
