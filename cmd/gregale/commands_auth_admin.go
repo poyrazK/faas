@@ -193,8 +193,9 @@ func authAdminKeyList(ctx context.Context, client *api.Client, app, scope string
 		Unknown string `json:"scopes_unknown,omitempty"`
 	}
 	// The running app reports each key's scopes and expiry (secrets are
-	// write-only). Apps list them in /settings/v1 for now; a key missing
-	// there is asked for by ID, which later templates require. Lookups share
+	// write-only). Apps on older templates list them in /settings/v1;
+	// current ones answer only by ID, so a key missing there is asked for
+	// by ID. Lookups share
 	// one deadline and stop at the first one the app refuses or cannot
 	// answer, so a slow or limiting app costs at most one timeout.
 	running := map[string]authAdminKeySetting{}

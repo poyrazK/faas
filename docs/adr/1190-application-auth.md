@@ -388,10 +388,12 @@ reports one key's ID, scopes and expiry (never its digest) for
 `admin-key list`. That route sends no CORS header, refuses anything but an
 ID before touching the database, and answers
 `AuthAdminKeyLookupsPerAddress` lookups an hour per address, so the 32-bit
-IDs cannot be enumerated. The public `/settings/v1` still lists the keys
-for one release, because CLIs of the previous release read them there
-(release N runs beside N-1); the next release removes that list, after
-which only someone who holds an ID from the owner's secret list can ask. The dashboard page `/dashboard/apps/{slug}/auth` is served by apid but
+IDs cannot be enumerated. The public `/settings/v1` no longer lists the
+keys, so only someone who holds an ID from the owner's secret list can ask.
+A CLI from before this change reads the list from `/settings/v1` and so
+shows such an app's keys' scopes as unknown until it is upgraded; the keys
+themselves keep working (an accepted break of the N-1 rule, for a
+display-only field). The dashboard page `/dashboard/apps/{slug}/auth` is served by apid but
 its script calls the Auth app directly from the owner's browser: apid adds the
 Auth app's exact origin to that page's `connect-src`, and the Auth app answers
 CORS only for the Gregale API origin sealed at creation. apid never receives

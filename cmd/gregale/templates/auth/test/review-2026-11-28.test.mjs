@@ -151,6 +151,7 @@ test('an admin key is reported by its ID, a budgeted number of times, never to a
   const port = await listen(front)
   t.after(() => front.close())
   const base = `http://127.0.0.1:${port}`
+  assert.equal((await (await fetch(`${base}/settings/v1`)).json()).admin_keys, undefined, 'public settings list no admin keys')
   const one = await fetch(`${base}/settings/v1/admin-keys/0A1B2C3D`)
   assert.equal(one.headers.get('access-control-allow-origin'), null, 'no browser origin may read a key')
   assert.deepEqual(await one.json(), adminKeys[0])

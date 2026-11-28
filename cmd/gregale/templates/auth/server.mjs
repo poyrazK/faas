@@ -454,10 +454,9 @@ export function start(env = process.env) {
     resource: id => authorizationResource(pool, id),
     clientCredentials: config.serviceAccounts,
   } : null
-  const server = createServer({ authz, ui, realtime, admin, // admin_keys stays in the public settings for one release, for CLIs that
-    // read it there (release N runs beside N-1); this release's CLI asks
-    // /settings/v1/admin-keys/<ID>. Remove it in the next release.
-    settings: { ...config.settings, admin_keys: adminKeySummary(adminKeys) }, adminKeys: adminKeySummary(adminKeys), smsCountries: config.smsCountries, scim, oauth, serviceAccounts, attempts })
+  const server = createServer({ authz, ui, realtime, admin, // Admin keys are not listed in the public settings; the CLI asks
+    // /settings/v1/admin-keys/<ID> for each key it finds among the secrets.
+    settings: config.settings, adminKeys: adminKeySummary(adminKeys), smsCountries: config.smsCountries, scim, oauth, serviceAccounts, attempts })
   // Lifecycle events publish after requests that may change users, and
   // once at startup for anything recorded while the app was parked.
   const lifecycle = lifecycleConfig(env)
