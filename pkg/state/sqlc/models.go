@@ -17786,6 +17786,20 @@ type SpendCapNoticeOutbox struct {
 	DeliveredAt   pgtype.Timestamptz
 }
 
+type StageWorkflowScheduleCursor struct {
+	EnvironmentID   pgtype.UUID
+	WorkflowName    string
+	AppID           pgtype.UUID
+	DeploymentID    pgtype.UUID
+	TriggerSnapshot []byte
+	LastEvaluatedAt pgtype.Timestamptz
+	ScheduledFor    pgtype.Timestamptz
+	Status          string
+	LastRunID       pgtype.UUID
+	LastAdmittedAt  pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type StaticEgressProvisioningGrant struct {
 	SourceID   string
 	AccountID  pgtype.UUID
@@ -17870,6 +17884,7 @@ type StoredWorkflow struct {
 	UpdatedAt        pgtype.Timestamptz
 	TestSuite        []byte
 	TestReport       []byte
+	EnvironmentID    pgtype.UUID
 }
 
 type StoredWorkflowFailureGuard struct {
@@ -17979,6 +17994,7 @@ type StoredWorkflowRevision struct {
 	PublishedByAccountID pgtype.UUID
 	PublishedByApiKeyID  pgtype.UUID
 	CheckEvidence        []byte
+	EnvironmentID        pgtype.UUID
 }
 
 type StripePushDedupe struct {

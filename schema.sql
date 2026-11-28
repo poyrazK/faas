@@ -1244,11 +1244,11 @@ BEGIN
         FROM (
             SELECT definition FROM jsonb_array_elements(CASE WHEN jsonb_typeof(manifest)='array' THEN manifest ELSE '[]'::jsonb END) definition
             WHERE NOT EXISTS(SELECT 1 FROM stored_workflows w WHERE w.app_id=target_app
-              AND w.name=definition->>'name' AND w.published IS NOT NULL)
+              AND w.name=definition->>'name' AND w.published IS NOT NULL AND w.environment_id IS NULL)
             UNION ALL
             SELECT CASE WHEN published->'trigger'->>'type' IN ('schedule','event')
              THEN jsonb_set(published, '{trigger,enabled}', to_jsonb(enabled), true) ELSE published END
-            FROM stored_workflows WHERE app_id=target_app AND published IS NOT NULL
+            FROM stored_workflows WHERE app_id=target_app AND published IS NOT NULL AND environment_id IS NULL
         ) effective);
 END;
 $$;
@@ -20812,6 +20812,27 @@ END $$;
 
 
 --
+-- Name: guard_stored_workflow_environment(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_stored_workflow_environment() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' AND NEW.environment_id IS DISTINCT FROM OLD.environment_id THEN
+    RAISE EXCEPTION 'a stored workflow keeps its environment' USING ERRCODE = '23514';
+  END IF;
+  IF NEW.environment_id IS NOT NULL AND NOT EXISTS (
+      SELECT 1 FROM apps a JOIN project_environments e ON e.project_id = a.project_id AND e.account_id = a.account_id
+      WHERE a.id = NEW.app_id AND e.id = NEW.environment_id) THEN
+    RAISE EXCEPTION 'a stored workflow environment belongs to its app''s project' USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_verified_project_rollback(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -30854,6 +30875,21 @@ BEGIN
     RETURN NEW;
 END;
 $_$;
+
+
+--
+-- Name: stored_workflow_revision_environment(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.stored_workflow_revision_environment() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  SELECT w.environment_id INTO NEW.environment_id FROM stored_workflows w
+  WHERE w.app_id = NEW.app_id AND w.name = NEW.name;
+  RETURN NEW;
+END;
+$$;
 
 
 --
@@ -64382,6 +64418,28 @@ CREATE TABLE public.spend_cap_notice_outbox (
 
 
 --
+-- Name: stage_workflow_schedule_cursors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.stage_workflow_schedule_cursors (
+    environment_id uuid NOT NULL,
+    workflow_name text NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid,
+    trigger_snapshot jsonb NOT NULL,
+    last_evaluated_at timestamp with time zone NOT NULL,
+    scheduled_for timestamp with time zone,
+    status text NOT NULL,
+    last_run_id uuid,
+    last_admitted_at timestamp with time zone,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT stage_workflow_schedule_cursors_status_check CHECK ((status = ANY (ARRAY['armed'::text, 'started'::text, 'skipped_overlap'::text, 'skipped_quota'::text]))),
+    CONSTRAINT stage_workflow_schedule_cursors_trigger_snapshot_check CHECK ((jsonb_typeof(trigger_snapshot) = 'object'::text)),
+    CONSTRAINT stage_workflow_schedule_cursors_workflow_name_check CHECK (((length(workflow_name) >= 1) AND (length(workflow_name) <= 128)))
+);
+
+
+--
 -- Name: static_egress_provisioning_grants; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -64757,6 +64815,7 @@ CREATE TABLE public.stored_workflow_revisions (
     published_by_account_id uuid NOT NULL,
     published_by_api_key_id uuid,
     check_evidence jsonb,
+    environment_id uuid,
     CONSTRAINT stored_workflow_revisions_check CHECK (((jsonb_typeof(definition) = 'object'::text) AND ((definition ->> 'name'::text) = name))),
     CONSTRAINT stored_workflow_revisions_name_check CHECK ((length(name) > 0)),
     CONSTRAINT stored_workflow_revisions_version_check CHECK ((version > 0))
@@ -64790,6 +64849,7 @@ CREATE TABLE public.stored_workflows (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     test_suite jsonb,
     test_report jsonb,
+    environment_id uuid,
     CONSTRAINT stored_workflow_test_report_shape CHECK (((test_report IS NULL) OR (jsonb_typeof(test_report) = 'object'::text))),
     CONSTRAINT stored_workflow_test_suite_shape CHECK (((test_suite IS NULL) OR (jsonb_typeof(test_suite) = 'object'::text))),
     CONSTRAINT stored_workflows_check CHECK (((jsonb_typeof(draft) = 'object'::text) AND ((draft ->> 'name'::text) = name))),
@@ -81180,6 +81240,14 @@ ALTER TABLE ONLY public.spend_cap_notice_outbox
 
 
 --
+-- Name: stage_workflow_schedule_cursors stage_workflow_schedule_cursors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.stage_workflow_schedule_cursors
+    ADD CONSTRAINT stage_workflow_schedule_cursors_pkey PRIMARY KEY (environment_id, workflow_name);
+
+
+--
 -- Name: static_egress_provisioning_grants static_egress_provisioning_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -81361,6 +81429,14 @@ ALTER TABLE ONLY public.stored_workflow_publish_receipts
 
 ALTER TABLE ONLY public.stored_workflow_revisions
     ADD CONSTRAINT stored_workflow_revisions_pkey PRIMARY KEY (app_id, name, version);
+
+
+--
+-- Name: stored_workflows stored_workflows_environment_enabled_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.stored_workflows
+    ADD CONSTRAINT stored_workflows_environment_enabled_chk CHECK (((environment_id IS NULL) OR (NOT enabled) OR ((published IS NOT NULL) AND (COALESCE(((published -> 'trigger'::text) ->> 'type'::text), 'manual'::text) = ANY (ARRAY['manual'::text, 'schedule'::text]))))) NOT VALID;
 
 
 --
@@ -93695,6 +93771,13 @@ CREATE INDEX spend_cap_notice_pending_idx ON public.spend_cap_notice_outbox USIN
 
 
 --
+-- Name: stage_workflow_schedule_cursors_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX stage_workflow_schedule_cursors_app_idx ON public.stage_workflow_schedule_cursors USING btree (app_id, workflow_name);
+
+
+--
 -- Name: static_egress_provisioning_account_ip_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -93783,6 +93866,20 @@ CREATE INDEX stored_workflow_live_history ON public.stored_workflow_live_verific
 --
 
 CREATE INDEX stored_workflow_live_suite_history ON public.stored_workflow_live_suites USING btree (app_id, name, created_at DESC, id DESC);
+
+
+--
+-- Name: stored_workflows_app_environment_name_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX stored_workflows_app_environment_name_uniq ON public.stored_workflows USING btree (app_id, name, COALESCE(environment_id, '00000000-0000-0000-0000-000000000000'::uuid));
+
+
+--
+-- Name: stored_workflows_environment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX stored_workflows_environment_idx ON public.stored_workflows USING btree (environment_id) WHERE (environment_id IS NOT NULL);
 
 
 --
@@ -102305,6 +102402,20 @@ CREATE TRIGGER status_incidents_legacy_resolution_update AFTER UPDATE OF resolve
 --
 
 CREATE TRIGGER storage_object_deletions_scope BEFORE INSERT OR DELETE OR UPDATE ON public.storage_object_deletions FOR EACH ROW EXECUTE FUNCTION public.storage_object_deletions_scope();
+
+
+--
+-- Name: stored_workflows stored_workflow_environment_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER stored_workflow_environment_guard BEFORE INSERT OR UPDATE OF environment_id, app_id ON public.stored_workflows FOR EACH ROW EXECUTE FUNCTION public.guard_stored_workflow_environment();
+
+
+--
+-- Name: stored_workflow_revisions stored_workflow_revision_environment; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER stored_workflow_revision_environment BEFORE INSERT OR UPDATE OF environment_id, app_id, name ON public.stored_workflow_revisions FOR EACH ROW EXECUTE FUNCTION public.stored_workflow_revision_environment();
 
 
 --
@@ -119954,6 +120065,22 @@ ALTER TABLE ONLY public.spend_cap_notice_outbox
 
 
 --
+-- Name: stage_workflow_schedule_cursors stage_workflow_schedule_cursors_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.stage_workflow_schedule_cursors
+    ADD CONSTRAINT stage_workflow_schedule_cursors_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: stage_workflow_schedule_cursors stage_workflow_schedule_cursors_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.stage_workflow_schedule_cursors
+    ADD CONSTRAINT stage_workflow_schedule_cursors_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
 -- Name: status_incident_updates status_incident_updates_incident_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -120082,11 +120209,27 @@ ALTER TABLE ONLY public.stored_workflow_revisions
 
 
 --
+-- Name: stored_workflow_revisions stored_workflow_revisions_environment_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.stored_workflow_revisions
+    ADD CONSTRAINT stored_workflow_revisions_environment_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE NOT VALID;
+
+
+--
 -- Name: stored_workflows stored_workflows_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.stored_workflows
     ADD CONSTRAINT stored_workflows_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: stored_workflows stored_workflows_environment_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.stored_workflows
+    ADD CONSTRAINT stored_workflows_environment_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE NOT VALID;
 
 
 --

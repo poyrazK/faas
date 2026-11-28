@@ -52,7 +52,7 @@ func (l *Loop) runWorkflowSchedulesTick(ctx context.Context) error {
 	// target whose policy cannot be checked or is over its limit stays stopped,
 	// while a failure in another app no longer blocks its schedules.
 	checks := make(map[workflowSchedulePolicyKey]workflowSchedulePolicyCheck)
-	return errors.Join(policyErr, l.runApplicationWorkflowSchedulesTick(ctx, l.workflowFailurePolicyUncertain, checks), l.runTenantWorkflowSchedulesTick(ctx, l.workflowFailurePolicyUncertain, checks))
+	return errors.Join(policyErr, l.runApplicationWorkflowSchedulesTick(ctx, l.workflowFailurePolicyUncertain, checks), l.runTenantWorkflowSchedulesTick(ctx, l.workflowFailurePolicyUncertain, checks), l.runStageWorkflowSchedulesTick(ctx))
 }
 
 func (l *Loop) workflowSchedulePolicyAllowed(ctx context.Context, appID, name string, checks map[workflowSchedulePolicyKey]workflowSchedulePolicyCheck) (bool, error) {

@@ -166,7 +166,7 @@ func cmdWorkflowsRun(args []string) int {
 	// `workflows run --app <slug> <workflow-name>`).
 	flagArgs, positional := splitArgsForFlags(args, "wait")
 	if len(positional) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale workflow run <workflow_name> [--app <slug>] [--input JSON | --input-file PATH|-] [--idempotency-key <key>] [--wait [--timeout 5m] [--poll-interval 2s]]", "workflows")
+		PrintUsage(os.Stderr, "usage: gregale workflow run <workflow_name> [--app <slug>] [--environment <env>] [--input JSON | --input-file PATH|-] [--idempotency-key <key>] [--wait [--timeout 5m] [--poll-interval 2s]]", "workflows")
 		return 1
 	}
 	workflowName := positional[0]
@@ -176,6 +176,7 @@ func cmdWorkflowsRun(args []string) int {
 	inputStr := fs.String("input", "{}", "JSON input payload for the workflow")
 	inputFile := fs.String("input-file", "", "read JSON input from a file, or - for stdin (excludes --input)")
 	idempotencyKey := fs.String("idempotency-key", "", "stable key for retrying an uncertain run start")
+	environment := fs.String("environment", "", "project environment whose live deployment runs it (default production)")
 	wait := fs.Bool("wait", false, "wait for the accepted run to succeed")
 	timeout := fs.Duration("timeout", 5*time.Minute, "maximum wait after acceptance (requires --wait)")
 	interval := fs.Duration("poll-interval", 2*time.Second, "wait poll interval (requires --wait; 1s to 1h)")
@@ -223,7 +224,7 @@ func cmdWorkflowsRun(args []string) int {
 	}
 
 	printWorkflowRunTarget(*appSlug, appSource)
-	run, err := client.RunWorkflowWithIdempotencyKey(context.Background(), *appSlug, workflowName, input, *idempotencyKey)
+	run, err := client.RunWorkflowInEnvironment(context.Background(), *appSlug, workflowName, *environment, input, *idempotencyKey)
 	if err != nil {
 		return printRunSubmissionError("Request failed", err, recoveryCLI()+" workflow list --app "+recoveryArgument(*appSlug)+" --workflow-name "+recoveryArgument(workflowName), *idempotencyKey != "")
 	}
