@@ -157,7 +157,7 @@ func TestMemProjectEnvironmentBranchScopeBuildsWaitForData(t *testing.T) {
 	if err := s.SetDeploymentRootfs(ctx, migrating.ID, "/migrating.ext4", "layers/migrating.ext4", 4096); err != nil {
 		t.Fatal(err)
 	}
-	task, err :=s.CreateAppTask(ctx, state.CreateAppTaskParams{AccountID: acct.ID, AppID: app.ID, DeploymentID: migrating.ID,
+	task, err := s.CreateAppTask(ctx, state.CreateAppTaskParams{AccountID: acct.ID, AppID: app.ID, DeploymentID: migrating.ID,
 		Kind: state.AppTaskKindRelease, Command: []string{"migrate"}, TimeoutSeconds: 60})
 	if err != nil {
 		t.Fatal(err)
