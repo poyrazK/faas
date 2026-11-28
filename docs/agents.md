@@ -92,10 +92,10 @@ as a connector.
 When the agent first connects, your browser opens:
 1. Sign in to Gregale. No account yet? Sign up with GitHub or Google on the
    same page.
-2. Choose what the agent may do: "Deploy and manage apps" (preselected) or
-   "Inspect only". With deploy access you can also let it ask you for
-   secrets and add buckets and databases. You confirm write access again
-   after you see the account.
+2. Choose what the agent may do: "Deploy and manage apps" or "Inspect
+   only". With deploy access you can also let it ask you for secrets and add
+   buckets and databases. Every choice on the Connect screen starts ticked,
+   here and after you see the account; untick what you don't want.
 3. Choose which tools it gets. With deploy access the default is "Deploy and
    operate": releases, domains, data, crons, restarts and scaling. "Core
    tools" inspects, deploys and rolls back; "Diagnose and recover" adds
@@ -366,7 +366,8 @@ application response tools before starting.
    Review the account, source, app, and traffic effect. For this example,
    expect a first serving release with FastAPI and readiness at `/`.
 3. Call `gregale_apply_upload_deploy` with `{"plan_id":"<plan_id>"}` once
-   the user has authorized deployment. Follow the
+   the user has authorized deployment. A hosted connection made with deploy
+   access deploys without a Gregale review link; otherwise follow the
    [approval flow](#approve-an-agents-risky-requests) if Gregale returns a
    review link. When the resumable upload commit requires approval, the same
    plan and source stay available until the deadline shown in
@@ -650,6 +651,15 @@ gregale key create ci-agent --scopes agent,deploy:write --approvals delete,billi
 (the default) or `none`. An organization can require categories for every
 agent acting in it with `gregale org agent policy set --approvals`.
 
+An agent you connect through the hosted MCP server with **Deploy and manage
+apps** works differently: approving its sign-in on the Connect screen is
+your approval of its deploys, promotions, checked rollbacks, restarts,
+configuration changes, domain and cron removal, and undo of its own changes,
+so those requests go through without a review link and each is recorded in
+your audit log (`agent_approval.connect_grant`). Its other risky requests
+still ask, and so does anything your organization requires approval for.
+See [MCP: deploy access on the Connect screen](mcp.md#deploy-access-on-the-connect-screen-is-your-approval).
+
 When a request needs approval, Gregale answers `428 approval_required` with
 a review link. The agent shows you the link; you open it signed in to the
 dashboard and approve or deny. Only the member who connected the agent, or an
@@ -881,6 +891,7 @@ acting in their organization. Undoing needs an admin credential.
 
 An agent can ask to undo its own changes, never another key's, through the
 MCP tools `gregale_plan_undo` and `gregale_apply_undo` (or
-`POST /v1/agent-connections/self/undo`). Applying always waits for your
-approval, whatever approval categories the agent chose; the approval covers
+`POST /v1/agent-connections/self/undo`). Applying waits for your
+approval, whatever approval categories the agent chose, unless you connected
+the agent with deploy access on the Connect screen; the approval covers
 exactly the plan the agent showed you.

@@ -262,6 +262,11 @@ hand-off, the per-host SLO gate (canary 4 min, followers 90 s), and the
   release when there is none). The rest goes in the next run: a merge, or
   a 10-minute schedule that runs only with automatic deploys on. A commit
   production already took is not built again.
+  When the capped commit failed main's post-merge light tier, the release
+  moves to the first later commit whose light tier did not fail
+  (`scripts/ci/cap_past_red_light.py`, amendment 2026-11-27): the
+  preflight refuses a red commit and every run would pick the same one,
+  which held the lane at 174890e8e5 until a full release (2026-11-26).
 - **Config rollback** (owner chose it). The watch's rollback put binaries
   back but not host configuration a lane converged. Now, before the
   host-config step converges, the watch record notes the configuration

@@ -119,6 +119,16 @@ class Verdict:
     detail: str
 
 
+def light_runs(gh, sha: str) -> list[dict]:
+    """main's post-merge light tier runs on one commit."""
+    return gh.get(f"actions/workflows/{LIGHT_WORKFLOW}/runs",
+                  {"head_sha": sha, "event": "push", "per_page": 10}).get("workflow_runs", [])
+
+
+def light_run_failed(run: dict) -> bool:
+    return run.get("status") == "completed" and run.get("conclusion") in ("failure", "timed_out")
+
+
 class GitHub:
     """The REST API with a bearer token."""
 
@@ -306,9 +316,8 @@ class Preflight:
     def main(self) -> Verdict:
         if self.light_verdict is not None:
             return self.light_verdict
-        runs = self.gh.get(f"actions/workflows/{LIGHT_WORKFLOW}/runs",
-                           {"head_sha": self.sha, "event": "push", "per_page": 10}).get("workflow_runs", [])
-        failed = [r for r in runs if r.get("status") == "completed" and r.get("conclusion") in ("failure", "timed_out")]
+        runs = light_runs(self.gh, self.sha)
+        failed = [r for r in runs if light_run_failed(r)]
         if failed:
             self.light_verdict = Verdict("main", FAIL, f"main's light tier failed on {self.sha[:12]}: {failed[0]['html_url']}")
             return self.light_verdict

@@ -16,6 +16,7 @@ def _get_kwargs(
     *,
     expected_version: int,
     restore_manifest: bool | Unset = False,
+    environment: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -23,6 +24,8 @@ def _get_kwargs(
     params["expected_version"] = expected_version
 
     params["restore_manifest"] = restore_manifest
+
+    params["environment"] = environment
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -88,6 +91,11 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
         return response_429
 
+    if response.status_code == 501:
+        response_501 = Problem.from_dict(response.json())
+
+        return response_501
+
     if response.status_code == 503:
         response_503 = Problem.from_dict(response.json())
 
@@ -115,6 +123,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     expected_version: int,
     restore_manifest: bool | Unset = False,
+    environment: str | Unset = UNSET,
 ) -> Response[Any | Problem]:
     """Remove a dashboard definition; restoring YAML ownership requires explicit confirmation.
 
@@ -123,6 +132,7 @@ def sync_detailed(
         name (str):
         expected_version (int):
         restore_manifest (bool | Unset):  Default: False.
+        environment (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -137,6 +147,7 @@ def sync_detailed(
         name=name,
         expected_version=expected_version,
         restore_manifest=restore_manifest,
+        environment=environment,
     )
 
     response = client.get_httpx_client().request(
@@ -153,6 +164,7 @@ def sync(
     client: AuthenticatedClient | Client,
     expected_version: int,
     restore_manifest: bool | Unset = False,
+    environment: str | Unset = UNSET,
 ) -> Any | Problem | None:
     """Remove a dashboard definition; restoring YAML ownership requires explicit confirmation.
 
@@ -161,6 +173,7 @@ def sync(
         name (str):
         expected_version (int):
         restore_manifest (bool | Unset):  Default: False.
+        environment (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -176,6 +189,7 @@ def sync(
         client=client,
         expected_version=expected_version,
         restore_manifest=restore_manifest,
+        environment=environment,
     ).parsed
 
 
@@ -186,6 +200,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     expected_version: int,
     restore_manifest: bool | Unset = False,
+    environment: str | Unset = UNSET,
 ) -> Response[Any | Problem]:
     """Remove a dashboard definition; restoring YAML ownership requires explicit confirmation.
 
@@ -194,6 +209,7 @@ async def asyncio_detailed(
         name (str):
         expected_version (int):
         restore_manifest (bool | Unset):  Default: False.
+        environment (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -208,6 +224,7 @@ async def asyncio_detailed(
         name=name,
         expected_version=expected_version,
         restore_manifest=restore_manifest,
+        environment=environment,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -222,6 +239,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     expected_version: int,
     restore_manifest: bool | Unset = False,
+    environment: str | Unset = UNSET,
 ) -> Any | Problem | None:
     """Remove a dashboard definition; restoring YAML ownership requires explicit confirmation.
 
@@ -230,6 +248,7 @@ async def asyncio(
         name (str):
         expected_version (int):
         restore_manifest (bool | Unset):  Default: False.
+        environment (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -246,5 +265,6 @@ async def asyncio(
             client=client,
             expected_version=expected_version,
             restore_manifest=restore_manifest,
+            environment=environment,
         )
     ).parsed

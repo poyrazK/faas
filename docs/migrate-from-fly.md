@@ -25,9 +25,11 @@ variables. `fly.toml` settings do not carry over; this page maps them to
 | `<app>.internal` and `<app>.flycast` | Services in the same [project](multi-service-apps.md) call each other by name: `http://api.internal:10081` |
 | Managed Postgres | [Managed PostgreSQL](postgres.md), bound to the app as `DATABASE_URL` |
 | Tigris object storage | [Object storage](object-storage.md), S3-compatible, or keep Tigris over HTTPS |
+| WebSockets | `--websocket-enabled` on your app or [managed realtime](realtime.md) (beta) so apps scale to zero between messages |
 | Scheduled Machines, supercronic, Cron Manager | A [cron](crons.md) that calls a path on your app, or a scheduled [job](jobs.md) that runs an image to completion |
 | `fly logs` | `gregale logs my-api` ([Logs](logs.md)) |
-| Redeploying an earlier image | `gregale rollback my-api --to v41` ([Safe releases](releases.md)) |
+| Rolling deploys and earlier image rollbacks | Automatic 1% → 10% → 50% → 100% canary [rollouts](rollouts.md) with automatic 5xx rollback, plus `gregale rollback my-api --to v41 --restore-databases` ([Safe releases](releases.md#rollbacks-that-restore-the-database)) |
+| Usage caps | Hard monthly spend caps enabled on every paid plan ([Cost controls](cost-controls.md)) |
 
 ## Translate fly.toml
 

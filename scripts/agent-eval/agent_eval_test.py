@@ -66,6 +66,41 @@ class TaskTests(unittest.TestCase):
                                                     "deploy-express-render", "migrate-fastapi-render", "deploy-flask-render", "migrate-django-heroku", "deploy-go-heroku",
                                                 "day2-config-change", "day2-schedule", "day2-no-cold-start"])
 
+    def test_command_features_count_their_mcp_tools(self):
+        # An agent on the MCP toolset does through a tool what a CLI agent does
+        # with a command; a feature that only reads commands scores it 0
+        # (day2-config-change, 2026-11-26). Every named tool must exist.
+        repo = Path(__file__).resolve().parents[2]
+        served = set(re.findall(r'"(gregale_[a-z_]+)"', (repo / "pkg/mcpmanagement/toolsets.go").read_text()))
+        for task in ev.load_tasks():
+            for feature in task.get("features", []):
+                if feature["kind"] != "command":
+                    continue
+                self.assertTrue(feature.get("tools"), f"{task['id']}/{feature['id']} names no MCP tools")
+                for entry in feature["tools"]:
+                    for tool in entry.split("+"):
+                        self.assertIn(tool, served, f"{task['id']}/{feature['id']}: no MCP tool {tool}")
+        # Only an applied change counts; a plan the agent never applied does not.
+        tasks = {t["id"]: t for t in ev.load_tasks()}
+
+        def score(task_id, commands=(), tools=()):
+            with tempfile.TemporaryDirectory() as d:
+                return ev.grade_features(tasks[task_id], list(commands), Path(d), {}, tools=[f"mcp__gregale__{t}" for t in tools])["feature_score"]
+
+        self.assertEqual(score("day2-config-change", tools=["gregale_plan_env_change", "gregale_apply_env_change"]), 1.0)
+        self.assertEqual(score("day2-config-change", tools=["gregale_plan_env_change"]), 0.0)
+        self.assertEqual(score("day2-config-change", commands=["gregale env set --app a GREETING=x"]), 1.0)
+        self.assertEqual(score("day2-no-cold-start", tools=["gregale_plan_scale"]), 0.0)
+        self.assertEqual(score("day2-no-cold-start", tools=["gregale_plan_scale", "gregale_apply_operation"]), 1.0)
+        self.assertEqual(score("day2-no-cold-start", commands=["gregale app eval-app --min 1"]), 1.0)
+        self.assertEqual(score("day2-schedule", tools=["gregale_plan_cron"]), 0.0)
+        self.assertEqual(score("day2-schedule", tools=["gregale_plan_cron", "gregale_apply_provision"]), 1.0)
+        # A deploy's own plan, or reading the deployment it made, is not a
+        # preflight or a diagnosis.
+        deploy = ["gregale_plan_local_deploy", "gregale_apply_local_deploy", "gregale_get_deployment", "gregale_list_app_deployments"]
+        self.assertEqual(score("deploy-express-render", tools=deploy), 0.0)
+        self.assertEqual(score("deploy-express-render", tools=deploy + ["gregale_check_plan", "gregale_get_logs"]), 1.0)
+
     def test_framework_tasks_grade_the_fix_not_the_repo(self):
         # The pristine repositories leave these features unused; only the
         # change an agent has to make (pin uvicorn on $PORT, open Django's

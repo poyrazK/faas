@@ -3502,6 +3502,10 @@ HTTP 409 Conflict · Binding changed; Suggestion changed
 
 HTTP 409 Conflict · Split in flight; Undo in progress
 
+### `route_split_rule_conflict`
+
+HTTP 409 Conflict · Rule conflicts with a route split
+
 ### `route_split_unsupported`
 
 HTTP 409 Conflict or 422 Unprocessable Entity · Split not supported for this app; Binding not ready; No live build

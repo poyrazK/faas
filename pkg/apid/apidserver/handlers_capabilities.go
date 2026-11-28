@@ -13,6 +13,9 @@ import (
 
 const disposableRunsCapabilityKey = "disposable-runs"
 
+// monetizationCapability is the registry entry for API monetization.
+const monetizationCapability = "api-monetization"
+
 // getCapabilities returns the canonical customer capability registry with
 // plan entitlement resolved for the authenticated account. It is read-only
 // and intentionally does not require MFA so API keys can use it during setup.
@@ -105,9 +108,22 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 		applyCapabilityRuntimeAvailability(&capabilities.Capabilities[i], available)
 	}
 	applyParentRuntimeAvailability(capabilities.Capabilities)
-	capabilities.HiddenCapabilities = mergeHiddenCapabilities(s.hiddenCapabilities(flagSubject(r, acct)),
-		s.realtime.PreviewHiddenCapabilities(acct.ID))
+	capabilities.HiddenCapabilities = withMonetizationVisibility(mergeHiddenCapabilities(s.hiddenCapabilities(flagSubject(r, acct)),
+		s.realtime.PreviewHiddenCapabilities(acct.ID)), s.apiMonetizationFor(acct.ID))
 	writeJSON(w, http.StatusOK, capabilities)
+}
+
+// withMonetizationVisibility makes the view say what the routes do. A
+// monetization route needs both the capability gate (capabilityAllowed,
+// which hides api-monetization through hiddenCapabilities when its flag is
+// off) and apiMonetizationFor (runtime switch or api_monetization flag), so
+// the capability is hidden when either refuses, with or without the gate.
+// The CLI shows the selling commands from this (ADR-20261020170649).
+func withMonetizationVisibility(hidden []string, released bool) []string {
+	if released {
+		return hidden
+	}
+	return mergeHiddenCapabilities(hidden, []string{monetizationCapability})
 }
 
 // openAPIHidden leaves the operator routes and the capabilities off by

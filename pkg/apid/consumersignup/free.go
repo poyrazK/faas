@@ -57,6 +57,12 @@ func PlanChargesNothing(cards []state.APIConsumerRateCard, planID string, now ti
 	return any
 }
 
+// offersOnlyFreePlan reports whether sign-up offers the free plan and nothing
+// else. No plan IDs offer the app's default plan, which is not the free plan.
+func offersOnlyFreePlan(set state.APIConsumerSignupSettings) bool {
+	return set.FreePlanID != "" && len(set.PlanIDs) == 1 && set.PlanIDs[0] == set.FreePlanID
+}
+
 // freePlanProblem checks a settings request's free plan and OAuth consumers.
 func (s *Service) freePlanProblem(ctx context.Context, app state.App, set state.APIConsumerSignupSettings) *api.Problem {
 	if set.FreePlanID == "" {
@@ -181,4 +187,22 @@ func (s *Service) completeFree(ctx context.Context, w http.ResponseWriter, app s
 		s.signedUp(ctx, app, signup, consumer, 0)
 	}
 	return consumer, true
+}
+
+// liveMode is the mode a sign-up records and the hosted pages show: the
+// Stripe connection's. Without a connection a seller can offer only the
+// card-less free plan, so no sign-up is a test: live.
+func (s *Service) liveMode(ctx context.Context, accountID string) bool {
+	connections, ok := s.Host.Store().(state.StatementInvoiceExportStore)
+	if !ok {
+		return false
+	}
+	conn, err := connections.GetBillingConnection(ctx, accountID, state.BillingProviderStripe)
+	switch {
+	case err == nil:
+		return conn.Livemode
+	case errors.Is(err, state.ErrNotFound):
+		return true
+	}
+	return false
 }

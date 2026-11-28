@@ -47,6 +47,17 @@ func (s *server) routeSplitService() (*routesplit.Service, bool) {
 	return &routesplit.Service{Store: store, Host: routeSplitHost{s: s}, Log: s.log}, true
 }
 
+// routeSplitRuleProblem refuses an edge-rule change that would undo a live
+// route split (ADR-20261121170000 amendment 5). It runs whether or not the
+// account still has the feature: a split made earlier still shapes traffic.
+func (s *server) routeSplitRuleProblem(ctx context.Context, before, after *state.EdgeRule) *api.Problem {
+	svc, ok := s.routeSplitService()
+	if !ok {
+		return nil
+	}
+	return svc.RuleChangeProblem(ctx, before, after)
+}
+
 func (s *server) routeSplitHandler(serve func(routesplit.Handlers, http.ResponseWriter, *http.Request, state.Account)) func(http.ResponseWriter, *http.Request, state.Account) {
 	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		h, ok := s.routeSplitHandlers()
@@ -158,7 +169,7 @@ func (h routeSplitHost) RuleKindProblem(acct state.Account, kind string) *api.Pr
 }
 
 func (h routeSplitHost) CreateRule(ctx context.Context, acct state.Account, app state.App, req api.CreateEdgeRuleRequest) (string, *api.Problem) {
-	rule, prob := h.s.edgeRules.CreateRule(ctx, acct, app, req)
+	rule, prob := h.s.edgeRules.CreateRule(routesplit.Acting(ctx), acct, app, req)
 	if prob != nil {
 		return "", prob
 	}
@@ -166,7 +177,7 @@ func (h routeSplitHost) CreateRule(ctx context.Context, acct state.Account, app 
 }
 
 func (h routeSplitHost) DeleteRule(ctx context.Context, acct state.Account, app state.App, ruleID string) *api.Problem {
-	rec := h.serve(appaccess.WithBindingGrant(ctx, app, acct), http.MethodDelete, "/v1/edge-rules/"+ruleID, nil, map[string]string{"id": ruleID},
+	rec := h.serve(routesplit.Acting(appaccess.WithBindingGrant(ctx, app, acct)), http.MethodDelete, "/v1/edge-rules/"+ruleID, nil, map[string]string{"id": ruleID},
 		func(w http.ResponseWriter, r *http.Request) { h.s.edgeRules.DeleteEdgeRule(w, r, acct) })
 	return recordedProblem(rec, http.StatusNoContent)
 }

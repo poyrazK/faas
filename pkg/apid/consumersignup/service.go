@@ -223,6 +223,13 @@ func (s *Service) settingsFromRequest(ctx context.Context, acct state.Account, a
 	if problem := s.freePlanProblem(ctx, app, set); problem != nil {
 		return set, problem
 	}
+	if offersOnlyFreePlan(set) {
+		// Every offered plan is the card-less free plan: no sign-up ever
+		// reaches Stripe Checkout, so a seller can start selling an MCP server
+		// to signed-in callers before connecting Stripe. Offering a paid plan
+		// later runs this check again.
+		return set, nil
+	}
 	connections, ok := s.Host.Store().(state.StatementInvoiceExportStore)
 	if !ok {
 		return set, api.ErrInternal("billing connections are unavailable")

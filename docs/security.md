@@ -259,7 +259,7 @@ Your app controls its own security headers. When a response sets one of
 the headers below, directly or through a `kind=headers` edge rule, Gregale
 sends your value unchanged. When it sets none, Gregale adds a default:
 
-| Header | Default on `*.gregale.dev` | Default on your custom domain |
+| Header | Default on `<slug>.gregale.app` | Default on your custom domain |
 |---|---|---|
 | `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` | `max-age=31536000` |
 | `X-Content-Type-Options` | `nosniff` | `nosniff` |
@@ -274,9 +274,13 @@ or a `Content-Security-Policy` `frame-ancestors` directive if your pages must
 not be framed, and `Permissions-Policy` to restrict browser features.
 
 ```sh
-gregale edge rule create --app my-api --kind headers --match-host my-api.example.com \
+gregale edge rule create --app my-api --kind headers --match-host @app --match-path '/**' \
   --headers-response-set 'X-Frame-Options:DENY'
 ```
+
+`--match-path '/**'` applies the rule to every path; without it the rule
+matches only the root path `/`. `--match-host @app` covers every host the app
+serves, custom domains included.
 
 Before 2026-10-09 these headers were fixed by the platform, including HSTS
 with `includeSubDomains` on custom domains. Browsers that cached that HSTS
@@ -296,7 +300,7 @@ skipped, since the edge itself refuses most malformed requests. Methods other
 than GET, HEAD, POST, OPTIONS, PUT, PATCH and DELETE (WebDAV's `PROPFIND`,
 `PURGE`, `QUERY`) score as rule 911100, which `block` refuses: exclude 911100
 on rules for apps that use them. It works the same on
-`*.gregale.dev` and on your custom domains. `observe`, `warn` and `block` at
+`*.gregale.app` and on your custom domains. `observe`, `warn` and `block` at
 paranoia level 1 are generally available; paranoia level 2 is in preview and
 runs in `observe` only. Warn and block reach accounts one by one as they
 launch: until they reach yours, creating a rule in either mode, or switching
@@ -321,7 +325,7 @@ The rule's `mode` decides what happens to a detection:
 | `warn` | checked on every request; a detection adds `X-WAF-Warning: <rule id>` to the response | sampled and reported; with in-path body checks, the first 2 KiB is checked like headers |
 | `block` | checked on every request; a detection is answered with `403` before your app wakes | sampled and reported; with in-path body checks, an attack in the first 2 KiB is answered with `403` |
 
-Checks include cookies. Apps on a `gregale.dev` host share that domain with
+Checks include cookies. Apps on a `gregale.app` host share that domain with
 every other customer's app, and any of their pages can set a cookie your
 visitors' browsers then send to you, so an attack-shaped cookie planted that
 way is blocked by a `block` rule like any other. A detection found only in

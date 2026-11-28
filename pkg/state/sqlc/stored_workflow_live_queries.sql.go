@@ -105,7 +105,7 @@ func (q *Queries) FenceStoredWorkflowLiveBaselineMutation(ctx context.Context, d
 }
 
 const getStoredWorkflowForLiveVerification = `-- name: GetStoredWorkflowForLiveVerification :one
-SELECT app_id, name, version, draft, published, published_version, enabled, updated_at, test_suite, test_report FROM stored_workflows WHERE app_id=$1 AND name=$2
+SELECT app_id, name, version, draft, published, published_version, enabled, updated_at, test_suite, test_report, environment_id FROM stored_workflows WHERE app_id=$1 AND name=$2
 `
 
 type GetStoredWorkflowForLiveVerificationParams struct {
@@ -127,6 +127,7 @@ func (q *Queries) GetStoredWorkflowForLiveVerification(ctx context.Context, db D
 		&i.UpdatedAt,
 		&i.TestSuite,
 		&i.TestReport,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -627,7 +628,7 @@ func (q *Queries) ListStoredWorkflowLiveVerifications(ctx context.Context, db DB
 }
 
 const lockStoredWorkflowForLiveSuite = `-- name: LockStoredWorkflowForLiveSuite :one
-SELECT app_id, name, version, draft, published, published_version, enabled, updated_at, test_suite, test_report FROM stored_workflows WHERE app_id=$1 AND name=$2 FOR SHARE
+SELECT app_id, name, version, draft, published, published_version, enabled, updated_at, test_suite, test_report, environment_id FROM stored_workflows WHERE app_id=$1 AND name=$2 FOR SHARE
 `
 
 type LockStoredWorkflowForLiveSuiteParams struct {
@@ -649,6 +650,7 @@ func (q *Queries) LockStoredWorkflowForLiveSuite(ctx context.Context, db DBTX, a
 		&i.UpdatedAt,
 		&i.TestSuite,
 		&i.TestReport,
+		&i.EnvironmentID,
 	)
 	return i, err
 }

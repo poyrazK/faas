@@ -350,6 +350,7 @@ jobs:
           python3 scripts/ci/deploy_preflight_test.py
           python3 scripts/ci/tested_tree_test.py
           python3 scripts/ci/last_deployed_test.py
+          python3 scripts/ci/cap_past_red_light_test.py
           python3 scripts/ci/unit_smoke_test.py
           python3 scripts/ci/rollback_drill_test.py
           python3 scripts/ci/unit_watch_record_test.py
