@@ -50,9 +50,10 @@ test('an impersonated session is refused however the path repeats slashes', () =
   ]) assert.ok(impersonationBlocked(method, url), `${method} ${url}`)
 })
 
-test('an impersonated session takes no team actions', () => {
-  assert.ok(impersonationBlocked('POST', '/authz/v1/orgs/o/team-actions'))
-  assert.ok(impersonationBlocked('POST', '/authz/v1/orgs/o/team-actions/'))
+test('team actions are left to the team route, which reads the action', () => {
+  // The URL cannot tell a removal from an invitation (team.mjs refuses
+  // invite and set_role for impersonated sessions).
+  assert.ok(!impersonationBlocked('POST', '/authz/v1/orgs/o/team-actions'))
   assert.ok(!impersonationBlocked('GET', '/authz/v1/orgs/o/team-actions'))
   assert.ok(!impersonationBlocked('GET', '/authz/v1/orgs/o/team'))
 })

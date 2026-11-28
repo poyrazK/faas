@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--mfa-phone on|off] [--recovery-codes on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE] [--events on|off] [--passkeys on|off] [--passkey-rp-id DOMAIN|none] [--brand-name NAME] [--brand-color #RRGGBB] [--brand-logo-url URL] [--captcha turnstile|hcaptcha|off --captcha-site-key KEY --captcha-secret-stdin] [--activity-retention DAYS|forever] [--sms twilio|twilio_verify|messagebird|textlocal|vonage|off --sms-account ID --sms-sender SENDER --sms-secret-stdin] [--sms-countries CODES|all] [--sso on|off] [--anonymous on|off] [--anonymous-retention DAYS|forever] [--identity-linking on|off] [--self-deletion on|off] [--org-claims on|off] [--signup-domains DOMAINS|any] [--blocked-domains DOMAINS|none] [--block-disposable on|off] [--signup-access open|invite|waitlist] [--impersonation on|off] [--web3 ethereum,solana|off] [--session-max-age DURATION|off] [--session-idle DURATION|off] [--single-session on|off] [--org-domains on|off] [--service-accounts on|off] [--oauth-server on|off] [--oauth-registration on|off] [--org-sso on|off]"
+	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--mfa-phone on|off] [--recovery-codes on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE] [--events on|off] [--passkeys on|off] [--passkey-rp-id DOMAIN|none] [--brand-name NAME] [--brand-color #RRGGBB] [--brand-logo-url URL] [--captcha turnstile|hcaptcha|off --captcha-site-key KEY --captcha-secret-stdin] [--activity-retention DAYS|forever] [--sms twilio|twilio_verify|messagebird|textlocal|vonage|off --sms-account ID --sms-sender SENDER --sms-secret-stdin] [--sms-countries CODES|all] [--sso on|off] [--anonymous on|off] [--anonymous-retention DAYS|forever] [--identity-linking on|off] [--self-deletion on|off] [--org-claims on|off] [--signup-domains DOMAINS|any] [--blocked-domains DOMAINS|none] [--block-disposable on|off] [--signup-access open|invite|waitlist] [--impersonation on|off] [--web3 ethereum,solana|off] [--session-max-age DURATION|off] [--session-idle DURATION|off] [--single-session on|off] [--org-domains on|off] [--service-accounts on|off] [--new-device-alerts on|off] [--messages-per-recipient N|default] [--messages-per-network N|default] [--oauth-server on|off] [--oauth-registration on|off] [--org-sso on|off]"
 	authProvidersUsage = "usage: gregale auth providers list NAME | gregale auth providers enable NAME PROVIDER --client-id ID [--client-secret-stdin] [--url URL] | gregale auth providers disable NAME PROVIDER"
 )
 
@@ -77,6 +77,9 @@ func cmdAuthConfig(args []string) int {
 	singleSession := fs.String("single-session", "", "on or off: keep only each user's most recently used session")
 	orgDomains := fs.String("org-domains", "", "on or off: let organizations verify email domains and let people at them join (needs --autoconfirm off)")
 	serviceAccounts := fs.String("service-accounts", "", "on or off: let organizations make service accounts that get tokens with the client-credentials grant")
+	newDeviceAlerts := fs.String("new-device-alerts", "", "on or off: email people when their account signs in from a new network and device (needs an email provider)")
+	messagesPerRecipient := fs.String("messages-per-recipient", "", fmt.Sprintf("sign-in codes, links and resets one address or number may be sent an hour (1-%d), or default (%d)", api.AuthMessagesPerRecipientMax, api.AuthMessagesPerRecipientDefault))
+	messagesPerNetwork := fs.String("messages-per-network", "", fmt.Sprintf("messages one network may ask for an hour (1-%d), or default (%d)", api.AuthMessagesPerNetworkMax, api.AuthMessagesPerNetworkDefault))
 	sms := authSMSFlags{
 		provider:  fs.String("sms", "", "phone sign-in by text message through your own SMS account: twilio, twilio_verify, messagebird, textlocal, vonage, or off"),
 		account:   fs.String("sms-account", "", "Twilio account SID or Vonage API key"),
@@ -108,7 +111,7 @@ func cmdAuthConfig(args []string) int {
 		field **bool
 	}{"sso": {sso, &change.SSO}, "org-sso": {orgSSO, &change.OrgSSO}, "oauth-server": {oauthServer, &change.OAuthServer}, "oauth-registration": {oauthRegistration, &change.OAuthRegistration},
 		"mfa-phone": {mfaPhone, &change.MFAPhone}, "recovery-codes": {recoveryCodes, &change.RecoveryCodes},
-		"anonymous": {anonymous, &change.Anonymous}, "identity-linking": {identityLinking, &change.IdentityLinking}, "self-deletion": {selfDeletion, &change.SelfDeletion}, "org-claims": {orgClaims, &change.OrgClaims}, "block-disposable": {blockDisposable, &change.BlockDisposable}, "impersonation": {impersonation, &change.Impersonation}, "single-session": {singleSession, &change.SingleSession}, "org-domains": {orgDomains, &change.OrgDomains}, "service-accounts": {serviceAccounts, &change.ServiceAccounts}} {
+		"anonymous": {anonymous, &change.Anonymous}, "identity-linking": {identityLinking, &change.IdentityLinking}, "self-deletion": {selfDeletion, &change.SelfDeletion}, "org-claims": {orgClaims, &change.OrgClaims}, "block-disposable": {blockDisposable, &change.BlockDisposable}, "impersonation": {impersonation, &change.Impersonation}, "single-session": {singleSession, &change.SingleSession}, "org-domains": {orgDomains, &change.OrgDomains}, "service-accounts": {serviceAccounts, &change.ServiceAccounts}, "new-device-alerts": {newDeviceAlerts, &change.NewDeviceAlerts}} {
 		if !given[name] {
 			continue
 		}
@@ -160,6 +163,19 @@ func cmdAuthConfig(args []string) int {
 			return printErr("Invalid Auth settings", fmt.Errorf("--%s: %w", name, err))
 		}
 		*target.field = &minutes
+	}
+	for name, target := range map[string]struct {
+		value *string
+		field **int
+	}{"messages-per-recipient": {messagesPerRecipient, &change.MessagesPerRecipient}, "messages-per-network": {messagesPerNetwork, &change.MessagesPerNetwork}} {
+		if !given[name] {
+			continue
+		}
+		count, err := parseMessageLimit(name, *target.value)
+		if err != nil {
+			return printErr("Invalid Auth settings", err)
+		}
+		*target.field = &count
 	}
 	if change.SessionMaxAgeMinutes != nil && change.SessionIdleMinutes != nil && *change.SessionMaxAgeMinutes > 0 && *change.SessionIdleMinutes > *change.SessionMaxAgeMinutes {
 		PrintWarn(osStderr, "the idle limit is longer than the maximum age, so it has no effect")
@@ -396,6 +412,18 @@ func parseRetentionDays(name, value string) (int, error) {
 	return n, nil
 }
 
+// parseMessageLimit reads an hourly message limit, or default (0).
+func parseMessageLimit(name, value string) (int, error) {
+	if value == "default" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil || n < 1 {
+		return 0, fmt.Errorf("--%s must be a number of messages an hour or default", name)
+	}
+	return n, nil
+}
+
 func parseOnOff(name, value string) (bool, error) {
 	switch value {
 	case "on":
@@ -556,7 +584,7 @@ func showAuthConfig(ctx context.Context, app api.AppResponse) int {
 	for _, row := range [][2]string{
 		{"site URL", settings.SiteURL}, {"redirect URLs", redirects}, {"sign-up", signup},
 		{"sign-in methods", strings.Join(providers, ", ")}, {"passwords", passwords},
-		{"MFA", authMFASummary(settings)}, {"passkeys", passkeys}, {"phone (SMS)", phone}, {"organization SSO", sso}, {"OAuth server", oauth}, {"anonymous users", anonymousUsers}, {"identity linking", onOff(settings.IdentityLinking)}, {"self-deletion", onOff(settings.SelfDeletion)}, {"org claims", onOff(settings.OrganizationClaims)}, {"impersonation", onOff(settings.Impersonation)}, {"wallet sign-in", authWeb3Summary(settings)}, {"sessions", authSessionsSummary(settings)}, {"org domains", authOrgDomainsSummary(settings)}, {"service accounts", authServiceAccountsSummary(settings)}, {"CAPTCHA", captchaState}, {"hosted pages", branding},
+		{"MFA", authMFASummary(settings)}, {"passkeys", passkeys}, {"phone (SMS)", phone}, {"organization SSO", sso}, {"OAuth server", oauth}, {"anonymous users", anonymousUsers}, {"identity linking", onOff(settings.IdentityLinking)}, {"self-deletion", onOff(settings.SelfDeletion)}, {"org claims", onOff(settings.OrganizationClaims)}, {"impersonation", onOff(settings.Impersonation)}, {"wallet sign-in", authWeb3Summary(settings)}, {"sessions", authSessionsSummary(settings)}, {"org domains", authOrgDomainsSummary(settings)}, {"service accounts", authServiceAccountsSummary(settings)}, {"CAPTCHA", captchaState}, {"sign-in protection", authSecuritySummary(settings)}, {"hosted pages", branding},
 		{"email delivery", email}, {"lifecycle events", events}, {"activity kept", retention}, {"signing key", keys},
 	} {
 		_, _ = fmt.Fprintf(osStdout, "  %-16s %s\n", row[0]+":", row[1])
@@ -726,6 +754,20 @@ func authSessionsSummary(settings authPublicSettings) string {
 		return "no limits"
 	}
 	return strings.Join(parts, ", ")
+}
+
+// authSecuritySummary describes the running app's new-device alerts and
+// hourly message limits.
+func authSecuritySummary(settings authPublicSettings) string {
+	s := settings.Security
+	if s == nil {
+		return "not reported by this Auth app version"
+	}
+	alerts := "new-device alerts off"
+	if s.NewDeviceAlerts {
+		alerts = "new-device alerts on"
+	}
+	return fmt.Sprintf("%s; at most %d messages an hour per recipient and %d per network", alerts, s.MessagesPerRecipient, s.MessagesPerNetwork)
 }
 
 // authServiceAccountsSummary says whether organizations may make service

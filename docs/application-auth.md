@@ -185,7 +185,8 @@ treat it like the user's own) and:
 - cannot leave access behind in the user's organizations: no
   service-account secrets or invitations, role changes, or changes to the
   organization's second-factor rule, identity providers or domains (use the
-  admin key for those, so they are recorded as yours);
+  admin key for those, so they are recorded as yours). It may remove
+  members and revoke invitations, including as team actions;
 - appears to the user on their account page as opened by support.
 
 Only users with a confirmed email address can be opened: GoTrue has no
@@ -493,13 +494,59 @@ parking and waking:
 
 A spent budget answers `429` with `error_code` `too_many_attempts` and a
 `Retry-After` header until its window ends, before GoTrue checks the
-password; a correct password from the same address is held too. A correct
-password from another address still signs in and resets the account's
-count. Someone who spends an account's budget from many addresses pauses
-password sign-in for that account, not magic links, codes, providers or
-passkeys. Failed service-account secrets are counted the same way, per client
-address. Counts are kept as digests, never as addresses or numbers, and
-are deleted a day after their window.
+password; a correct password from the same address is held too. Held
+attempts are not counted, so hammering a held address does not spend the
+account's budget.
+
+Someone who spends an account's budget from many addresses cannot lock its
+owner out: past that budget, a password sign-in still goes ahead from a
+network (an IPv4 address or IPv6 /64) the account signed in from in the
+last 30 days, or, when the app uses [CAPTCHA](#captcha), from anywhere with
+a solved CAPTCHA, which GoTrue checks on every password sign-in. Other
+networks wait for the window to end; magic links, codes, providers and
+passkeys keep working. Signing in clears the address's count but not the
+account's, so it does not hand the guesser a fresh budget. Failed
+service-account secrets are counted the same way, per client address.
+Counts are kept as digests, never as addresses or numbers, and are deleted
+a day after their window.
+
+### Messages sent
+
+Sign-in codes, magic links, password resets, confirmation emails and texts,
+email and phone changes, re-authentication codes and SMS second-factor
+challenges cost you money and may reach a stranger. The Auth app counts
+each request that may send one, in its database:
+
+| Budget | Default an hour | Change it with |
+| --- | --- | --- |
+| Messages to one email address, phone number or (for re-authentication and SMS challenges) user | 5 | `--messages-per-recipient` (1-50) |
+| Messages one network asks for | 30 | `--messages-per-network` (1-1000) |
+
+```sh
+gregale auth config shop-auth --messages-per-recipient 3 --messages-per-network 100
+```
+
+A spent budget answers `429` with `code` `too_many_messages`, `scope`
+(`recipient` or `network`), the limit, the count, `Retry-After` and this
+page's address, before GoTrue sends anything. A request GoTrue refuses is
+not counted. `default` returns a budget to its default.
+
+### New-device alerts
+
+When the app has an [email provider](#email), a sign-in from both a network
+and a device the account has not used in 90 days emails the person, naming
+the browser and system, the network and the time, so they can reset their
+password if it was not them. A first sign-in, or the first after 90 days
+away, sends nothing. Refreshing a session never alerts. Change the wording
+with the `new_device` email; turn alerts off with:
+
+```sh
+gregale auth config shop-auth --new-device-alerts off
+```
+
+The Auth app remembers networks and devices as digests per user (a device
+is its browser's user agent without version numbers), never as addresses,
+and forgets them after 90 days.
 
 ### Rate limits
 
@@ -978,6 +1025,7 @@ email, so templates cannot add markup. Separate paragraphs with a blank line.
 | `code` | a one-time code is needed, such as before a sensitive change | `{{app}}` `{{email}}` `{{code}}` |
 | `security_notice` | a password, address, phone, sign-in method or second factor changes | `{{app}}` `{{email}}` `{{event}}` |
 | `organization_invitation` | a member invites someone to an organization | `{{app}}` `{{email}}` `{{org}}` `{{link}}` |
+| `new_device` | the account signs in from a new network and device ([alerts](#new-device-alerts)) | `{{app}}` `{{email}}` `{{device}}` `{{network}}` `{{time}}` |
 
 When an email carries a link or code and your body does not place
 `{{link}}` or `{{code}}`, it is added at the end. Subjects take at most 150
@@ -1379,6 +1427,11 @@ reported as `email_exists`.
   clients yourself with `gregale auth oauth-clients` or turn
   self-registration off.
 - Failed sign-in and second-step budgets count an IPv6 client by its /64.
+- An account trusts the networks it signed in from in the last 30 days
+  (see [Wrong passwords and codes](#wrong-passwords-and-codes)).
+- One recipient gets at most 5 sign-in messages an hour, and one network
+  asks for at most 30, unless you change them (at most 50 and 1,000;
+  `429 too_many_messages`).
 - `/settings/v1/admin-keys/<ID>` answers 60 lookups an hour per client
   address.
 - The dashboard page reaches the Auth app at its canonical address. If you

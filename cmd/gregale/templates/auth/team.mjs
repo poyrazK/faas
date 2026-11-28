@@ -97,12 +97,17 @@ function cursor(raw, org) {
   } catch { throw new TeamError(400, 'invalid_team_cursor') }
 }
 
-export async function routeTeam({ run, method, parts, body, invitations = {}, query = new URLSearchParams() }) {
+export async function routeTeam({ run, method, parts, body, invitations = {}, query = new URLSearchParams(), impersonated = false }) {
   const org = parts[1]
   if (!uuid(org)) fail('invalid_id')
   if (parts[2] === 'team' && parts.length === 3 && method === 'GET') return [200, await run(client => state(client, org))]
   if (parts[2] !== 'team-actions') throw new TeamError(404, 'not_found')
-  if (parts.length === 3 && method === 'POST') return confirm(run, org, body, invitations)
+  if (parts.length === 3 && method === 'POST') {
+    // An impersonated session may remove access but not grant it: a role or
+    // invitation it made would outlive its cap (impersonation.mjs).
+    if (impersonated && (body?.action === 'invite' || body?.action === 'set_role')) throw new TeamError(403, 'impersonation_restricted')
+    return confirm(run, org, body, invitations)
+  }
   if (parts.length === 4 && method === 'GET') {
     if (!uuid(parts[3])) fail('invalid_id')
     return run(async client => {

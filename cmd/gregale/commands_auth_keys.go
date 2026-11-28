@@ -432,6 +432,13 @@ type authPublicSettings struct {
 		Ethereum bool `json:"ethereum"`
 		Solana   bool `json:"solana"`
 	} `json:"web3"`
+	// Security is absent from Auth apps that predate sign-in protection.
+	Security *struct {
+		NewDeviceAlerts      bool `json:"new_device_alerts"`
+		MessagesPerRecipient int  `json:"messages_per_recipient"`
+		MessagesPerNetwork   int  `json:"messages_per_network"`
+		TrustedNetworkDays   int  `json:"trusted_network_days"`
+	} `json:"security"`
 	Sessions struct {
 		MaxAgeMinutes *int `json:"max_age_minutes"`
 		IdleMinutes   *int `json:"idle_minutes"`

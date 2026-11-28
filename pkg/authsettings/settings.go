@@ -79,6 +79,9 @@ const (
 	secretSingleSession   = "AUTH_SINGLE_SESSION"
 	secretOrgDomains      = "AUTH_ORG_DOMAINS"
 	secretServiceAccounts = "AUTH_SERVICE_ACCOUNTS"
+	secretNewDeviceAlerts = "AUTH_NEW_DEVICE_ALERTS"
+	secretMessagesPerTo   = "AUTH_MESSAGES_PER_RECIPIENT"
+	secretMessagesPerNet  = "AUTH_MESSAGES_PER_NETWORK"
 )
 
 // SignupAccessModes are who may sign up: anyone, invited or approved
@@ -197,6 +200,15 @@ type Change struct {
 	// ServiceAccounts lets organizations make machine principals that get
 	// tokens with the client-credentials grant.
 	ServiceAccounts *bool
+	// NewDeviceAlerts emails a person when their account signs in from a
+	// network and a device it has not used recently; on by default, sent
+	// only when the app has an email provider.
+	NewDeviceAlerts *bool
+	// MessagesPerRecipient and MessagesPerNetwork bound the sign-in codes,
+	// links, resets and confirmations sent an hour to one address or number
+	// and at one network's request; 0 returns to the default.
+	MessagesPerRecipient *int
+	MessagesPerNetwork   *int
 }
 
 var sessionLimit = regexp.MustCompile(`^([1-9][0-9]{0,5})([mhd])$`)
@@ -427,6 +439,24 @@ func (c Change) Secrets() (map[string]string, []string, error) {
 	}
 	if c.ServiceAccounts != nil {
 		set[secretServiceAccounts] = flag(*c.ServiceAccounts)
+	}
+	if c.NewDeviceAlerts != nil {
+		set[secretNewDeviceAlerts] = flag(*c.NewDeviceAlerts)
+	}
+	for _, limit := range []struct {
+		count        *int
+		max          int
+		secret, name string
+	}{{c.MessagesPerRecipient, api.AuthMessagesPerRecipientMax, secretMessagesPerTo, "messages per recipient"}, {c.MessagesPerNetwork, api.AuthMessagesPerNetworkMax, secretMessagesPerNet, "messages per network"}} {
+		switch {
+		case limit.count == nil:
+		case *limit.count == 0:
+			unset = append(unset, limit.secret)
+		case *limit.count < 0 || *limit.count > limit.max:
+			return nil, nil, fmt.Errorf("%s must be 1 to %d an hour, or 0 for the default; got %d", limit.name, limit.max, *limit.count)
+		default:
+			set[limit.secret] = strconv.Itoa(*limit.count)
+		}
 	}
 	if c.AnonymousRetentionDays != nil {
 		days := *c.AnonymousRetentionDays

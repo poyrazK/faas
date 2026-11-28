@@ -122,11 +122,35 @@ failed service-account secrets per client address
 account from the sign-in body as GoTrue does, refuses a body it cannot
 parse or that names the account twice, counts GoTrue's `invalid_credentials`
 and `mfa_verification_failed` answers before relaying them, clears the
-account's budgets on success and answers `429 too_many_attempts` while one
-is spent, without asking GoTrue. If the budgets cannot be read it answers
-503 rather than passing the attempt on. Spending an account's budget from
-many addresses pauses its password sign-in only; other sign-in methods
-keep working. Owners tune GoTrue's own limits with `GOTRUE_RATE_LIMIT_*`
+address's budget (not the account's) on success and answers `429
+too_many_attempts` while one is spent, without asking GoTrue; a held
+attempt gives back what it counted. If the budgets cannot be read it
+answers 503 rather than passing the attempt on.
+
+Amendment (2026-11-28, sign-in hardening): a spent account-wide budget no
+longer locks the owner out. After each sign-in (every token grant's answer,
+`POST /verify`, and redirects that hand over a session in the fragment) the
+front records the network (`addressBucket`) and the device kind (user agent
+without digits) per user in `gregale_auth.sign_in_seen` (sql/0025), as
+digests, refreshed at most hourly (`AuthSignInSeenRefreshSeconds`) and
+pruned after `AuthNewDeviceDays`. Past the account budget, a password
+sign-in goes ahead from a network the account used within
+`AuthTrustedNetworkDays`, or anywhere when CAPTCHA is on, since GoTrue
+verifies it on every password sign-in. A sign-in from both a network and a
+device kind unseen for `AuthNewDeviceDays`, by a user with other records,
+sends the `new_device` email when a provider is set and
+`AUTH_NEW_DEVICE_ALERTS` is not `0` (refreshes never alert; one email per
+device kind and day). Requests that may send a message (`/otp`,
+`/magiclink`, `/signup`, `/recover`, `/resend`, `PUT /user`, `GET
+/reauthenticate`, a phone factor's challenge) spend per-recipient and
+per-network budgets in `attempt_budgets` (`AuthMessagesPerRecipientDefault`,
+`AuthMessagesPerNetworkDefault`, owner-tunable up to the `*Max` limits with
+`AUTH_MESSAGES_PER_RECIPIENT` and `AUTH_MESSAGES_PER_NETWORK`), refused with
+`429 too_many_messages` before GoTrue sends and given back when GoTrue
+refuses. A weekly workflow (`gotrue-release-watch.yml`) opens an issue when
+upstream supabase/auth releases past the pinned version; the pin moves only
+by hand. Other sign-in methods keep working while a password budget is
+spent. Owners tune GoTrue's own limits with `GOTRUE_RATE_LIMIT_*`
 secrets, validated at start, except the address header and texts sent. GoTrue v2.197.0
 logs requests and audit events at info, with user email addresses, even when
 its log level is set to `warn`, so the front reads GoTrue's output and drops
@@ -459,8 +483,10 @@ token's signature, so reading the unverified payload there is safe. Nor may
 such a token leave access that outlives the capped session in the person's
 organizations: issuing service-account secrets or invitations, changing
 roles, or changing the organization's second-factor rule, identity
-providers or domains, or taking team actions, is refused the same way; the
-operator does those with the admin key. The check reads the path as the
+providers or domains, is refused the same way; the operator does those with
+the admin key. Team actions are refused by the team route, which reads the
+body: an impersonated session (its verified token's `act` claim) may remove
+members and revoke invitations but not invite or set roles. The check reads the path as the
 routers do (repeated and trailing slashes collapse), and the `/authz/v1`
 router refuses a path with an empty segment, so no spelling of a refused
 path reaches its handler. Admin keys now carry their IDs so the record names the key

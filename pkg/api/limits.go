@@ -18467,6 +18467,30 @@ const (
 	// look up an admin key's scopes by ID in an hour, so IDs cannot be
 	// enumerated.
 	AuthAdminKeyLookupsPerAddress = 60
+	// AuthTrustedNetworkDays is how long a network (an IPv4 address or IPv6
+	// /64) a user signed in from stays trusted: from it, the user's password
+	// sign-ins pass even while their account-wide failure budget is spent,
+	// so a stranger guessing from elsewhere cannot lock them out.
+	AuthTrustedNetworkDays = 30
+	// AuthNewDeviceDays is how long an Auth app remembers the networks and
+	// device kinds a user signed in from; a sign-in from both a network and a
+	// device kind unseen that long emails the user (new-device alerts).
+	// AuthSignInSeenRefreshSeconds is how often one sign-in record is
+	// refreshed, so frequent token refreshes do not each write.
+	AuthNewDeviceDays            = 90
+	AuthSignInSeenRefreshSeconds = 3600
+	// AuthMessagesPerRecipientDefault and AuthMessagesPerNetworkDefault bound
+	// the sign-in codes, magic links, password resets and confirmations an
+	// Auth app sends in AuthMessageWindowSeconds to one email address or
+	// phone number, and at the request of one network, unless the owner sets
+	// AUTH_MESSAGES_PER_RECIPIENT or AUTH_MESSAGES_PER_NETWORK, up to
+	// AuthMessagesPerRecipientMax and AuthMessagesPerNetworkMax. Each message
+	// costs the owner money and may land in a stranger's inbox.
+	AuthMessagesPerRecipientDefault = 5
+	AuthMessagesPerRecipientMax     = 50
+	AuthMessagesPerNetworkDefault   = 30
+	AuthMessagesPerNetworkMax       = 1000
+	AuthMessageWindowSeconds        = 3600
 	// AuthAnonymousRetentionMaxDays bounds how long idle anonymous users may
 	// be kept before the Auth app deletes them, when the owner sets a limit.
 	AuthAnonymousRetentionMaxDays = 3650
