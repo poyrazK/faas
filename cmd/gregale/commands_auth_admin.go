@@ -188,33 +188,54 @@ func authAdminKeyList(ctx context.Context, client *api.Client, app, scope string
 		CreatedAt string   `json:"created_at"`
 		Scopes    []string `json:"scopes,omitempty"`
 		ExpiresAt *string  `json:"expires_at"`
+		// Unknown says why scopes are missing: not_loaded, rate_limited or
+		// unreachable.
+		Unknown string `json:"scopes_unknown,omitempty"`
 	}
-	// The running app reports each key's scopes and expiry by ID (secrets are
-	// write-only); a key it does not report is not loaded yet. Apps on an
-	// older template list them in /settings/v1 instead. Keys are asked for
-	// one by one only when the app answered its settings, so an unreachable
-	// app costs one timeout rather than one per key.
+	// The running app reports each key's scopes and expiry (secrets are
+	// write-only). Apps list them in /settings/v1 for now; a key missing
+	// there is asked for by ID, which later templates require. Lookups share
+	// one deadline and stop at the first one the app refuses or cannot
+	// answer, so a slow or limiting app costs at most one timeout.
 	running := map[string]authAdminKeySetting{}
 	found, err := client.GetApp(ctx, app)
-	reachable := false
+	reason := "unreachable"
 	if err == nil {
 		if settings, err := fetchAuthSettings(ctx, found); err == nil {
-			reachable = true
+			reason = ""
 			for _, k := range settings.AdminKeys {
 				running[k.ID] = k
 			}
 		}
 	}
+	lookups, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	rows := []keyRow{}
 	for _, secret := range list.Secrets {
-		if authAdminKeyName.MatchString(secret.Key) {
-			id := strings.TrimPrefix(secret.Key, authAdminKeyPrefix)
-			k, listed := running[id]
-			if !listed && reachable {
-				k, _ = fetchAuthAdminKey(ctx, found, id)
-			}
-			rows = append(rows, keyRow{ID: id, CreatedAt: secret.CreatedAt, Scopes: k.Scopes, ExpiresAt: k.ExpiresAt})
+		if !authAdminKeyName.MatchString(secret.Key) {
+			continue
 		}
+		id := strings.TrimPrefix(secret.Key, authAdminKeyPrefix)
+		row := keyRow{ID: id, CreatedAt: secret.CreatedAt}
+		k, listed := running[id]
+		if !listed && reason == "" {
+			switch got, result := fetchAuthAdminKey(lookups, found, id); result {
+			case authAdminKeyFound:
+				k, listed = got, true
+			case authAdminKeyMissing:
+				row.Unknown = "not_loaded"
+			case authAdminKeyLimited:
+				reason = "rate_limited"
+			default:
+				reason = "unreachable"
+			}
+		}
+		if listed {
+			row.Scopes, row.ExpiresAt = k.Scopes, k.ExpiresAt
+		} else if row.Unknown == "" {
+			row.Unknown = reason
+		}
+		rows = append(rows, row)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(map[string]any{"admin_keys": rows}))
@@ -224,7 +245,11 @@ func authAdminKeyList(ctx context.Context, client *api.Client, app, scope string
 		return 0
 	}
 	for _, row := range rows {
-		scopes, expires := "unknown (restart the app to load it)", "unknown"
+		scopes, expires := map[string]string{
+			"not_loaded":   "unknown (restart the app to load it)",
+			"rate_limited": "unknown (the app limits key lookups; retry within the hour)",
+			"unreachable":  "unknown (could not reach the app)",
+		}[row.Unknown], "unknown"
 		if row.Scopes != nil {
 			scopes, expires = strings.Join(row.Scopes, ", "), "never"
 			if row.ExpiresAt != nil {

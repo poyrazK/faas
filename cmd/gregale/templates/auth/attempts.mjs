@@ -31,22 +31,18 @@ export const budgets = Object.freeze({
   // the app holds at most limits.oauthClients, so one address must not be
   // able to take them all.
   oauthRegistration: { limit: limits.oauthRegistrationsPerAddress, seconds: limits.oauthRegistrationWindowSeconds },
-  // ...and by everyone together, so addresses in many networks cannot
-  // either: at most this many unused clients are alive before pruning
-  // (retention.mjs) removes them, which stays below limits.oauthClients.
-  oauthRegistrationApp: { limit: limits.oauthRegistrationsPerHour, seconds: 3600 },
   // Lookups of one admin key by ID (/settings/v1/admin-keys/<ID>), so the
   // IDs cannot be enumerated.
   adminKeyLookup: { limit: limits.adminKeyLookupsPerAddress, seconds: 3600 },
 })
 
 // addressBucket is the client address a budget counts against: an IPv4
-// address itself, and an IPv6 address's /64, since one subscriber usually
-// holds a whole /64 and could otherwise give every attempt a fresh address.
+// address itself (also when written as an IPv4-mapped IPv6 address, dotted
+// or in hex), and an IPv6 address's /64, since one subscriber usually holds
+// a whole /64 and could otherwise give every attempt a fresh address. A
+// value that is not an address is used as written.
 export function addressBucket(address) {
-  let value = String(address ?? '').trim().toLowerCase()
-  if (value.startsWith('::ffff:') && isIPv4(value.slice(7))) return value.slice(7)
-  value = value.split('%')[0]
+  let value = String(address ?? '').trim().toLowerCase().replace(/^\[(.*)\]$/, '$1').split('%')[0]
   if (!isIPv6(value)) return value
   const groups = part => part ? part.split(':') : []
   const width = list => list.reduce((n, group) => n + (group.includes('.') ? 2 : 1), 0)
@@ -55,7 +51,13 @@ export function addressBucket(address) {
     const [head, tail] = value.split('::').map(groups)
     full = [...head, ...Array(8 - width(head) - width(tail)).fill('0'), ...tail]
   }
-  return `${full.slice(0, 4).map(group => Number.parseInt(group, 16).toString(16)).join(':')}::/64`
+  // A dotted IPv4 tail becomes its two groups.
+  full = full.flatMap(group => group.includes('.') ? (([a, b, c, d]) => [((a << 8) | b).toString(16), ((c << 8) | d).toString(16)])(group.split('.').map(Number)) : [group])
+  const numbers = full.map(group => Number.parseInt(group, 16))
+  if (numbers.slice(0, 5).every(n => n === 0) && numbers[5] === 0xffff) {
+    return [numbers[6] >> 8, numbers[6] & 255, numbers[7] >> 8, numbers[7] & 255].join('.')
+  }
+  return `${numbers.slice(0, 4).map(n => n.toString(16)).join(':')}::/64`
 }
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i

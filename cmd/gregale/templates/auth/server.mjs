@@ -109,12 +109,15 @@ function serveSettings(req, res, settings) {
 }
 
 // serveAdminKey answers /settings/v1/admin-keys/<ID> with one admin key's
-// scopes and expiry, for `gregale auth admin-key list`. Admin keys are never
-// listed: a caller must already hold a random ID, which only the owner's
-// secret list shows, and each address has budgets.adminKeyLookup lookups an
-// hour, so the IDs cannot be enumerated. No browser origin may read it.
+// scopes and expiry, for `gregale auth admin-key list`. A caller must
+// already hold a random ID, which only the owner's secret list shows, and
+// each address has budgets.adminKeyLookup lookups an hour, so the IDs cannot
+// be enumerated. No browser origin may read it. A path that is not an ID is
+// refused before the budget, so scanners never reach the database.
 async function serveAdminKey(req, res, adminKeys, attempts) {
   if (req.method !== 'GET') return problem(res, 405, 'method_not_allowed')
+  const id = /^\/settings\/v1\/admin-keys\/([0-9A-F]{8})$/.exec(req.url.split('?')[0])?.[1]
+  if (!id) return problem(res, 404, 'not_found')
   try {
     if (attempts) {
       const { count, wait } = await attempts.take({ key: budgetKey('admin-key-lookup', addressBucket(clientAddress(req))), budget: budgets.adminKeyLookup })
@@ -124,8 +127,7 @@ async function serveAdminKey(req, res, adminKeys, attempts) {
     console.error(JSON.stringify({ level: 'error', event: 'admin_key_lookup_failed', sqlstate: err?.code ?? null }))
     return problem(res, 503, 'auth_unavailable')
   }
-  const id = /^\/settings\/v1\/admin-keys\/([0-9A-F]{8})$/.exec(req.url.split('?')[0])?.[1]
-  const key = id ? adminKeys.find(candidate => candidate.id === id) : undefined
+  const key = adminKeys.find(candidate => candidate.id === id)
   if (!key) return problem(res, 404, 'not_found')
   res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' })
   res.end(JSON.stringify(key))
@@ -238,26 +240,30 @@ function clientAddress(req) {
 }
 
 // registerClient passes a dynamic OAuth client registration to GoTrue while
-// the app holds fewer than limits.oauthClients clients and registrations are
-// left both in the caller's budget (budgets.oauthRegistration, per IPv4
-// address or IPv6 /64) and in the app's (budgets.oauthRegistrationApp). The
-// app's budget is spent only by registrations the caller's allowed, so one
-// address over its own budget cannot spend everyone's. With unused clients
-// pruned after limits.oauthUnusedClientHours, no caller can fill the app.
+// the caller's address (an IPv4 address or IPv6 /64) has registrations left
+// in budgets.oauthRegistration, the app holds fewer than limits.oauthClients
+// clients, and fewer than limits.oauthUnusedClients of them are
+// self-registered clients nobody has used. Clients people use and those the
+// owner made therefore always keep limits.oauthClients minus
+// limits.oauthUnusedClients places, whoever floods registration; unused
+// clients are pruned limits.oauthUnusedClientHours after they register
+// (retention.mjs), and owners can still register clients with an admin key.
 async function registerClient(req, res, path, upstreamPort, bodyBytes, oauth, attempts) {
   try {
     if (attempts) {
-      for (const [scope, budget] of [[addressBucket(clientAddress(req)), budgets.oauthRegistration], ['app', budgets.oauthRegistrationApp]]) {
-        const { count, wait } = await attempts.take({ key: budgetKey('oauth-registration', scope), budget })
-        if (wait > 0) { req.resume(); return limited(res, 'too_many_registrations', budget, count, wait) }
-      }
+      const budget = budgets.oauthRegistration
+      const { count, wait } = await attempts.take({ key: budgetKey('oauth-registration', addressBucket(clientAddress(req))), budget })
+      if (wait > 0) { req.resume(); return limited(res, 'too_many_registrations', budget, count, wait) }
     }
-    const clients = await oauth.registeredClients()
-    if (clients >= limits.oauthClients) {
+    const { clients, unused } = await oauth.registeredClients()
+    const refusal = clients >= limits.oauthClients ? [403, 'oauth_client_limit', limits.oauthClients, clients]
+      : unused >= limits.oauthUnusedClients ? [429, 'too_many_unused_clients', limits.oauthUnusedClients, unused] : null
+    if (refusal) {
+      const [status, code, limit, observed] = refusal
       req.resume()
       if (res.headersSent) return res.destroy()
-      res.writeHead(403, { 'Content-Type': 'application/problem+json', 'Cache-Control': 'no-store' })
-      return res.end(JSON.stringify({ status: 403, code: 'oauth_client_limit', limit: limits.oauthClients, observed: clients, docs_url: limitsDocs }))
+      res.writeHead(status, { 'Content-Type': 'application/problem+json', 'Cache-Control': 'no-store', ...(status === 429 ? { 'Retry-After': '3600' } : {}) })
+      return res.end(JSON.stringify({ status, code, limit, observed, docs_url: limitsDocs }))
     }
   } catch (err) {
     console.error(JSON.stringify({ level: 'error', event: 'oauth_registration_failed', sqlstate: err?.code ?? null }))
@@ -448,7 +454,10 @@ export function start(env = process.env) {
     resource: id => authorizationResource(pool, id),
     clientCredentials: config.serviceAccounts,
   } : null
-  const server = createServer({ authz, ui, realtime, admin, settings: config.settings, adminKeys: adminKeySummary(adminKeys), smsCountries: config.smsCountries, scim, oauth, serviceAccounts, attempts })
+  const server = createServer({ authz, ui, realtime, admin, // admin_keys stays in the public settings for one release, for CLIs that
+    // read it there (release N runs beside N-1); this release's CLI asks
+    // /settings/v1/admin-keys/<ID>. Remove it in the next release.
+    settings: { ...config.settings, admin_keys: adminKeySummary(adminKeys) }, adminKeys: adminKeySummary(adminKeys), smsCountries: config.smsCountries, scim, oauth, serviceAccounts, attempts })
   // Lifecycle events publish after requests that may change users, and
   // once at startup for anything recorded while the app was parked.
   const lifecycle = lifecycleConfig(env)

@@ -83,10 +83,10 @@ function memoryBudgets() {
   }
 }
 
-test('dynamic client registration is budgeted per address and for the app', async t => {
+test('dynamic client registration is budgeted per address', async t => {
   let registered = 0
   const upstream = http.createServer((req, res) => { req.resume(); req.on('end', () => { registered++; res.statusCode = 201; res.end('{}') }) })
-  const front = createServer({ upstreamPort: await listen(upstream), attempts: memoryBudgets(), oauth: { registeredClients: async () => 0, location: l => l } })
+  const front = createServer({ upstreamPort: await listen(upstream), attempts: memoryBudgets(), oauth: { registeredClients: async () => ({ clients: 0, unused: 0 }), location: l => l } })
   const port = await listen(front)
   t.after(() => { front.close(); upstream.close() })
   const register = (address, path = '/auth/v1/oauth/clients/register') => fetch(`http://127.0.0.1:${port}${path}`, {
@@ -98,61 +98,69 @@ test('dynamic client registration is budgeted per address and for the app', asyn
   assert.equal(held.status, 429)
   assert.deepEqual(await held.json(), { status: 429, code: 'too_many_registrations', limit: budgets.oauthRegistration.limit, observed: budgets.oauthRegistration.limit + 1,
     window_seconds: budgets.oauthRegistration.seconds, retry_after: budgets.oauthRegistration.seconds, docs_url: 'https://gregale.dev/docs/application-auth#current-limits' })
-  // Many addresses together stop at the app's budget; refused requests from
-  // an address over its own budget did not spend it.
-  for (let i = 0; registered < budgets.oauthRegistrationApp.limit; i++) assert.equal((await register(`198.51.100.${i}`)).status, 201)
-  const app = await register('203.0.113.200')
-  assert.equal(app.status, 429)
-  assert.equal((await app.json()).limit, budgets.oauthRegistrationApp.limit)
-  assert.equal(registered, budgets.oauthRegistrationApp.limit)
+  assert.equal((await register('198.51.100.9')).status, 201)
+  assert.equal(registered, budgets.oauthRegistration.limit + 1)
   assert.equal(limits.oauthRegistrationsPerAddress, budgets.oauthRegistration.limit)
 })
 
-test('a full app reports its client limit and a failing store is logged', async t => {
+test('registration pauses at the unused-client cap and stops at the client limit; a failing store is logged', async t => {
   const logs = []
   const original = console.error
   console.error = line => logs.push(JSON.parse(line))
   t.after(() => { console.error = original })
+  let counts = { clients: limits.oauthClients, unused: 0 }
   let failing = false
   const front = createServer({ upstreamPort: 1, attempts: { take: async () => { if (failing) throw Object.assign(new Error('x'), { code: '42P01' }); return { count: 1, wait: 0 } } },
-    oauth: { registeredClients: async () => limits.oauthClients, location: l => l } })
+    oauth: { registeredClients: async () => counts, location: l => l } })
   const port = await listen(front)
   t.after(() => front.close())
-  const full = await fetch(`http://127.0.0.1:${port}/auth/v1/oauth/clients/register`, { method: 'POST', body: '{}' })
+  const register = () => fetch(`http://127.0.0.1:${port}/auth/v1/oauth/clients/register`, { method: 'POST', body: '{}' })
+  const docs = 'https://gregale.dev/docs/application-auth#current-limits'
+  const full = await register()
   assert.equal(full.status, 403)
-  assert.deepEqual(await full.json(), { status: 403, code: 'oauth_client_limit', limit: limits.oauthClients, observed: limits.oauthClients, docs_url: 'https://gregale.dev/docs/application-auth#current-limits' })
+  assert.deepEqual(await full.json(), { status: 403, code: 'oauth_client_limit', limit: limits.oauthClients, observed: limits.oauthClients, docs_url: docs })
+  counts = { clients: limits.oauthUnusedClients + 10, unused: limits.oauthUnusedClients }
+  const paused = await register()
+  assert.equal(paused.status, 429)
+  assert.ok(Number(paused.headers.get('retry-after')) > 0)
+  assert.deepEqual(await paused.json(), { status: 429, code: 'too_many_unused_clients', limit: limits.oauthUnusedClients, observed: limits.oauthUnusedClients, docs_url: docs })
+  assert.ok(limits.oauthUnusedClients < limits.oauthClients, 'used and owner clients keep places')
   failing = true
-  assert.equal((await fetch(`http://127.0.0.1:${port}/auth/v1/oauth/clients/register`, { method: 'POST', body: '{}' })).status, 503)
+  assert.equal((await register()).status, 503)
   assert.deepEqual(logs, [{ level: 'error', event: 'oauth_registration_failed', sqlstate: '42P01' }])
 })
 
-test('an IPv6 client counts by its /64', () => {
+test('an IPv6 client counts by its /64; IPv4 counts as itself however it is written', () => {
   assert.equal(addressBucket('2001:db8:1:2:3:4:5:6'), '2001:db8:1:2::/64')
   assert.equal(addressBucket('2001:DB8:0001:0002::9'), '2001:db8:1:2::/64')
   assert.equal(addressBucket('2001:db8::1'), '2001:db8:0:0::/64')
-  assert.equal(addressBucket('::1'), '0:0:0:0::/64')
+  assert.equal(addressBucket('[2001:db8::1]'), '2001:db8:0:0::/64')
   assert.equal(addressBucket('fe80::1%en0'), 'fe80:0:0:0::/64')
-  assert.equal(addressBucket('::ffff:203.0.113.7'), '203.0.113.7')
-  assert.equal(addressBucket('203.0.113.7'), '203.0.113.7')
   assert.equal(addressBucket('64:ff9b::203.0.113.7'), '64:ff9b:0:0::/64')
+  assert.equal(addressBucket('::ffff:203.0.113.7'), '203.0.113.7')
+  assert.equal(addressBucket('::ffff:cb00:7107'), '203.0.113.7')
+  assert.equal(addressBucket('203.0.113.7'), '203.0.113.7')
+  assert.equal(addressBucket('not an address'), 'not an address')
 })
 
-test('public settings list no admin keys; one is reported only by its ID, a budgeted number of times', async t => {
+test('an admin key is reported by its ID, a budgeted number of times, never to a browser', async t => {
   const settings = { app: 'shop', keys: { signing: 'K1', verifying: [] } }
   const adminKeys = [{ id: '0A1B2C3D', scopes: ['users:read'], expires_at: null }]
-  const front = createServer({ upstreamPort: 1, settings, adminKeys, attempts: memoryBudgets() })
+  const budgetsUsed = memoryBudgets()
+  const front = createServer({ upstreamPort: 1, settings, adminKeys, attempts: budgetsUsed })
   const port = await listen(front)
   t.after(() => front.close())
   const base = `http://127.0.0.1:${port}`
-  const all = await (await fetch(`${base}/settings/v1`)).json()
-  assert.equal(all.admin_keys, undefined)
   const one = await fetch(`${base}/settings/v1/admin-keys/0A1B2C3D`)
   assert.equal(one.headers.get('access-control-allow-origin'), null, 'no browser origin may read a key')
   assert.deepEqual(await one.json(), adminKeys[0])
-  for (const path of ['/settings/v1/admin-keys/0A1B2C3E', '/settings/v1/admin-keys/', '/settings/v1/admin-keys/0a1b2c3d']) {
+  assert.equal((await fetch(`${base}/settings/v1/admin-keys/0A1B2C3E`)).status, 404)
+  // Paths that are not IDs never spend the budget (or reach the database).
+  for (const path of ['/settings/v1/admin-keys/', '/settings/v1/admin-keys/0a1b2c3d', '/settings/v1/admin-keys/x/../y']) {
     assert.equal((await fetch(`${base}${path}`)).status, 404, path)
   }
-  for (let i = 4; i < budgets.adminKeyLookup.limit; i++) assert.equal((await fetch(`${base}/settings/v1/admin-keys/0A1B2C3D`)).status, 200)
+  assert.equal([...budgetsUsed.counts.values()][0], 2)
+  for (let i = 2; i < budgets.adminKeyLookup.limit; i++) assert.equal((await fetch(`${base}/settings/v1/admin-keys/0A1B2C3D`)).status, 200)
   const held = await fetch(`${base}/settings/v1/admin-keys/0A1B2C3D`)
   assert.equal(held.status, 429)
   assert.equal((await held.json()).code, 'too_many_lookups')

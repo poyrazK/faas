@@ -18422,16 +18422,17 @@ const (
 	// registered by the owner or by the clients themselves (RFC 7591).
 	AuthOAuthMaxClients = 1000
 	// AuthOAuthRegistrationsPerAddress bounds the clients one client address
-	// (an IPv6 /64) may self-register in AuthOAuthRegistrationWindowSeconds,
-	// and AuthOAuthRegistrationsPerHour those everyone may, so no caller
-	// fills AuthOAuthMaxClients; a self-registered client nobody used (no
-	// consent, session or approved authorization, and no authorization in
-	// the period) is soft-deleted AuthOAuthUnusedClientHours after it
-	// registered. 30 an hour over 24 hours plus a 6-hour pruning interval
-	// keeps at most 900 unused clients alive.
+	// (an IPv4 address or IPv6 /64) may self-register in
+	// AuthOAuthRegistrationWindowSeconds. Self-registration also stops while
+	// AuthOAuthUnusedClients self-registered clients nobody has used (no
+	// consent, session or approved authorization) exist, so clients people
+	// use and the owner's keep AuthOAuthMaxClients minus that many places
+	// whoever floods registration. An unused client with no authorization in
+	// the last AuthOAuthUnusedClientHours is soft-deleted that long after it
+	// registered.
 	AuthOAuthRegistrationsPerAddress   = 10
 	AuthOAuthRegistrationWindowSeconds = 3600
-	AuthOAuthRegistrationsPerHour      = 30
+	AuthOAuthUnusedClients             = 500
 	AuthOAuthUnusedClientHours         = 24
 	// AuthAdminKeyLookupsPerAddress bounds how often one client address may
 	// look up an admin key's scopes by ID in an hour, so IDs cannot be

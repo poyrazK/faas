@@ -137,7 +137,7 @@ test('the front confines client tokens and steers consent to the hosted page', a
   let open = true
   const oauth = {
     location: location => consentLocation(location, site, external),
-    registeredClients: async () => open ? 0 : limits.oauthClients,
+    registeredClients: async () => ({ clients: open ? 0 : limits.oauthClients, unused: 0 }),
     resource: async id => id === 'auth_1' ? 'https://mcp.shop.example.com/mcp' : null,
   }
   const { base, seen } = await front(t, oauth, (req, res) => {

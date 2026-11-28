@@ -6,6 +6,7 @@
 // interval, never on a timer: an idle app neither wakes nor keeps its
 // database awake.
 import { limits } from './config.mjs'
+import { unusedClientSQL } from './oauth.mjs'
 
 const auditStatement = `DELETE FROM auth.audit_log_entries WHERE id IN (
     SELECT id FROM auth.audit_log_entries WHERE created_at < now() - make_interval(days => $1) LIMIT $2)`
@@ -39,11 +40,8 @@ const attemptStatement = `DELETE FROM gregale_auth.attempt_budgets WHERE key IN 
 // kept.
 const unusedClientStatement = `UPDATE auth.oauth_clients SET deleted_at = now() WHERE id IN (
     SELECT c.id FROM auth.oauth_clients c
-    WHERE c.registration_type = 'dynamic' AND c.deleted_at IS NULL AND c.created_at < now() - make_interval(hours => $1)
-      AND NOT EXISTS (SELECT 1 FROM auth.oauth_consents x WHERE x.client_id = c.id)
-      AND NOT EXISTS (SELECT 1 FROM auth.sessions s WHERE s.oauth_client_id = c.id)
-      AND NOT EXISTS (SELECT 1 FROM auth.oauth_authorizations a WHERE a.client_id = c.id
-        AND (a.status = 'approved' OR a.created_at > now() - make_interval(hours => $1)))
+    WHERE c.deleted_at IS NULL AND c.created_at < now() - make_interval(hours => $1) AND ${unusedClientSQL}
+      AND NOT EXISTS (SELECT 1 FROM auth.oauth_authorizations a WHERE a.client_id = c.id AND a.created_at > now() - make_interval(hours => $1))
     LIMIT $2)`
 
 export function createUnusedClientPruner(options) {

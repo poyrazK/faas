@@ -98,12 +98,22 @@ async function sessionResource(pool, { session_id: session, client_id: client, s
   return resource
 }
 
-// registeredClients counts the clients the app holds, which the front
-// checks against limits.oauthClients before GoTrue takes a dynamic
-// registration.
+// unusedClientSQL is true for a self-registered client nobody has used: no
+// consent, no session and no approved authorization. Pruning
+// (retention.mjs) and the cap on unused clients share it.
+export const unusedClientSQL = `c.registration_type = 'dynamic'
+      AND NOT EXISTS (SELECT 1 FROM auth.oauth_consents x WHERE x.client_id = c.id)
+      AND NOT EXISTS (SELECT 1 FROM auth.sessions s WHERE s.oauth_client_id = c.id)
+      AND NOT EXISTS (SELECT 1 FROM auth.oauth_authorizations a WHERE a.client_id = c.id AND a.status = 'approved')`
+
+// registeredClients counts the clients the app holds and how many of them
+// are self-registered and unused, which the front checks against
+// limits.oauthClients and limits.oauthUnusedClients before GoTrue takes a
+// dynamic registration.
 export async function registeredClients(pool) {
-  const { rows } = await pool.query('SELECT count(*)::int AS clients FROM auth.oauth_clients WHERE deleted_at IS NULL')
-  return rows[0].clients
+  const { rows: [row] } = await pool.query(`SELECT count(*)::int AS clients, (count(*) FILTER (WHERE ${unusedClientSQL}))::int AS unused
+    FROM auth.oauth_clients c WHERE c.deleted_at IS NULL`)
+  return row
 }
 
 // authorizationResource adds the requested resource to the consent page's

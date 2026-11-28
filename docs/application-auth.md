@@ -1366,12 +1366,18 @@ reported as `email_exists`.
 - The Auth app counts as an ordinary deployed app for plan quotas and RAM
   billing.
 - An Auth app holds at most 4 signing keys.
-- An Auth app holds at most 1,000 OAuth clients. With self-registration on,
-  one client address (an IPv6 /64) may register 10 clients an hour and
-  everyone together 30; more answer `429 too_many_registrations` with the
-  limit, the count and `retry_after`. A self-registered client with no
-  consent, session or approved authorization, and no authorization in the
-  last 24 hours, is deleted 24 hours after it registered; it registers again.
+- An Auth app holds at most 1,000 OAuth clients (`403 oauth_client_limit`).
+  With self-registration on, one client address (an IPv4 address or IPv6
+  /64) may register 10 clients an hour (`429 too_many_registrations`), and
+  registration pauses while 500 self-registered clients nobody has used
+  exist (`429 too_many_unused_clients`), so clients your users use and those
+  you register with an admin key always keep 500 places. A self-registered
+  client with no consent, session or approved authorization, and no
+  authorization in the last 24 hours, is deleted 24 hours after it
+  registered; it registers again. Refusals carry the limit, the count and
+  this page's address. If a flood keeps registration paused, register
+  clients yourself with `gregale auth oauth-clients` or turn
+  self-registration off.
 - Failed sign-in and second-step budgets count an IPv6 client by its /64.
 - `/settings/v1/admin-keys/<ID>` answers 60 lookups an hour per client
   address.

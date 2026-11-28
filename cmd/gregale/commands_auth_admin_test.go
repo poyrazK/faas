@@ -266,6 +266,39 @@ func TestAuthAdminKeyListReadsScopesByID(t *testing.T) {
 	}
 }
 
+// A lookup the app limits says so, and the CLI stops asking rather than
+// spending more of the budget or suggesting a restart.
+func TestAuthAdminKeyListSaysWhenLookupsAreLimited(t *testing.T) {
+	resetJSONEnv(t)
+	authIssuerServer(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method != "GET" || r.URL.Path != "/v1/apps/shop-auth/secrets" {
+			return false
+		}
+		main.WriteJSONTest(w, api.AppSecretListResponse{Secrets: []api.AppSecretResponse{{Key: "AUTH_ADMIN_KEY_0A1B2C3D"}, {Key: "AUTH_ADMIN_KEY_0A1B2C3E"}}})
+		return true
+	})
+	lookups := 0
+	old := (*main.AuthAdminHTTPClient)
+	(*main.AuthAdminHTTPClient) = &http.Client{Transport: authRoundTrip(func(r *http.Request) (*http.Response, error) {
+		recorder := httptest.NewRecorder()
+		if r.URL.Path == "/settings/v1" {
+			main.WriteJSONTest(recorder, map[string]any{"keys": map[string]any{"signing": "K1", "verifying": []string{"K1"}}})
+		} else {
+			lookups++
+			recorder.WriteHeader(http.StatusTooManyRequests)
+		}
+		return recorder.Result(), nil
+	})}
+	t.Cleanup(func() { (*main.AuthAdminHTTPClient) = old })
+	out := captureAuthStdout(t)
+	if code := main.CmdAuth([]string{"admin-key", "list", "shop-auth"}); code != 0 {
+		t.Fatalf("list = %d", code)
+	}
+	if lookups != 1 || strings.Count(out.String(), "limits key lookups") != 2 || strings.Contains(out.String(), "restart") {
+		t.Fatalf("lookups = %d\n%s", lookups, out.String())
+	}
+}
+
 func TestAuthActivityReadsTheAdminAPIWithTheOwnerKey(t *testing.T) {
 	resetJSONEnv(t)
 	authIssuerServer(t, func(http.ResponseWriter, *http.Request) bool { return false })
