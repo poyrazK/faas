@@ -1515,3 +1515,91 @@ Tests: `TestCheckInline` (the added families and DELETE allowed),
 `TestWAFReviewSpreadIsNotAFalsePositive`, and `TestBenignCorpus`,
 `TestCRSRegressionCorpus` and `TestInlineRuleSetCost` with
 `FAAS_WAF_FTW_DIR` set.
+
+## Amendment 22 (2026-11-27): warn and block check the body's first 2 KiB in-path
+
+Amendment 4 kept request bodies out of the in-path check, and amendment 21
+left that in place: `block` refused an attack in the URL or a header but let
+the same payload through in a JSON or form body, which is where most API
+injection arrives (review finding W3). Bodies were too costly to check
+in-path at the sampled size: a check costs about 60–100 µs per parsed JSON or
+form field (M3), so a full 8 KiB body of small fields took 20–50 ms and
+would empty the app's check budget (500 ms a second) at a few requests a
+second, turning `block` off for the app as amendment 21's long URIs did.
+
+Warn and block rules now also score the first `api.EdgeWAFMaxInlineBodyBytes`
+(2 KiB) of the body in-path. A typical API body of 10–30 fields adds 1–3 ms.
+
+- **Read once, put back.** The gateway reads the prefix once per request,
+  however many waf rules match, and puts the bytes back in front of the rest
+  of the body, so the app and the off-path sample receive the body
+  unchanged. A read error is left with the body for the proxy to report.
+- **The cut is not an evasion hole of its own.** A prefix cut inside a JSON
+  string or form field is processed as it is (`SecRequestBodyLimitAction
+  ProcessPartial`), and the rules still score what was parsed; a truncated
+  body does not fail as a parse error. A payload past 2 KiB passes the
+  in-path check, as one past `inspect_body_bytes` passes the sampled one: the
+  sampled check still scores the rule's whole `inspect_body_bytes` with every
+  rule family and reports it. Counting a long body as a detection, as
+  amendments 20 and 21 do for headers and URIs, would refuse most uploads and
+  is not done; `kind=validate` bounds and shapes bodies.
+- **Read only what admission reads anyway, under its deadlines.** Upload
+  admission (`admitRequestBody`) reads every body to the end before the app
+  wakes, except native gRPC to a gRPC app and upgrades, whose client may
+  send one message and wait for the reply (`requestBodyStreams`). The gate
+  reads only bodies admission would read, chunked ones included, so it
+  never makes a request wait for bytes the request would not have waited
+  for anyway. It reads under admission's deadlines on the connection (the
+  size-derived total and the 15 s sliding idle deadline), so a client that
+  sends its headers and stalls is held no longer than admission would hold
+  it; on a timeout or other read error the bytes read and the error are put
+  back, nothing is scored in-path, and admission answers as before. A
+  connection that cannot take a read deadline is not read. One known gap:
+  scoped local execution (the dev bridge) streams without admission, so a
+  full-duplex dev request under a body-checked block rule waits for 2 KiB,
+  the end of the body or the idle deadline.
+- **What is not scored** (`api.EdgeWAFInlineBodyInspectable`): a compressed
+  body (any `Content-Encoding` but `identity`), which carries no text the
+  rules can read in-path or sampled. Every `Content-Type` is scored: an app
+  may parse a body whatever type the client declares, so skipping by type
+  would let a client hide a JSON payload behind `application/octet-stream`,
+  and CRS parses an unknown type as one URL-encoded argument (901340),
+  which is cheap. Skipping bodies without a `Content-Length` would let a
+  client evade the check by sending chunked, so they are scored too.
+- **Charged by size.** A check reserves the app's inline budget for its
+  body before it runs (1 ms plus 6 µs a byte, the worst M3 rate), so a burst
+  of body checks cannot admit far more work than the app's balance and
+  hold check slots other accounts need; settle trues it up.
+- **Warn still samples.** A warn detection on a request with a body now
+  submits the off-path sample, so the body past the prefix is scored with
+  every family and reported (it was dropped before).
+- **Bounded twice.** The strict in-path engine sets `SecRequestBodyLimit` to
+  2 KiB, and `CheckInline` cuts a longer sample, so no caller can make a
+  check cost more than the prefix.
+
+**Rollout: platform flag `edge_waf_inline_body`**, off by default, and only
+for accounts `edge_waf_strict_inspection` also includes; the baseline in-path
+set never reads the body. A separate flag, because rules already in `block`
+would otherwise start refusing bodies `observe` only reported, including the
+documented false positives on GraphQL bodies (932235, 942290) and prose with
+SQL keywords (942350), with no change on the customer's side; and
+`edge_waf_strict_inspection` is already on for every account. Turn it on per
+account after checking its `observe` body detections; retire it with
+`edge_waf_strict_inspection`.
+
+Criterion W1 (in-path p95 at most 2 ms) was measured on requests without a
+body; it must be measured again with bodies on the 4-vCPU Linux test host
+before the flag is widened past test accounts.
+
+Tests: `TestCheckInline` (XSS and SQLi in a JSON body, a benign body, body
+headers without bytes), `TestCheckInlineBoundsBody`,
+`TestCheckInlineWithoutStrictInspection` (the baseline set ignores the body),
+`TestCheckInlineChargesBodyUpFront`, `TestEdgeWAFInlineBodyInspectable`,
+`TestApplyEdgeRuleWAFInlineBody` (the app receives the body unchanged, read
+under a deadline; compressed, native gRPC and flag-off bodies are not
+scored), `TestApplyEdgeRuleWAFInlineBodyBlocks`,
+`TestApplyEdgeRuleWAFInlineBodyStalledClient`,
+`TestApplyEdgeRuleWAFInlineBodyNeedsReadDeadline`,
+`TestApplyEdgeRuleWAFInlineBodyNotReadWithoutChecker`,
+`TestApplyEdgeRuleWAFWarnDetectionWithBodyIsSampled` and
+`TestApplyEdgeRuleWAFInlineBodyDoesNotWaitOnStreams`.

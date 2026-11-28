@@ -50,9 +50,7 @@ func (b *admittedFileBody) Close() error {
 // Spooled bytes count against spoolBudget, node-wide and per client; a body
 // that would exceed it is refused with 503 and Retry-After.
 func admitRequestBody(w http.ResponseWriter, r *http.Request, app App, spoolBudget *requestBodyBudget) bool {
-	mediaType, _, mediaErr := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if app.AppProtocol == api.AppProtocolGRPC && mediaErr == nil &&
-		(mediaType == "application/grpc" || strings.HasPrefix(mediaType, "application/grpc+")) {
+	if nativeGRPCBody(r, app) {
 		// Native gRPC exchanges messages before request EOF. Existing plan and
 		// edge readers enforce size limits incrementally; this body cannot be
 		// spooled or made replayable before dispatch. ADR-428.
@@ -65,6 +63,22 @@ func admitRequestBody(w http.ResponseWriter, r *http.Request, app App, spoolBudg
 		allowance = api.RequestUploadTimeoutForBytes(r.ContentLength)
 	}
 	return admitRequestBodyBudgeted(w, r, limit, allowance, spoolBudget, requestBodyOwner(app))
+}
+
+// nativeGRPCBody reports a gRPC request to a gRPC app, whose messages flow
+// both ways before the request body ends (ADR-428).
+func nativeGRPCBody(r *http.Request, app App) bool {
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	return app.AppProtocol == api.AppProtocolGRPC && err == nil &&
+		(mediaType == "application/grpc" || strings.HasPrefix(mediaType, "application/grpc+"))
+}
+
+// requestBodyStreams reports a body admission does not read to the end
+// before the app wakes: native gRPC and upgrades. Anything that reads a body
+// before admission (the in-path WAF body check) must leave these alone, as
+// the client may wait for a reply before sending more.
+func requestBodyStreams(r *http.Request, app App) bool {
+	return isUpgradeRequest(r) || nativeGRPCBody(r, app)
 }
 
 func admitRequestBodyWithin(w http.ResponseWriter, r *http.Request, limit int64, allowance time.Duration) bool {

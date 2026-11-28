@@ -10421,6 +10421,14 @@ const (
 	// a block rule unchecked. Warn and block count a longer URI as a
 	// detection; a sampled check scores its first 8 KiB.
 	EdgeWAFMaxInspectURIBytes = 8 << 10
+	// EdgeWAFMaxInlineBodyBytes is how much of a request body a warn or
+	// block WAF rule scores in-path (ADR-831 amendment 22). A check costs
+	// about 60-100 us per parsed JSON or form field (M3), so a typical API
+	// body of 10-30 fields adds 1-3 ms, while a full 8 KiB body of small
+	// fields took 20-50 ms and would empty the app's check budget at a few
+	// requests a second. The rest of the rule's inspect_body_bytes is still
+	// sampled off-path and reported.
+	EdgeWAFMaxInlineBodyBytes = 2 << 10
 	// EdgeWAFInlineAccountSharePercent is the share of the node's check
 	// slots (at least one) an account's waiting checks are served first
 	// for (ADR-831 amendment 16). An account may use every free slot, but a
