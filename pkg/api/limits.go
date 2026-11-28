@@ -3612,6 +3612,12 @@ const (
 	// model the catalog does not know (cost-control review 2026-11-19, N17).
 	OutboundAIUnknownModelOutputReserveTokens int64 = 32_768
 	OutboundAIReserveBytesPerToken            int64 = 4
+	// A generation call that continues context stored at the provider
+	// (previous_response_id, a conversation, a stored prompt, cached
+	// content, an uploaded file) reserves its model's context window from
+	// the catalog, or this for a model the catalog does not know (prod hunt
+	// 2026-11-28).
+	OutboundAIUnknownModelInputReserveTokens int64 = 200_000
 	// Per-app AI guardrails on a binding (ADR-991).
 	MaxOutboundAIRequestsPerMinute       = 100_000
 	MaxOutboundAITokensPerMinute   int64 = 1_000_000_000

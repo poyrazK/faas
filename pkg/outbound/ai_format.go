@@ -217,6 +217,16 @@ type aiCallFacts struct {
 	// ceilingKnown reports that the format has a ceiling field the gateway
 	// can read and add.
 	ceilingKnown bool
+	// choices is how many answers a generation call asks for (OpenAI n and
+	// best_of, Gemini candidateCount); 0 means one (see choiceCount). Each answer can run to
+	// the output ceiling, so the reservation and the app's output ceiling
+	// count all of them (prod hunt 2026-11-28).
+	choices int64
+	// storedContext marks a generation call whose input continues context
+	// held at the provider (a previous response, a conversation, a stored
+	// prompt, cached content or an uploaded file): its body does not show
+	// that input, so it reserves the model's context window.
+	storedContext bool
 	// images is the image count an image call asks for; characters is the
 	// length of a speech call's input text (ADR-997).
 	images     int64
@@ -285,8 +295,62 @@ func readAICallFacts(endpoint aiEndpoint, body []byte) aiCallFacts {
 	}
 	if endpoint.generation {
 		facts.tools = readToolReserve(endpoint, facts.model, fields)
+		if endpoint.media == aiMediaNone {
+			facts.choices, facts.storedContext = readChoicesAndContext(endpoint, fields, body)
+		}
 	}
 	return facts
+}
+
+// aiChoicesMax bounds the choices a reservation multiplies by, so a hostile
+// count cannot overflow it; providers refuse far fewer (OpenAI: 128).
+const aiChoicesMax = 1 << 16
+
+// readChoicesAndContext reads how many answers a generation call asks for
+// and whether it continues context stored at the provider.
+func readChoicesAndContext(endpoint aiEndpoint, fields map[string]json.RawMessage, body []byte) (int64, bool) {
+	choices := int64(1)
+	stored := false
+	switch endpoint.format {
+	case aiFormatOpenAI:
+		choices = max(choices, jsonCount(fields["n"]), jsonCount(fields["best_of"]))
+		if jsonString(fields["previous_response_id"]) != "" {
+			stored = true
+		}
+		if conversation, ok := fields["conversation"]; ok && string(conversation) != "null" {
+			stored = true
+		}
+		// The Responses API's stored prompt is an object with an id; the
+		// legacy completions prompt is the text itself.
+		if jsonObjectField(fields["prompt"], "id") != nil {
+			stored = true
+		}
+	case aiFormatGemini:
+		choices = max(choices, jsonCount(jsonObjectField(fields["generationConfig"], "candidateCount")))
+		if jsonString(fields["cachedContent"]) != "" || jsonString(fields["cached_content"]) != "" {
+			stored = true
+		}
+	}
+	// An uploaded file (OpenAI input_file, Anthropic document source) is
+	// input the body only names.
+	if bytes.Contains(body, []byte(`"file_id"`)) {
+		stored = true
+	}
+	if choices == 1 {
+		// One answer is the default; facts leave it unset (choiceCount).
+		choices = 0
+	}
+	return min(choices, aiChoicesMax), stored
+}
+
+// jsonCount reads a count that saturates at aiChoicesMax rather than
+// reading as absent when it is huge, so a hostile count reserves the most.
+func jsonCount(raw json.RawMessage) int64 {
+	var value float64
+	if len(raw) == 0 || json.Unmarshal(raw, &value) != nil || value < 1 {
+		return 0
+	}
+	return int64(min(value, aiChoicesMax))
 }
 
 // readToolReserve reads the built-in tools a generation request declares
@@ -599,3 +663,7 @@ func jsonObjectField(raw json.RawMessage, name string) json.RawMessage {
 	}
 	return fields[name]
 }
+
+// choiceCount is the answers a call asks for, at least 1 for facts read
+// before choices existed or built by hand.
+func (f aiCallFacts) choiceCount() int64 { return max(1, f.choices) }

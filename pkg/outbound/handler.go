@@ -553,7 +553,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			retry = ""
 		}
 		w.Header().Set("X-Gregale-Outbound-Rejection", decision.Reason)
-		writeProblem(w, http.StatusTooManyRequests, "outbound_budget_exhausted", "Outbound integration budget is exhausted", retry)
+		code, title := admissionRefusalProblem(decision.Reason)
+		writeProblem(w, http.StatusTooManyRequests, code, title, retry)
 		return
 	}
 	h.Metrics.ObserveAdmission(metricIntegrationID, "granted")
@@ -1244,4 +1245,22 @@ func (h *Handler) aiGatewayAdmitsAccount(integration Integration) bool {
 		})
 	}
 	return h.AIGatewayRollout.Allows(integration.AccountID)
+}
+
+// admissionRefusalProblem names a refused admission by what refused it
+// (prod hunt 2026-11-28): every refusal used to read "budget is exhausted",
+// including rate limits and a call whose own reservation did not fit an
+// unspent budget. X-Gregale-Outbound-Rejection still carries the reason.
+func admissionRefusalProblem(reason string) (code, title string) {
+	switch {
+	case strings.HasSuffix(reason, ReasonReservationSuffix):
+		return "outbound_ai_reservation_exceeds_budget",
+			"The call's reservation does not fit the budget left: set a smaller max_tokens (or the format's output limit), " +
+				"since a call that names none reserves its model's longest response"
+	case reason == ReasonRate || reason == ReasonConcurrency || reason == ReasonRequestsPerMinute || reason == ReasonTokensPerMinute:
+		return "outbound_rate_limited", "Outbound integration rate limit reached"
+	case reason == ReasonCircuitOpen || reason == ReasonProviderCooldown:
+		return "outbound_provider_cooling_down", "The provider is cooling down after failing calls"
+	}
+	return "outbound_budget_exhausted", "Outbound integration budget is exhausted"
 }
