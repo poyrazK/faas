@@ -818,6 +818,15 @@ func (c Config) NftCommands() [][]string {
 			"ip", "daddr", c.HostBridgeIP.String(), "udp", "dport", strconv.Itoa(dnsPort), "accept")
 		add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
 			"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(dnsPort), "accept")
+		// Every other TCP port on the bridge address is refused with a reset
+		// instead of falling through to the lateral-movement drop. A service
+		// name the caller may not reach (a typo, another account's cache)
+		// resolves to this address, so a client dialling it on its service
+		// port (6379) gets "connection refused" at once rather than waiting
+		// out its connect timeout. The guest already knows the address from
+		// its route and DNS, so the reset discloses nothing.
+		add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
+			"ip", "daddr", c.HostBridgeIP.String(), "meta", "l4proto", "tcp", "reject", "with", "tcp", "reset")
 	}
 	// PR scale-out tier-1 residual (Gap #4): per-netns operator
 	// exception accept rules. Each entry emits

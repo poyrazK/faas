@@ -47,3 +47,32 @@ Validation covers all-layer publication, marker handling, named-user parsing,
 guest-init lookup, direct-root sidecar mounting and chroot isolation, plan
 defaults, migration persistence, and the complete Go test suite. Metal tests
 remain the acceptance gate for real Alpine/distroless boot behavior.
+
+## Amendment 2026-11-28: Free plans take the full-rootfs path by default
+
+Every plan, Free included, now falls back to a self-contained rootfs
+automatically when an image is not built on a Gregale runtime base
+(`api.FullRootfsAllowedPlans` and `api.FullRootfsAllowAutoDefault`).
+`full_rootfs_allow_auto=false` and `full_rootfs_override` keep their
+meaning.
+
+**Why.** Gating Free saved no resource. A full-rootfs layer is held to
+the plan's app-layer cap (`AppLayerMaxMB`, 256 MB on Free;
+`MaxFullRootfsLayerBytes[Free]` matches it), and RAM, CPU and metering are
+the same on both paths. Source builds on Free already store a
+self-contained layer: on 2026-11-28 a Free signup's prebuilt image failed
+three times with "plan free does not auto-dispatch to full-rootfs", while
+the same Dockerfile deployed from GitHub went live as a 137 MB layer. The
+override the error named had no CLI or dashboard setter, so the gate only
+turned a common first deploy (any Alpine, Debian, distroless or official
+language image) into a failure.
+
+**Also.** `UserUIDOverrideMax[Free]` rises from 0 to Hobby's 16. At 0 the
+guest-init lookup table was empty, so a named `USER` such as distroless'
+`nonroot` fell back to uid 1000 on Free. The fallback error, now reached
+only when a deployment turns auto-fallback off, no longer shows Go syntax.
+
+**Cost.** Free deployments of such images now occupy up to their existing
+256 MB disk cap without the shared base's deduplication. The 130 MB fleet
+snapshot average (`snapshot_fleet_avg_mb`) is unaffected: snapshot size
+follows guest memory, not the rootfs.

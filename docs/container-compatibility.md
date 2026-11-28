@@ -34,6 +34,25 @@ faster for large images and is the better choice in CI. Local image deploys are
 being released gradually; an account without them gets "Local image deploys
 unavailable" and can deploy through a registry instead.
 
+Add `--boot` to check the image on your machine first:
+
+```sh
+gregale deploy --local-image team/api:dev --boot --healthcheck-path /healthz
+```
+
+It runs the same checks as `doctor --boot` (below) before the image is saved
+or uploaded, with the deployment's `--healthcheck-path`, the RAM of its
+`--size` (else the app's, or a new app's default) and the app's public host
+when the app exists. A crash, a listener on the wrong address or
+port, an out-of-memory kill or a failing health check stops the deploy with the
+findings, and nothing is uploaded; warnings are printed and the deploy goes on.
+`--boot-env-file FILE` passes variables the app needs to start to the local
+container only; set them on the app with `gregale env` or `gregale secrets` for
+the deployment. A worker or job (`--execution-mode`, or `gregale.yaml`) is
+checked without HTTP, and a `--healthcheck-grpc` deploy with gRPC health, as
+described below. `--boot` is refused with `--create-only`.
+Pressing Ctrl-C during the check stops the deploy.
+
 ## Boot the image locally before deploying
 
 `doctor` and `deploy check` read image metadata only. Add `--boot` to also run
@@ -52,6 +71,19 @@ names the mistake, such as a server bound to `127.0.0.1` or to a port other
 than `$PORT`; that diagnosis needs `cat` in the image. Pass the variables the
 app needs to start with `--env-file` (docker env-file format).
 
+A worker or job serves no HTTP. Pass `--execution-mode worker` or
+`--execution-mode job` (with `--app SLUG`, an existing worker or job app is
+checked as one without it) and the boot publishes no port and judges the
+process as Gregale does when it first boots a deployment: a process still
+running at the end of Gregale's observation window (the report shows its
+length) is a working worker, a job that exited 0 has completed, and any other
+exit is a startup failure. A worker that exits 0 is a warning, since it would
+stop instead of working; a job still running at the end of the window passes.
+
+The process runs for real on your machine: a job does its whole task, and a
+worker takes real work until the window ends and the container is removed.
+Pass env that points at test resources, never production credentials.
+
 Pass `--healthcheck-path /healthz` (the path you deploy with) to probe the
 app's readiness route instead of `/`. Gregale routes to an instance only once
 that path answers 2xx (after redirects), so `--boot` keeps polling it through
@@ -63,6 +95,17 @@ sends that app's host too. Without it, a 400 is only a warning, because an app
 that allow-lists its host names (Django `ALLOWED_HOSTS`, Rails `config.hosts`)
 refuses the local address. Without a health path, any answer on `/` counts, as
 it does for readiness by connection.
+
+A gRPC service that deploys with `--healthcheck-grpc` is checked the same way
+with `--boot --healthcheck-grpc [--healthcheck-grpc-service NAME]`: the boot
+calls the standard `grpc.health.v1.Health/Check` over plaintext gRPC on
+`$PORT`, as Gregale's readiness probe does, and passes once it answers
+`SERVING`. It fails with `boot_grpc_health_missing` when the server does not
+implement the health service, `boot_grpc_service_unknown` when the health
+server does not know the service name, and `boot_grpc_health_failed` when it
+answers but never `SERVING` within the startup window. A server that serves
+only TLS is reported too: Gregale terminates TLS at its edge and probes the
+app in plaintext.
 
 An image with a `HEALTHCHECK` also gets it run by Docker, every second, with the
 retries scaled so the failure budget (retries × interval) stays the image's:
@@ -178,6 +221,7 @@ The process starts in the environment a container runtime provides:
 
 | | Gregale | Docker |
 |---|---|---|
+| Process user | The image's `USER`; without one, a registry image runs as root, and an app Gregale builds from a Dockerfile or from source runs as `app` (uid 1000) | The image's `USER`, else root |
 | `HOME` | The image or deployment value; else the user's passwd home when the user can write there; else `/tmp` | The image value, else the passwd home |
 | `PATH` | The image or deployment value, else `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` | Same |
 | Working directory | `WORKDIR`, created for the process user when missing | Same |
@@ -192,6 +236,13 @@ Files in `/tmp` and `/dev/shm` use the instance's memory: filling them hits
 the plan's RAM limit, not a disk-full error. Write large scratch files under
 the home directory or the working directory instead; that space counts against
 the ephemeral disk allowance.
+
+An app that runs as `app` cannot change files its image installed as root. A
+startup script that edits a config file in place, for example `sed -i` on a
+file under `/usr/local/etc`, fails with `Permission denied`, although the same
+image works under Docker, where it runs as root. Write the edited copy to
+`/tmp` or the home directory and start from that copy, or add `USER root` to
+the Dockerfile.
 
 ## Randomness after a snapshot restore
 
@@ -706,7 +757,7 @@ their keys: the managed resource replaces the container.
 | Concern | Current contract | Qualification boundary |
 |---|---|---|
 | Image platform | Linux/amd64; compatible child selected from an OCI or Docker index. A lone child without a platform annotation is selected and its config's platform checked. | Other architectures and operating systems are rejected. |
-| Process | Image ENTRYPOINT + CMD, environment, working directory, and user. As under Docker, an image without `USER` runs as root, and a numeric UID absent from the image's passwd runs with GID 0. Root-owned image files stay root-owned in the guest. | Metadata inspection cannot prove executables or users exist in the layers. Numeric or named `USER user:group` is preserved; explicit missing identities fail launch. Supplementary memberships are not imported. Redeploy older deployments to pick up root ownership. |
+| Process | Image ENTRYPOINT + CMD, environment, working directory, and user. As under Docker, a registry image without `USER` runs as root, and a numeric UID absent from the image's passwd runs with GID 0. An app Gregale builds from a Dockerfile or from source without `USER` runs as `app` (uid 1000). Root-owned image files stay root-owned in the guest. | Metadata inspection cannot prove executables or users exist in the layers. Numeric or named `USER user:group` is preserved; explicit missing identities fail launch. Supplementary memberships are not imported. Redeploy older deployments to pick up root ownership. |
 | Main listener | Explicit deployment port, otherwise one exposed TCP port, otherwise 8080. Port 80 is supported: when a workload in the VM declares it, the in-guest metadata endpoint moves from `169.254.169.254:80` to `169.254.169.254:8775`. | Multiple TCP declarations do not select the main port. Bind to `0.0.0.0`. Read the metadata URLs from `FAAS_EVENT_PUBLISH_ENDPOINT`, `FAAS_METADATA_ENV_ENDPOINT` and `FAAS_SECRETS_RELOAD_ACK_ENDPOINT` instead of hardcoding the address. |
 | Additional listeners | Declared TCP listeners use `<slug>--port-<name>.<apps-domain>` selectors through the gateway | These are HTTP gateway selectors. Raw TCP uses separately configured app-owned listeners; UDP uses the separate opt-in listener service below. |
 | Raw TCP ingress | Opt-in public edge binds stable app-owned TCP listener ports and forwards bytes to the app; optional per-listener TLS termination | Not enabled for every account yet. TLS defaults to passthrough; termination requires a verified app-owned hostname. |

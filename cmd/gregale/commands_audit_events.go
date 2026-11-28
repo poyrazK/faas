@@ -40,6 +40,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -142,11 +143,14 @@ func cmdAuditEventsList(args []string) int {
 		if subject == "" {
 			subject = "-"
 		}
+		// The id leads each row: `audit get` takes it, and the list never
+		// printed it (prod hunt r63).
 		if *verbose && strings.HasPrefix(e.Kind, "stateless.advisory") {
+			_, _ = fmt.Fprintf(osStdout, "%s\t", e.ID)
 			renderVerboseAuditRow(e.At, e.Actor, e.Kind, subject, e.Data)
 			continue
 		}
-		fmt.Printf("%s\t%s\t%s\t%s\n", e.At, e.Actor, e.Kind, subject)
+		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\n", e.ID, e.At, e.Actor, e.Kind, subject)
 	}
 	return 0
 }
@@ -164,6 +168,11 @@ func cmdAuditEventsGet(args []string) int {
 		return 1
 	}
 	id := fs.Arg(0)
+	if n, err := strconv.ParseInt(id, 10, 64); err != nil || n <= 0 {
+		// A UUID from the list's subject column reached the API and came
+		// back "id must be a positive integer" (prod hunt r63).
+		return printErr("Invalid audit event id", fmt.Errorf("%q is not an audit event id; ids are numbers, shown in the first column of `gregale audit list`", id))
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -175,13 +184,13 @@ func cmdAuditEventsGet(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
 	}
-	fmt.Printf("id:       %s\n", resp.ID)
-	fmt.Printf("at:       %s\n", resp.At)
-	fmt.Printf("actor:    %s\n", resp.Actor)
-	fmt.Printf("kind:     %s\n", resp.Kind)
-	fmt.Printf("subject:  %s\n", resp.Subject)
+	_, _ = fmt.Fprintf(osStdout, "id:       %s\n", resp.ID)
+	_, _ = fmt.Fprintf(osStdout, "at:       %s\n", resp.At)
+	_, _ = fmt.Fprintf(osStdout, "actor:    %s\n", resp.Actor)
+	_, _ = fmt.Fprintf(osStdout, "kind:     %s\n", resp.Kind)
+	_, _ = fmt.Fprintf(osStdout, "subject:  %s\n", resp.Subject)
 	if len(resp.Data) > 0 {
-		fmt.Printf("data:     %s\n", string(resp.Data))
+		_, _ = fmt.Fprintf(osStdout, "data:     %s\n", string(resp.Data))
 	}
 	return 0
 }
@@ -216,7 +225,7 @@ type advisoryBatch struct {
 func renderVerboseAuditRow(at, actor, kind, subject string, raw json.RawMessage) {
 	var b advisoryBatch
 	if err := json.Unmarshal(raw, &b); err != nil {
-		fmt.Printf("%s\t%s\t%s\t%s\n", at, actor, kind, subject)
+		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\n", at, actor, kind, subject)
 		return
 	}
 	paths := make([]string, 0, len(b.Events))
@@ -249,5 +258,5 @@ func renderVerboseAuditRow(at, actor, kind, subject string, raw json.RawMessage)
 	if instance == "" {
 		instance = subject
 	}
-	fmt.Printf("%s\t%s\t%d\t%s\t%s\t%s\n", at, instance, b.Count, pathsStr, pidStr, lastTSStr)
+	_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%d\t%s\t%s\t%s\n", at, instance, b.Count, pathsStr, pidStr, lastTSStr)
 }

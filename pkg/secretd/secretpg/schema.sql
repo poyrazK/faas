@@ -212,3 +212,11 @@ CREATE TABLE app_verification_contracts (
     app_id   uuid  NOT NULL PRIMARY KEY,
     contract jsonb NOT NULL
 );
+
+-- Projection of mcp_listings: the probe secret the MCP tool contract gate
+-- opens (ADR-20261127191645).
+CREATE TABLE mcp_listings (
+    app_id       uuid  NOT NULL PRIMARY KEY,
+    contract     jsonb,
+    probe_secret text  NOT NULL DEFAULT ''
+);

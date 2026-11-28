@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -26,6 +27,13 @@ type MCPListing struct {
 	Version      int
 	PublishedAt  time.Time
 	UpdatedAt    time.Time
+	// Contract is the format-2 catalog contract published with the listing
+	// (ADR-20261127191645); nil for a listing published before the gate.
+	Contract       json.RawMessage
+	ContractSHA256 string
+	// ProbeSecret names the app secret imaged sends as the bearer token
+	// when it lists a candidate's tools; "" sends none.
+	ProbeSecret string
 }
 
 // MCPListingTool is one tool of the published snapshot.
@@ -61,6 +69,7 @@ func (m *MemStore) GetMCPListing(_ context.Context, accountID, appID string) (MC
 		return MCPListing{}, ErrNotFound
 	}
 	l.Tools = append([]MCPListingTool{}, l.Tools...)
+	l.Contract = slices.Clone(l.Contract)
 	return l, nil
 }
 
@@ -80,6 +89,7 @@ func (m *MemStore) PutMCPListing(_ context.Context, l MCPListing) (MCPListing, e
 	now := time.Now().UTC()
 	l.Version, l.PublishedAt, l.UpdatedAt = prev.Version+1, now, now
 	l.Tools = append([]MCPListingTool{}, l.Tools...)
+	l.Contract = slices.Clone(l.Contract)
 	m.mcpListings[l.AppID] = l
 	return l, nil
 }
@@ -110,7 +120,11 @@ func (m *MemStore) CountOpenMCPListingCustomers(_ context.Context, accountID, ap
 func fromMCPListing(row sqlc.McpListing) (MCPListing, error) {
 	l := MCPListing{AccountID: pgUUIDString(row.AccountID), AppID: pgUUIDString(row.AppID), Title: row.Title, Summary: row.Summary,
 		Endpoint: row.Endpoint, RegistryName: row.RegistryName, ShowUsage: row.ShowUsage, Version: int(row.Version),
-		PublishedAt: row.PublishedAt.Time.UTC(), UpdatedAt: row.UpdatedAt.Time.UTC()}
+		PublishedAt: row.PublishedAt.Time.UTC(), UpdatedAt: row.UpdatedAt.Time.UTC(),
+		ContractSHA256: row.ContractSha256.String, ProbeSecret: row.ProbeSecret}
+	if row.Contract != nil {
+		l.Contract = json.RawMessage(row.Contract)
+	}
 	if err := json.Unmarshal(row.Tools, &l.Tools); err != nil {
 		return MCPListing{}, fmt.Errorf("decode MCP listing tools: %w", err)
 	}
@@ -140,7 +154,8 @@ func (s *PgStore) PutMCPListing(ctx context.Context, l MCPListing) (MCPListing, 
 		return MCPListing{}, fmt.Errorf("encode MCP listing tools: %w", err)
 	}
 	row, err := sqlc.New().PutMCPListing(ctx, s.pool, sqlc.PutMCPListingParams{AppID: uuidToPgtype(l.AppID), AccountID: uuidToPgtype(l.AccountID),
-		Title: l.Title, Summary: l.Summary, Endpoint: l.Endpoint, Tools: tools, RegistryName: l.RegistryName, ShowUsage: l.ShowUsage})
+		Title: l.Title, Summary: l.Summary, Endpoint: l.Endpoint, Tools: tools, RegistryName: l.RegistryName, ShowUsage: l.ShowUsage,
+		Contract: []byte(l.Contract), ContractSha256: pgText(l.ContractSHA256), ProbeSecret: l.ProbeSecret})
 	if errors.Is(err, pgx.ErrNoRows) {
 		// The app's row belongs to another account.
 		return MCPListing{}, ErrNotFound

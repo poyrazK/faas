@@ -125,6 +125,11 @@ type HostPolicy struct {
 	// a vmmd without this field stays Cloudflare-only rather than open.
 	PublicEntryAddrs []netip.Addr
 
+	// PublicEntryNoHTTP closes port 80 on PublicEntryAddrs, for a node whose
+	// edge runs no redirect listener (faas_edge_http_redirect off). The zero
+	// value keeps 80 open for the redirect to HTTPS (ADR-20261127170000).
+	PublicEntryNoHTTP bool
+
 	// PeerEntryAddrs are the other compute edges' IPv4 entry addresses
 	// (ADR-20261123100000). A guest's call to one on 443 is DNATed to this
 	// node's own IPv4 entry address, so app-to-app calls over a public
@@ -776,12 +781,16 @@ func (h HostPolicy) Render() string {
 	switch {
 	case len(h.PublicEntryAddrs) > 0:
 		// The drops come before sshd's accept, so the entry addresses carry
-		// 443 and nothing else.
+		// 443, and 80 for the redirect to HTTPS, and nothing else.
 		for _, a := range h.PublicEntryAddrs {
-			writePublicEntryAccept(&b, a, len(publicEntryProxies(h.PublicInputSourceCIDRs, addrFamily(a))) > 0)
+			writePublicEntryAccept(&b, a, len(publicEntryProxies(h.PublicInputSourceCIDRs, addrFamily(a))) > 0, !h.PublicEntryNoHTTP)
+		}
+		carries := "public entry carries 80 and 443 only"
+		if h.PublicEntryNoHTTP {
+			carries = "public entry carries 443 only"
 		}
 		for _, a := range h.PublicEntryAddrs {
-			fmt.Fprintf(&b, "    %s daddr %s drop comment %q\n", addrFamily(a), a, "public entry carries 443 only")
+			fmt.Fprintf(&b, "    %s daddr %s drop comment %q\n", addrFamily(a), a, carries)
 		}
 		b.WriteString("    tcp dport 22 accept                # sshd; provider firewall/IAP applies the source boundary\n")
 	case len(h.PublicInputSourceCIDRs) > 0:
@@ -1098,17 +1107,22 @@ func writePublicEntrySets(b *strings.Builder, family string, proxies []netip.Pre
 		suffix, keyType, strings.Join(elements, ", "))
 }
 
-// writePublicEntryAccept admits 443 on a public entry address, after dropping
+// writePublicEntryAccept admits 443, and with http 80 for gatewayd-public's
+// redirect to HTTPS (ADR-20261127170000), on a public entry address, after dropping
 // a source's new connections past the kernel backstop: the edge's own
 // per-address limits act only on connections the kernel already accepted.
 // With exempt, Cloudflare's ranges get a higher backstop rather than none:
 // those ranges also carry every other Cloudflare customer's zone, so an
 // address in them is not proof of a proxy we trust (ADR-20261104221012).
-func writePublicEntryAccept(b *strings.Builder, a netip.Addr, exempt bool) {
+func writePublicEntryAccept(b *strings.Builder, a netip.Addr, exempt, http bool) {
 	family := addrFamily(a)
 	suffix := publicEntrySetSuffix(family)
 	source := publicEntrySourceKey(family)
-	match := fmt.Sprintf("%s daddr %s tcp dport 443", family, a)
+	ports := "443"
+	if http {
+		ports = "{ 80, 443 }"
+	}
+	match := fmt.Sprintf("%s daddr %s tcp dport %s", family, a, ports)
 	if exempt {
 		proxy := match + fmt.Sprintf(" %s saddr @public_entry_proxy_%s", family, suffix)
 		fmt.Fprintf(b, "    %s ct state new add @public_entry_rate_%s { %s limit rate over %d/second burst %d packets } counter drop comment %q\n",
@@ -1121,7 +1135,7 @@ func writePublicEntryAccept(b *strings.Builder, a netip.Addr, exempt bool) {
 		match, suffix, source, api.PublicEntryNewConnsPerSecondPerSource, api.PublicEntryNewConnsBurstPerSource, "public entry new connections per source")
 	fmt.Fprintf(b, "    %s ct state new add @public_entry_conns_%s { %s ct count over %d } counter drop comment %q\n",
 		match, suffix, source, api.PublicEntryConnsPerSourceMax, "public entry connections per source")
-	fmt.Fprintf(b, "    %s daddr %s tcp dport 443 accept comment %q\n", family, a, "public entry")
+	fmt.Fprintf(b, "    %s daddr %s tcp dport %s accept comment %q\n", family, a, ports, "public entry")
 }
 
 // publicEntrySourceKey is what the entry sets count a source by: an IPv4

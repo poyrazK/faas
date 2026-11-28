@@ -128,7 +128,7 @@ gregale init --agents --name my-api
 
 Deploy an app, function, or project
 
-`gregale deploy [<subcommand>] [--atomic] [--add-services] [--verify] [--workers] [--stabilize] [--progressive] [--worker-health] [--migrate] [--release-secrets-file <PATH>] [--release-secrets-request-id <ID>] [--config-file <PATH>] [--image <REF>] [--docker-config <PATH>] [--local-image <NAME>] [--image-archive <PATH>] [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--anonymous] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--source-branch <BRANCH>] [--github] [--pinned-sha <SHA>] [--pin-action] [--template <NAME>] [--dockerfile] [--issue-source-maps <PATH>] [--issue-source-map-directory <PATH>] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--size <SIZE>] [--profile <SIZE>] [--vcpu <N>] [--execution-mode <MODE>] [--restart-policy <POLICY>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--only <SLUGS>] [--project] [--env <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--prefix <PREFIX>] [--rollout <MODE>] [--override-freeze <REASON>] [--at <WHEN>] [--release-notify <CHANNEL,...>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--queue-canary-binding <NAME>]... [--healthcheck-path <PATH>] [--readiness-path <PATH>] [--healthcheck-grpc] [--healthcheck-grpc-service <SERVICE>] [--disable-startup-cpu-boost] [--mcp-task-migration-override] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <DURATION>] [--idempotency-key <KEY>] [--resume-upload-id <ID>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--preview] [--plan] [--dry-run] [--explain-files] [--yes] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
+`gregale deploy [<subcommand>] [--atomic] [--add-services] [--verify] [--workers] [--stabilize] [--progressive] [--worker-health] [--migrate] [--release-secrets-file <PATH>] [--release-secrets-request-id <ID>] [--config-file <PATH>] [--image <REF>] [--docker-config <PATH>] [--local-image <NAME>] [--boot] [--boot-env-file <FILE>] [--image-archive <PATH>] [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--anonymous] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--source-branch <BRANCH>] [--github] [--pinned-sha <SHA>] [--pin-action] [--template <NAME>] [--dockerfile] [--issue-source-maps <PATH>] [--issue-source-map-directory <PATH>] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--size <SIZE>] [--profile <SIZE>] [--vcpu <N>] [--execution-mode <MODE>] [--restart-policy <POLICY>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--only <SLUGS>] [--project] [--env <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--prefix <PREFIX>] [--rollout <MODE>] [--override-freeze <REASON>] [--at <WHEN>] [--release-notify <CHANNEL,...>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--queue-canary-binding <NAME>]... [--healthcheck-path <PATH>] [--readiness-path <PATH>] [--healthcheck-grpc] [--healthcheck-grpc-service <SERVICE>] [--disable-startup-cpu-boost] [--mcp-task-migration-override] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <DURATION>] [--idempotency-key <KEY>] [--resume-upload-id <ID>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--preview] [--plan] [--dry-run] [--explain-files] [--yes] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
 
 Source defaults to committed HEAD when origin exists; otherwise local files. Use --source=worktree to include local changes.
 
@@ -154,6 +154,8 @@ Traffic: --rollout MODE. Retry failed: gregale release attempt retry SESSION_ID
 | `--image <REF>` | deploy a digest-pinned container image |  |
 | `--docker-config <PATH>` | with --image, save the credential `docker login` stored for the image&#39;s registry (config.json or its directory, credential helpers included) to the app before deploying |  |
 | `--local-image <NAME>` | deploy a linux/amd64 image from this machine&#39;s Docker without a registry (uploads `docker save` output) |  |
+| `--boot` | with --local-image, first run the image with local Docker (as `doctor --boot` does) and stop before saving or uploading it if it crashes, listens on the wrong address, runs out of memory or fails --healthcheck-path, --healthcheck-grpc or its HEALTHCHECK |  |
+| `--boot-env-file <FILE>` | with --boot, KEY=VALUE lines for the local boot only (docker env-file format); nothing in it is uploaded |  |
 | `--image-archive <PATH>` | deploy a linux/amd64 image from a `docker save` archive without a registry |  |
 | `--tarball <PATH>` | deploy from a source tarball |  |
 | `--path <DIR>` | source directory (default: current directory) |  |
@@ -252,7 +254,7 @@ gregale deploy --path packages/api --source=worktree
 
 Check local source, an image or project prerequisites before deploying
 
-`gregale deploy check [--project] [--image <REF>] [--registry-user <USER>] [--registry-password-stdin] [--docker-config <PATH>] [--boot] [--env-file <FILE>] [--ram <MB>] [--healthcheck-path <PATH>] [--strict] [--app <SLUG>] [--project-slug <SLUG>] [--path <DIR>] [--source <MODE>] [--worktree] [--env <ENV>] [--from <ENV>] [--expected-state <SHA256>] [--atomic] [--add-services] [--verify] [--workers] [--worker-health] [--migrate] [--progressive] [--stabilize] [--sync-config] [--config-file <PATH>] [--secrets-file <PATH>]`
+`gregale deploy check [--project] [--image <REF>] [--registry-user <USER>] [--registry-password-stdin] [--docker-config <PATH>] [--boot] [--env-file <FILE>] [--ram <MB>] [--healthcheck-path <PATH>] [--healthcheck-grpc] [--healthcheck-grpc-service <NAME>] [--execution-mode <MODE>] [--strict] [--app <SLUG>] [--project-slug <SLUG>] [--path <DIR>] [--source <MODE>] [--worktree] [--env <ENV>] [--from <ENV>] [--expected-state <SHA256>] [--atomic] [--add-services] [--verify] [--workers] [--worker-health] [--migrate] [--progressive] [--stabilize] [--sync-config] [--config-file <PATH>] [--secrets-file <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -261,10 +263,13 @@ Check local source, an image or project prerequisites before deploying
 | `--registry-user <USER>` | without --project: registry username; requires --registry-password-stdin |  |
 | `--registry-password-stdin` | without --project: read the registry password or token from stdin |  |
 | `--docker-config <PATH>` | without --project: with --image, use the credentials `docker login` stored for the image&#39;s registry, from this config.json or its directory |  |
-| `--boot` | without --project: with --image, also run the image with local Docker and check it starts, answers GET / on 0.0.0.0:$PORT and stays up |  |
+| `--boot` | without --project: with --image, also run the image with local Docker and check it starts, answers GET / on 0.0.0.0:$PORT (gRPC health with --healthcheck-grpc) and stays up |  |
 | `--env-file <FILE>` | without --project: with --boot, pass KEY=VALUE lines from this file to the container |  |
 | `--ram <MB>` | without --project: with --boot, the container&#39;s memory limit in MB (default: --app&#39;s RAM, else your plan&#39;s default for a new app) |  |
 | `--healthcheck-path <PATH>` | without --project: with --boot, probe this readiness path instead of / and require 2xx |  |
+| `--healthcheck-grpc` | without --project: with --boot, probe standard gRPC health on $PORT and require SERVING |  |
+| `--healthcheck-grpc-service <NAME>` | without --project: with --healthcheck-grpc, the service name to check (default: the whole server) |  |
+| `--execution-mode <MODE>` | without --project: with --boot, the app&#39;s lifecycle mode (request\|service\|worker\|job); a worker must keep running and a job exit 0, with no HTTP check |  |
 | `--strict` | without --project: exit 1 on warnings |  |
 | `--app <SLUG>` | without --project: app whose env and secret names count as declared (defaults to linked context) |  |
 | `--project-slug <SLUG>` | with --project: project slug (defaults to linked context or selected directory) |  |
@@ -11661,6 +11666,12 @@ Show seat usage
 ### org list
 
 List orgs
+
+`gregale org list [--all]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--all` | include deleted organizations (their slugs are released 30 days after deletion) |  |
 
 ### org create
 

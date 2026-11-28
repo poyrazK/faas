@@ -141,6 +141,10 @@ var featureRouteActions = map[string]authz.OrgAction{
 	"GET /v1/apps/{slug}/mcp-listing":    authz.OrgActionReadApp,
 	"PUT /v1/apps/{slug}/mcp-listing":    authz.OrgActionManageAppSecurity,
 	"DELETE /v1/apps/{slug}/mcp-listing": authz.OrgActionManageAppSecurity,
+	// mcp-contract (ADR-20261127191645): an override lets a breaking
+	// release reach paying customers.
+	"GET /v1/apps/{slug}/mcp-contract":            authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/mcp-contract/overrides": authz.OrgActionManageAppSecurity,
 	// consumers
 	"POST /v1/apps/{slug}/consumers":                                                        authz.OrgActionManageAppSecurity,
 	"GET /v1/apps/{slug}/consumers/{consumer_id}/credits":                                   authz.OrgActionManageAppSecurity,

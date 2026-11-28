@@ -114,8 +114,8 @@ func TestCommandCapabilityPath(t *testing.T) {
 		// on production-us, where their preview capabilities are off.
 		{[]string{"alerts", "actions", "--app", "my-app"}, "alerts actions", "alert-rollbacks"},
 		{[]string{"app", "my-app", "exec", "--", "ls"}, "app exec", "app-tasks"},
-		{[]string{"app", "my-app", "cp", "/tmp/x", "-"}, "app cp", "app-tasks"},
-		{[]string{"app", "my-app", "port-forward", "5432:db:5432"}, "app port-forward", "app-tasks"},
+		{[]string{"app", "my-app", "cp", "/tmp/x", "-"}, "app cp", "interactive-app-sessions"},
+		{[]string{"app", "my-app", "port-forward", "5432:db:5432"}, "app port-forward", "interactive-app-sessions"},
 		// ChronoLake report: `app network show` and `doctor` inspect any
 		// app's network (docs/networking.md); only attaching a private
 		// network is the private-networks preview.

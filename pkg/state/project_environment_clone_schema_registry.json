@@ -12961,11 +12961,48 @@
     "kind": "operational"
   },
   {
+    "table": "mcp_contract_checks",
+    "columns": [
+      "accepted_at",
+      "account_id",
+      "app_id",
+      "baseline_sha256",
+      "candidate",
+      "candidate_sha256",
+      "changes",
+      "checked_at",
+      "deployment_id",
+      "live_at",
+      "override_id",
+      "verdict"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "mcp_contract_overrides",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "created_by",
+      "deployment_id",
+      "expires_at",
+      "id",
+      "reason",
+      "used_at",
+      "used_by_deployment"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "mcp_listings",
     "columns": [
       "account_id",
       "app_id",
+      "contract",
+      "contract_sha256",
       "endpoint",
+      "probe_secret",
       "published_at",
       "registry_name",
       "show_usage",

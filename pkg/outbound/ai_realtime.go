@@ -532,8 +532,8 @@ func (s *realtimeSession) admit(ctx context.Context, now time.Time) (*realtimeRe
 	if !decision.Granted {
 		s.h.Metrics.ObserveAdmission(s.metricID, "rejected")
 		s.h.Metrics.ObserveRejection(s.metricID, decision.Reason)
-		s.closeWith(aiRealtimeClosedCap, "outbound_budget_exhausted", "Outbound integration budget is exhausted: "+decision.Reason,
-			"outbound_budget_exhausted")
+		code, title := admissionRefusalProblem(decision.Reason)
+		s.closeWith(aiRealtimeClosedCap, code, title+": "+decision.Reason, code)
 		return nil, aiRealtimeClosedCap
 	}
 	s.h.Metrics.ObserveAdmission(s.metricID, "granted")

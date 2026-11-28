@@ -5,6 +5,7 @@ package consumersignup
 // while the seller has the listing published.
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/url"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/apid/mcpcontract"
 	"github.com/onebox-faas/faas/pkg/apid/mcplisting"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -77,8 +79,24 @@ func (s *Service) Listing(w http.ResponseWriter, r *http.Request) {
 		}
 		out.Customers = &open
 	}
+	out.Changelog = s.listingChangelog(r.Context(), app)
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	httpkit.WriteJSON(w, http.StatusOK, out)
+}
+
+// listingChangelog lists the tool contract changes shipped since the
+// listing was published (ADR-20261127191645). The page is still worth
+// serving without them, so a read error leaves them out.
+func (s *Service) listingChangelog(ctx context.Context, app state.App) []api.MCPContractChangelogEntry {
+	store, ok := s.Host.Store().(state.MCPContractStore)
+	if !ok {
+		return nil
+	}
+	checks, err := store.ListMCPContractChangelog(ctx, app.AccountID, app.ID, api.MCPContractChangelogMax)
+	if err != nil || len(checks) == 0 {
+		return nil
+	}
+	return mcpcontract.Changelog(checks)
 }
 
 // ListingPage serves a published listing's page.

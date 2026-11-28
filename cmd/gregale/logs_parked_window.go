@@ -123,7 +123,10 @@ func printParkedWindowLogs(ctx context.Context, client parkedWindowLogsClient, s
 					return false, 0
 				}
 				if !header {
-					_, _ = fmt.Fprintf(errOut, "Retained logs of parked instance %s (started %s).\n", ins.ID, ins.Start.UTC().Format(time.RFC3339))
+					// started_at is the moment the instance became ready, after
+					// its boot lines were written; "started" put the boot output
+					// before the start (prod hunt r71).
+					_, _ = fmt.Fprintf(errOut, "Retained logs of parked instance %s (ready %s).\n", ins.ID, ins.Start.UTC().Format(time.RFC3339))
 					header = true
 				}
 				_, _ = fmt.Fprintln(out, formatRuntimeLogLine(e.Data))

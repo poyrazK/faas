@@ -1243,6 +1243,8 @@ func cmdAppDispatch(args []string) int {
 			return cmdAppCopy(slug, commandArgs)
 		case "port-forward":
 			return cmdAppPortForward(slug, commandArgs)
+		case "tasks":
+			return cmdAppTasks(slug, commandArgs)
 		case subSecurity:
 			return cmdAppSecurity(slug, commandArgs)
 		case subEgressAllowlist:
@@ -1465,10 +1467,9 @@ func cmdQueueDispatch(args []string) int {
 	case "bindings":
 		return cmdQueueBindings(args[1:])
 	default:
-		sug, _ := suggestSubcommand(args[0], parent)
-		PrintUsage(os.Stderr, queueDispatchUsage, "queue")
-		maybeSuggestSub(sug)
-		return 1
+		// `queue get nope` printed the usage without saying "get" was the
+		// word it could not use (prod hunt r75).
+		return printUnknownSubcommand(os.Stderr, "queue", parent, args[0])
 	}
 }
 

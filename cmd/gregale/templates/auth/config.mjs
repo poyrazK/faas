@@ -1,5 +1,5 @@
 // Mirrors pkg/api/limits.go; TestAuthTemplateRuntimeBounds checks this contract.
-export const limits = Object.freeze({ accessTokenSeconds: 600, pool: 4, frontPool: 2, bodyBytes: 1048576, authzBodyBytes: 65536, authzConfigBytes: 65536, redirectURLs: 50, migrationStatementMs: 600000, invitationSeconds: 604800, emailTimeoutMs: 10000, hookBodyBytes: 262144, storageURLSeconds: 60, adminBodyBytes: 1048576, importBatch: 100, adminPageSize: 100, customClaimsBytes: 1000, signupDomains: 100, waitlistPending: 10000, signupApproveBatch: 100, impersonationDefaultMinutes: 30, impersonationMaxMinutes: 60, reauthenticationSeconds: 600, sessionMinMinutes: 15, sessionMaxMinutes: 525600, emailSubjectChars: 150, emailBodyBytes: 4000, signingKeys: 4, uiNameChars: 60, auditRetentionMaxDays: 3650, auditPruneBatch: 5000, auditPruneBatches: 20, auditPruneIntervalSeconds: 21600, eventBatch: 50, eventLeaseSeconds: 120, eventMaxBackoffSeconds: 3600, eventRetentionSeconds: 259200, smsCodeSeconds: 300, ssoMetadataBytes: 524288, ssoDomains: 50, smsCountries: 50, goTrueMemoryDivisor: 3, goTrueMemoryMinMiB: 32, scimPageSize: 100, scimBodyBytes: 65536, oauthClients: 1000, anonymousRetentionMaxDays: 3650, teamMembers: 500, teamInvitations: 500, teamEmailBytes: 320, teamContextBytes: 4096, teamInvitationMinSeconds: 300, teamInvitationMaxSeconds: 1209600, teamHistoryPageSize: 100, teamCursorBytes: 1024, emailGrantSeconds: 2592000, serviceAccountsPerOrg: 50, serviceAccountSecrets: 2, serviceAccountSecretMaxDays: 3650, serviceAccountTokensPerMinute: 60, passwordMinLength: 8, passwordFailuresPerAddress: 10, passwordFailuresPerAccount: 50, secondStepFailuresPerUser: 10, attemptWindowSeconds: 900, storageUploadDefaultBytes: 104857600, storageUploadMaxBytes: 5368709120 })
+export const limits = Object.freeze({ accessTokenSeconds: 600, pool: 4, frontPool: 2, bodyBytes: 1048576, authzBodyBytes: 65536, authzConfigBytes: 65536, redirectURLs: 50, migrationStatementMs: 600000, invitationSeconds: 604800, emailTimeoutMs: 10000, hookBodyBytes: 262144, storageURLSeconds: 60, adminBodyBytes: 1048576, importBatch: 100, adminPageSize: 100, customClaimsBytes: 1000, signupDomains: 100, waitlistPending: 10000, signupApproveBatch: 100, impersonationDefaultMinutes: 30, impersonationMaxMinutes: 60, reauthenticationSeconds: 600, sessionMinMinutes: 15, sessionMaxMinutes: 525600, emailSubjectChars: 150, emailBodyBytes: 4000, signingKeys: 4, uiNameChars: 60, auditRetentionMaxDays: 3650, auditPruneBatch: 5000, auditPruneBatches: 20, auditPruneIntervalSeconds: 21600, eventBatch: 50, eventLeaseSeconds: 120, eventMaxBackoffSeconds: 3600, eventRetentionSeconds: 259200, smsCodeSeconds: 300, ssoMetadataBytes: 524288, ssoDomains: 50, smsCountries: 50, goTrueMemoryDivisor: 3, goTrueMemoryMinMiB: 32, scimPageSize: 100, scimBodyBytes: 65536, oauthClients: 1000, anonymousRetentionMaxDays: 3650, teamMembers: 500, teamInvitations: 500, teamEmailBytes: 320, teamContextBytes: 4096, teamInvitationMinSeconds: 300, teamInvitationMaxSeconds: 1209600, teamHistoryPageSize: 100, teamCursorBytes: 1024, emailGrantSeconds: 2592000, serviceAccountsPerOrg: 50, serviceAccountSecrets: 2, serviceAccountSecretMaxDays: 3650, serviceAccountTokensPerMinute: 60, passwordMinLength: 8, passwordFailuresPerAddress: 10, passwordFailuresPerAccount: 50, secondStepFailuresPerUser: 10, attemptWindowSeconds: 900, oauthRegistrationsPerAddress: 10, oauthRegistrationWindowSeconds: 3600, oauthUnusedClientHours: 24, oauthUnusedClients: 500, adminKeyLookupsPerAddress: 60, trustedNetworkDays: 30, trustedNetworkMaxAccounts: 20, trustedBudgetMultiplier: 4, newDeviceDays: 90, signInSeenRefreshSeconds: 3600, messagesPerRecipientDefault: 5, messagesPerRecipientMax: 50, messagesPerNetworkMax: 1000, messageWindowSeconds: 3600, storageUploadDefaultBytes: 104857600, storageUploadMaxBytes: 5368709120 })
 
 import { createECDH, createPrivateKey } from 'node:crypto'
 import { totalmem } from 'node:os'
@@ -346,7 +346,7 @@ export function runtimeConfig(env) {
     serviceAccounts: env.AUTH_SERVICE_ACCOUNTS === '1',
     // Wallet sign-in (Sign-In With Ethereum / Solana), verified by GoTrue.
     web3: { ethereum: gotrueEnv.GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED === 'true', solana: gotrueEnv.GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED === 'true' },
-    oauth: env.AUTH_OAUTH_SERVER === '1', selfDeletion: env.AUTH_SELF_DELETION === '1', orgClaims: env.AUTH_ORG_CLAIMS === '1', sessions: sessions.policy, anonymousRetentionDays: anonymousRetention === '' ? null : Number(anonymousRetention), productControlTeamEnabled: env.AUTH_PRODUCT_CONTROL_TEAM_ENABLED === '1', productControlEmailEnabled: env.AUTH_PRODUCT_CONTROL_EMAIL_ENABLED === '1' }
+    oauth: env.AUTH_OAUTH_SERVER === '1', selfDeletion: env.AUTH_SELF_DELETION === '1', orgClaims: env.AUTH_ORG_CLAIMS === '1', sessions: sessions.policy, anonymousRetentionDays: anonymousRetention === '' ? null : Number(anonymousRetention), productControlTeamEnabled: env.AUTH_PRODUCT_CONTROL_TEAM_ENABLED === '1', productControlEmailEnabled: env.AUTH_PRODUCT_CONTROL_EMAIL_ENABLED === '1', security: securityConfig(env) }
   return { ...config, settings: publicSettings(config) }
 }
 
@@ -354,7 +354,7 @@ export function runtimeConfig(env) {
 // anyway (published key IDs, enabled providers, rules a sign-up form shows)
 // or harmless. The CLI and dashboard read settings here because app secrets
 // are write-only.
-export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, branding, captcha, lifecycleEvents, auditRetentionDays, smsCountries: countries, orgSSO, anonymousRetentionDays, selfDeletion, orgClaims, signups, impersonation, web3, sessions, orgDomains, domainJoin, serviceAccounts }) {
+export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, branding, captcha, lifecycleEvents, auditRetentionDays, smsCountries: countries, orgSSO, anonymousRetentionDays, selfDeletion, orgClaims, signups, impersonation, web3, sessions, orgDomains, domainJoin, serviceAccounts, security }) {
   const passkeys = g.GOTRUE_PASSKEY_ENABLED === 'true'
   const flag = (value, fallback) => value === undefined ? fallback : value === 'true'
   const required = (g.GOTRUE_PASSWORD_REQUIRED_CHARACTERS ?? '').split(':').filter(Boolean)
@@ -400,6 +400,14 @@ export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, bran
     passkeys: { enabled: passkeys, rp_id: g.GOTRUE_WEBAUTHN_RP_ID, origins: g.GOTRUE_WEBAUTHN_RP_ORIGINS.split(',').filter(Boolean) },
     branding: { name: branding.name, color: branding.color, logo_url: branding.logoURL },
     captcha: captcha ? { provider: captcha.provider, site_key: captcha.siteKey } : null,
+    // Sign-in protection: alerts send only with an email provider (email
+    // above); message limits are per hour, null when off.
+    security: {
+      new_device_alerts: security?.newDeviceAlerts !== false,
+      messages_per_recipient: security?.messagesPerRecipient ?? limits.messagesPerRecipientDefault,
+      messages_per_network: security?.messagesPerNetwork ?? null,
+      trusted_network_days: limits.trustedNetworkDays,
+    },
     phone: { enabled: g.GOTRUE_EXTERNAL_PHONE_ENABLED === 'true', provider: g.GOTRUE_EXTERNAL_PHONE_ENABLED === 'true' ? g.GOTRUE_SMS_PROVIDER : null, countries },
     // What an identity provider needs to trust this app: GoTrue uses its
     // metadata URL as the service provider's entity ID.
@@ -510,6 +518,28 @@ export function sessionPolicy(env) {
       ...(idle !== null ? { GOTRUE_SESSIONS_INACTIVITY_TIMEOUT: `${idle}m` } : {}),
       ...(single ? { GOTRUE_SESSIONS_SINGLE_PER_USER: 'true' } : {}),
     },
+  }
+}
+
+// securityConfig reads sign-in security settings: new-device alerts (on
+// unless AUTH_NEW_DEVICE_ALERTS is 0; they need an email provider to send)
+// and how many sign-in messages one recipient may be sent, and one network
+// may ask for, an hour (sends.mjs). The network budget is off unless set:
+// an app that sends from its own server asks from one network for all its
+// users.
+export function securityConfig(env) {
+  const alerts = env.AUTH_NEW_DEVICE_ALERTS ?? ''
+  if (!['', '0', '1'].includes(alerts)) throw new Error('AUTH_NEW_DEVICE_ALERTS must be 1 or 0')
+  const count = (name, fallback, max) => {
+    const value = env[name] ?? ''
+    if (value === '') return fallback
+    if (!/^[1-9][0-9]{0,3}$/.test(value) || Number(value) > max) throw new Error(`${name} must be 1 to ${max}`)
+    return Number(value)
+  }
+  return {
+    newDeviceAlerts: alerts !== '0',
+    messagesPerRecipient: count('AUTH_MESSAGES_PER_RECIPIENT', limits.messagesPerRecipientDefault, limits.messagesPerRecipientMax),
+    messagesPerNetwork: count('AUTH_MESSAGES_PER_NETWORK', null, limits.messagesPerNetworkMax),
   }
 }
 

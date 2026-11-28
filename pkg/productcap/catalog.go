@@ -63,6 +63,11 @@ type Capability struct {
 	// AlwaysOn marks a capability that cannot be switched off (the VM
 	// isolation, scale-to-zero, the CLI, the SDKs). It has no platform flag.
 	AlwaysOn bool `json:"always_on,omitempty"`
+	// InheritsFlag gives a sub-feature no platform flag of its own: it is
+	// released exactly when its parent is. For a sub-feature split out for
+	// runtime availability (interactive-app-sessions under app-tasks), so an
+	// operator never has to release it separately from its parent.
+	InheritsFlag bool `json:"inherits_flag,omitempty"`
 	// Settings are the request fields and declarations the capability owns,
 	// refused while its flag is off for the caller: "app.<field>" (any
 	// non-zero value), "app.<field>=<value>" (one value), "edge_rule.<kind>",
@@ -235,6 +240,9 @@ func validateParents(catalog Catalog) error {
 		byID[capability.ID] = capability
 	}
 	for _, capability := range catalog.Capabilities {
+		if capability.InheritsFlag && (capability.Parent == "" || capability.AlwaysOn) {
+			return fmt.Errorf("capability %q inherits its flag, so it needs a parent and cannot be always-on", capability.ID)
+		}
 		if capability.Parent == "" {
 			continue
 		}

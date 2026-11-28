@@ -4601,15 +4601,16 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// without joining the legacy state_transition rows.
 		if e.events != nil {
 			e.events.Emit(ctx, events.BootFailed{
-				EmitAt:     time.Now().UTC(),
-				WakeID:     bootInput.wakeID,
-				AppID:      bootInput.appID,
-				InstanceID: bootInput.insID,
-				NodeID:     bootInput.nodeID,
-				Method:     method,
-				Reason:     "vmm_boot_failed",
-				FailedAt:   time.Now().UTC(),
-				Mirror:     mode == string(state.InstanceModeMirror),
+				EmitAt:       time.Now().UTC(),
+				WakeID:       bootInput.wakeID,
+				AppID:        bootInput.appID,
+				InstanceID:   bootInput.insID,
+				NodeID:       bootInput.nodeID,
+				Method:       method,
+				Reason:       "vmm_boot_failed",
+				FailedAt:     time.Now().UTC(),
+				Mirror:       mode == string(state.InstanceModeMirror),
+				DeploymentID: bootInput.depID,
 			})
 		}
 		// issue #1059 / ADR-127 §3.6 — schedd-side parity
@@ -4769,15 +4770,16 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// the same wake_id (the prior emit at the Phase 3 entry).
 		if e.events != nil {
 			e.events.Emit(ctx, events.BootFailed{
-				EmitAt:     time.Now().UTC(),
-				WakeID:     bootInput.wakeID,
-				AppID:      bootInput.appID,
-				InstanceID: bootInput.insID,
-				NodeID:     bootInput.nodeID,
-				Method:     method,
-				Reason:     "record_runtime_failed",
-				FailedAt:   time.Now().UTC(),
-				Mirror:     mode == string(state.InstanceModeMirror),
+				EmitAt:       time.Now().UTC(),
+				WakeID:       bootInput.wakeID,
+				AppID:        bootInput.appID,
+				InstanceID:   bootInput.insID,
+				NodeID:       bootInput.nodeID,
+				Method:       method,
+				Reason:       "record_runtime_failed",
+				FailedAt:     time.Now().UTC(),
+				Mirror:       mode == string(state.InstanceModeMirror),
+				DeploymentID: bootInput.depID,
 			})
 		}
 		// issue #1059 / ADR-127 §3.6 — schedd-side parity
@@ -4894,6 +4896,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 			InstanceID:            bootInput.insID,
 			NodeID:                bootInput.nodeID,
 			Method:                completedMethod,
+			DeploymentID:          bootInput.depID,
 			Tier:                  bootInput.chosenTier,
 			RestoreFallbackReason: restoreFallbackReason,
 			StartedAt:             bootInput.startedAt,
@@ -7089,6 +7092,13 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) (primeEr
 	if allowed, err := e.releaseAllowsPrime(ctx, dep); err != nil || !allowed {
 		return err
 	}
+	// A branch's workloads stay dark until its data is ready: they read
+	// their binding URLs at boot. That holds for the deployments the branch
+	// made and for a pull request's build into its scope (ADR-20261113121342).
+	// The branch data reconciler primes them once the data is ready.
+	if ready, err := e.environmentBranchDataReady(ctx, dep.ID); err != nil || !ready {
+		return err
+	}
 	app, err = state.ResolveAppForDeployment(ctx, e.store, app, dep)
 	if err != nil {
 		return fmt.Errorf("sched: prime: load workload settings: %w", err)
@@ -7132,13 +7142,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) (primeEr
 			return err
 		}
 		if lazy {
-			// The branch's database copies must exist first: the workload reads
-			// its binding URLs at boot. The branch data reconciler primes the
-			// deployment again once they do.
-			ready, err := e.environmentBranchDataReady(ctx, dep.ID)
-			if err != nil || !ready {
-				return err
-			}
+			// Its branch's data is ready (checked above).
 			if err := e.verifyPrimeLayer(ctx, appID, primeLayer); err != nil {
 				return err
 			}
@@ -9280,8 +9284,12 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 	// A transient capture error keeps the prime's retry (dispatchPrime);
 	// any other platform capture failure activates without a snapshot,
 	// except a managed cache's handoff, which fails so the running cache
-	// keeps serving (isManagedCacheHandoff).
-	if err != nil && outcome == wire.InitSnapshotOutcomeSnapshotFailed && !retryableSnapshotPrimeError(err) &&
+	// keeps serving (isManagedCacheHandoff). On the last attempt a transient
+	// error activates too: uc1127-umami booted healthy twice on 2026-11-27,
+	// both captures hit the 45 s budget, and the release failed as
+	// "exceeded the cold-boot RPC budget" with a fix to raise
+	// startup_deadline_s (prod hunt r71). Snapshots are a cache (ADR-005).
+	if err != nil && outcome == wire.InitSnapshotOutcomeSnapshotFailed && (!retryableSnapshotPrimeError(err) || finalPrimeAttempt(ctx)) &&
 		!allowReuse && state.HasSnapshotPrimeAttempt(ctx) {
 		if !e.isManagedCacheHandoff(ctx, ins.DeploymentID) {
 			return e.activatePrimeWithoutSnapshot(ctx, ins, app, now, err)

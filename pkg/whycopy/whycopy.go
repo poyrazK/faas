@@ -344,6 +344,11 @@ var catalog = map[string]Render{
 		Why:  "before taking traffic Gregale ran the app's verification contract against the new release; a required check failed or could not run, so the release was not promoted and the previous one keeps serving",
 		Fix:  "• run `gregale deployment <id> --json` and read hosting_receipt.smoke.verification_contract for the failing check\n• fix the app or the check, then deploy again\n• mark a check `advisory: true` to report it without blocking",
 	},
+	api.CodeMCPContractBreaking: {
+		Hint: "your new release breaks the MCP tools your paying customers rely on",
+		Why:  "the MCP server has a published listing, so before taking traffic Gregale compared the new release's tools with the contract the listing promised; a tool was removed or its input narrowed, so the release was not promoted and the previous one keeps serving",
+		Fix:  "• run `gregale deployment <id> --json` and read hosting_receipt.smoke.mcp_contract for the breaking changes\n• keep the old tool or argument working, or make the new argument optional\n• to ship the break on purpose: `gregale mcp server deploy --allow-breaking --reason \"...\"`; customers are told through mcp.contract.changed and the listing's changelog",
+	},
 	api.CodeImageNotFound: {
 		Hint: "the container image you asked for could not be pulled",
 		Why:  "the registry answered that the image or tag does not exist, or it is private and Gregale had no credentials for it",

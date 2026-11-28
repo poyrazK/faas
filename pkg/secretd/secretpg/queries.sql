@@ -179,10 +179,13 @@ VALUES (sqlc.arg(node_id)::uuid, sqlc.arg(subject_class)::text, sqlc.arg(subject
 
 -- name: VerificationLease :one
 -- The node verifying a deployment, the deployment's status and scope, and the
--- app's stored verification contract (ADR-20261122220000 amendment 2).
+-- app's stored verification contract (ADR-20261122220000 amendment 2), and
+-- the probe secret its MCP listing names (ADR-20261127191645).
 SELECT l.app_id, l.node_name, l.expires_at, d.status, d.scope,
-       c.contract::jsonb AS contract
+       c.contract::jsonb AS contract,
+       COALESCE(m.probe_secret, '')::text AS probe_secret
   FROM deployment_verification_leases l
   JOIN deployments d ON d.id = l.deployment_id AND d.app_id = l.app_id
   LEFT JOIN app_verification_contracts c ON c.app_id = l.app_id
+  LEFT JOIN mcp_listings m ON m.app_id = l.app_id AND m.contract IS NOT NULL
  WHERE l.deployment_id = sqlc.arg(deployment_id)::uuid;

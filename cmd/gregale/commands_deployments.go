@@ -798,6 +798,19 @@ func cmdDeploymentGet(args []string) int {
 	if d.ErrorCode != "" {
 		_, _ = fmt.Fprintf(osStdout, "%-14s %s\n", "error_code:", d.ErrorCode)
 	}
+	// Prod hunt r70: a failed deployment carried hint/why/fix from the
+	// scheduler, but this view printed only error and error_code, so the
+	// remedy (raise startup_deadline_s, read the logs) never reached the
+	// customer. `inspect` already renders the same rows.
+	if d.ErrorHint != "" {
+		RenderHintRow(osStdout, d.ErrorHint)
+	}
+	if d.ErrorWhy != "" {
+		RenderWhyRow(osStdout, d.ErrorWhy)
+	}
+	if d.ErrorFix != "" {
+		RenderFixRow(osStdout, d.ErrorFix)
+	}
 	// Prod hunt r35: the error named only a raw task API path; show the
 	// release command's captured output as `deploys status` does.
 	printReleaseTaskOutput(ctx, client, osStdout, *appFlag, d)

@@ -367,6 +367,14 @@ var workloadAppFieldPolicies = map[string]WorkloadFieldPolicy{
 	// A create-request flag for joining ProjectID (#7860); never persisted,
 	// so a clone has nothing to copy.
 	"AddToProject": WorkloadFieldIdentity,
+
+	// API sandbox markers (#8128) say what this app is (a shareable sandbox
+	// or one of its runs); an environment clone is never a sandbox.
+	"APISandboxSmokePath":         WorkloadFieldIdentity,
+	"APISandboxPartnerLabel":      WorkloadFieldIdentity,
+	"APISandboxRunID":             WorkloadFieldIdentity,
+	"APISandboxRunPartnerWebhook": WorkloadFieldIdentity,
+	"APISandboxScenario":          WorkloadFieldIdentity,
 }
 
 func WorkloadAppFieldPolicies() map[string]WorkloadFieldPolicy {
