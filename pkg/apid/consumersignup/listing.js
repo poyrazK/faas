@@ -113,7 +113,8 @@
   function renderToolScan(s) {
     if (!s) return;
     const when = new Date(s.scanned_at).toLocaleDateString();
-    let text = "Tools scanned for prompt injection " + when + " (rules v" + s.rule_set + "): ";
+    const what = s.source === "deployment" ? "Live tools" : "Published tools";
+    let text = what + " scanned for prompt injection " + when + " (rules v" + s.rule_set + "): ";
     if (s.status === "reviewed") {
       const n = s.reviewed_high || 0;
       text += n + (n === 1 ? " finding" : " findings") + " reviewed by the seller";

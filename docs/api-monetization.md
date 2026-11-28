@@ -1204,7 +1204,10 @@ gregale mcp server listing get --app my-mcp   # the scan, its findings and your 
 A production deploy whose tools have high findings the current baseline
 did not already have is refused the same way (`mcp_tool_scan_blocked`), and
 the previous release keeps serving. Findings you reviewed at publish, or
-that an earlier deploy shipped with an override, don't refuse it again. To
+that an earlier deploy shipped with an override, don't refuse it again, and
+a republish of the same flagged tools keeps your review. A review covers
+the exact text of the flagged field: any edit to that field needs a new
+review. To
 ship new ones, record a `tool_scan` override, which works like a contract
 override:
 
@@ -1218,8 +1221,10 @@ gregale mcp server contract allow --app my-mcp --tool-scan --reason "the example
 one `--reason`. `contract show` lists each check's high findings and
 whether a scan override admitted it.
 
-The listing page says when the tools were last scanned and with which rule
-set version: "no high-severity findings", or how many findings the seller
+The listing page says when the tools were last scanned, with which rule
+set version and whose tools: the ones you published, until a production
+deploy has been checked, then the ones the live deployment served. It
+shows "no high-severity findings", or how many findings the seller
 reviewed. It never shows the rules that matched, the text or your reason
 ([ADR-20261128135329](adr/20261128135329-mcp-tool-safety-scan.md)).
 

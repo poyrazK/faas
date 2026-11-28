@@ -99,7 +99,7 @@ func TestMCPToolScan(t *testing.T) {
 	res := e.Do(t, http.MethodGet, "/v1/consumer-signup/search/listing", nil, map[string]string{"Authorization": ""})
 	var public api.PublicMCPListingResponse
 	decode(t, res, http.StatusOK, &public)
-	if public.ToolScan == nil || public.ToolScan.Status != api.MCPToolScanReviewed || public.ToolScan.ReviewedHigh != 1 {
+	if public.ToolScan == nil || public.ToolScan.Status != api.MCPToolScanReviewed || public.ToolScan.ReviewedHigh != 1 || public.ToolScan.Source != api.MCPToolScanSourceListing {
 		t.Fatalf("public badge = %+v", public.ToolScan)
 	}
 	var keys map[string]json.RawMessage
@@ -107,7 +107,7 @@ func TestMCPToolScan(t *testing.T) {
 	var badge map[string]json.RawMessage
 	_ = json.Unmarshal(keys["tool_scan"], &badge)
 	for k := range badge {
-		if k != "rule_set" && k != "scanned_at" && k != "status" && k != "reviewed_high" {
+		if k != "rule_set" && k != "scanned_at" && k != "status" && k != "reviewed_high" && k != "source" {
 			t.Fatalf("public badge leaks %q: %s", k, keys["tool_scan"])
 		}
 	}

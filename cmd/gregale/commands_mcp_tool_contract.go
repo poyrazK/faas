@@ -27,7 +27,7 @@ func cmdMCPContract(args []string) int {
 	verb := args[0]
 	fs := newFlagSet("mcp-contract-"+verb, flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug")
-	reason := fs.String("reason", "", "why paying customers' tools may break (allow)")
+	reason := fs.String("reason", "", "why paying customers' tools may break, or with --tool-scan why the flagged tool text is safe (allow)")
 	expires := fs.Duration("expires", 0, "how long the override stays usable (allow; default 1h, at most 24h)")
 	toolScan := fs.Bool("tool-scan", false, "admit unreviewed high-severity tool safety scan findings instead of a breaking change (allow)")
 	if err := fs.Parse(args[1:]); err != nil {

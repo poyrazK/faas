@@ -305,7 +305,7 @@ func mcpCLICommand() cliCommand {
 				"Use it before a git push or gregale deploy; gregale mcp server deploy --allow-breaking --reason does both.",
 			}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Value: "SLUG", Req: true},
-				{Name: "reason", Short: "why paying customers' tools may break (audited)", Value: "TEXT", Req: true},
+				{Name: "reason", Short: "why tools may break or flagged tool text is safe (audited)", Value: "TEXT", Req: true},
 				{Name: "expires", Short: "how long the override stays usable (default 1h, at most 24h)", Value: "DURATION"},
 				{Name: "tool-scan", Short: "admit new high tool scan findings instead of a breaking change", Bool: true},
 			}, Examples: []string{"gregale mcp server contract allow --app my-mcp --reason \"rename search to web_search\"", "gregale mcp server contract allow --app my-mcp --tool-scan --reason \"'ignore previous' quotes a user query\""}},

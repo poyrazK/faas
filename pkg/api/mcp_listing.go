@@ -91,6 +91,8 @@ type MCPToolScanFinding struct {
 	Name     string `json:"name"`
 	Path     string `json:"path"`
 	Excerpt  string `json:"excerpt,omitempty"`
+	// TextSHA256 digests the whole field; a review covers that exact text.
+	TextSHA256 string `json:"text_sha256,omitempty"`
 }
 
 // MCPToolScanBadge is what the public listing shows of the scan: no rules
@@ -102,12 +104,19 @@ type MCPToolScanBadge struct {
 	// seller shipped ReviewedHigh high findings with an audited reason).
 	Status       string `json:"status"`
 	ReviewedHigh int    `json:"reviewed_high,omitempty"`
+	// Source is what was scanned: "listing", the tools the seller
+	// published, or "deployment", the tools the live deployment served to
+	// the platform's deploy check.
+	Source string `json:"source"`
 }
 
 // MCPToolScanBadge statuses.
 const (
 	MCPToolScanClean    = "clean"
 	MCPToolScanReviewed = "reviewed"
+
+	MCPToolScanSourceListing    = "listing"
+	MCPToolScanSourceDeployment = "deployment"
 )
 
 // MCPListingInstall is how a client adds the server.

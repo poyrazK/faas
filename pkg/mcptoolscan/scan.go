@@ -7,6 +7,8 @@
 package mcptoolscan
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -51,6 +53,34 @@ type Finding struct {
 	// Excerpt quotes the matched text, with invisible and control characters
 	// written as U+XXXX.
 	Excerpt string `json:"excerpt,omitempty"`
+	// TextSHA256 is the hex SHA-256 of the whole field the rule matched
+	// in. A review covers that exact text: any edit to a reviewed field,
+	// another match of the same rule included, needs a new review.
+	TextSHA256 string `json:"text_sha256,omitempty"`
+}
+
+// ReviewKey identifies a finding across scans: the same rule on the same
+// field text of the same entry.
+func ReviewKey(f Finding) string {
+	return f.Rule + "\x00" + f.Kind + "\x00" + f.Name + "\x00" + f.Path + "\x00" + f.TextSHA256
+}
+
+// UnreviewedHigh is the high findings of r that reviewed, a scan whose high
+// findings were reviewed, does not have.
+func UnreviewedHigh(r, reviewed Report) []Finding {
+	seen := map[string]bool{}
+	for _, f := range reviewed.Findings {
+		if f.Severity == SeverityHigh {
+			seen[ReviewKey(f)] = true
+		}
+	}
+	var out []Finding
+	for _, f := range r.Findings {
+		if f.Severity == SeverityHigh && !seen[ReviewKey(f)] {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // Report is the result of one scan.
@@ -117,7 +147,7 @@ var textRules = []textRule{
 	{"sensitive_file", SeverityHigh, "a reference to credential or key files on the user's machine",
 		regexp.MustCompile(`~/\.ssh\b|\bid_(rsa|dsa|ecdsa|ed25519)\b|\.aws/credentials\b|/etc/(passwd|shadow)\b|\.netrc\b|\.git-credentials\b|\.kube/config\b|\.docker/config\.json\b|\bclaude_desktop_config\.json\b|(^|[\s/"'])mcp\.json\b`)},
 	{"exfiltration", SeverityHigh, "text that tells the model to send data to a fixed address",
-		regexp.MustCompile(`\b(sent|(send|post|upload|forward|transmit|e-?mail|exfiltrat|leak|report)(s|es|e|ed|ing)?|cop(y|ies|ied|ying))\b[^.\n]{0,80}?(https?://\S+|\b[\w.+-]+@[\w-]+\.[\w.-]+\b)`)},
+		regexp.MustCompile(`\b(sent|(send|post|upload|forward|transmit|e-?mail|exfiltrat|leak|report)(s|es|e|ed|ing)?|cop(y|ies|ied|ying))\b[^.\n]{0,40}?\b(results?|outputs?|responses?|contents?|data|files?|keys?|tokens?|secrets?|passwords?|credentials|conversation|messages|history|context|everything|information|details|answers?|arguments|inputs?|prompts?|notes?)\b[^.\n]{0,60}?(https?://\S+|\b[\w.+-]+@[\w-]+\.[\w.-]+\b)`)},
 	{"system_prompt_reference", SeverityMedium, "a reference to the model's system prompt or hidden context",
 		regexp.MustCompile(`\b(system|developer)\s+(prompt|message|instructions)\b|\bhidden\s+(context|instructions)\b`)},
 	{"conversation_request", SeverityMedium, "text that asks for the whole conversation or earlier messages",
@@ -185,13 +215,16 @@ type scanner struct {
 	names map[string]string
 }
 
-func (s *scanner) add(e entry, rule, severity, path, excerpt string) {
+// add records one finding per rule and field; text is the whole field.
+func (s *scanner) add(e entry, rule, severity, path, excerpt, text string) {
 	key := rule + "\x00" + e.kind + "\x00" + e.name + "\x00" + path
 	if s.seen[key] {
 		return
 	}
 	s.seen[key] = true
-	s.findings = append(s.findings, Finding{Rule: rule, Severity: severity, Kind: e.kind, Name: e.name, Path: path, Excerpt: excerpt})
+	sum := sha256.Sum256([]byte(text))
+	s.findings = append(s.findings, Finding{Rule: rule, Severity: severity, Kind: e.kind, Name: e.name, Path: path, Excerpt: excerpt,
+		TextSHA256: hex.EncodeToString(sum[:])})
 }
 
 // text runs every text rule over one string.
@@ -201,20 +234,20 @@ func (s *scanner) text(e entry, path, raw string) {
 	}
 	if i := invisibleIndex(raw); i >= 0 {
 		_, size := utf8.DecodeRuneInString(raw[i:])
-		s.add(e, ruleInvisible, SeverityHigh, path, excerpt(raw, i, i+size))
+		s.add(e, ruleInvisible, SeverityHigh, path, excerpt(raw, i, i+size), raw)
 	}
 	if len(raw) > api.MCPToolScanDescriptionMaxBytes {
-		s.add(e, ruleOversized, SeverityLow, path, fmt.Sprintf("%d bytes", len(raw)))
+		s.add(e, ruleOversized, SeverityLow, path, fmt.Sprintf("%d bytes", len(raw)), raw)
 	}
 	norm := normalize(raw)
 	for _, r := range textRules {
 		if loc := r.re.FindStringIndex(norm); loc != nil {
-			s.add(e, r.id, r.severity, path, excerpt(norm, loc[0], loc[1]))
+			s.add(e, r.id, r.severity, path, excerpt(norm, loc[0], loc[1]), raw)
 		}
 	}
 	if loc := steeringVerb.FindStringIndex(norm); loc != nil {
 		if other := s.otherTool(e, norm); other != "" {
-			s.add(e, ruleCrossTool, SeverityMedium, path, excerpt(norm, loc[0], loc[1])+" … "+other)
+			s.add(e, ruleCrossTool, SeverityMedium, path, excerpt(norm, loc[0], loc[1])+" … "+other, raw)
 		}
 	}
 }
@@ -239,7 +272,7 @@ func (s *scanner) otherTool(e entry, norm string) string {
 
 func (s *scanner) param(e entry, path, name string) {
 	if harvestParam.MatchString(strings.ToLower(strings.ReplaceAll(name, "-", "_"))) {
-		s.add(e, ruleHarvestParam, SeverityMedium, path, name)
+		s.add(e, ruleHarvestParam, SeverityMedium, path, name, name)
 	}
 }
 
@@ -326,13 +359,35 @@ func (s *scanner) report() Report {
 // invisibleIndex is the byte index of the first character that hides text
 // from a person: zero-width and bidirectional controls, Unicode tag
 // characters, and C0/C1 controls other than tab, newline and carriage return.
+// A single zero-width joiner or non-joiner between two letters (Persian,
+// Arabic and Indic spelling) or inside an emoji sequence is writing, not
+// hiding.
 func invisibleIndex(s string) int {
+	prev := rune(-1)
 	for i, r := range s {
-		if invisible(r) {
+		if invisible(r) && !joinerInWord(prev, r, s[i+utf8.RuneLen(r):]) {
 			return i
 		}
+		prev = r
 	}
 	return -1
+}
+
+func joinerInWord(prev, r rune, rest string) bool {
+	if r != 0x200c && r != 0x200d || prev < 0 || rest == "" {
+		return false
+	}
+	next, _ := utf8.DecodeRuneInString(rest)
+	if unicode.IsLetter(prev) && unicode.IsLetter(next) {
+		return true
+	}
+	return r == 0x200d && emojiPart(prev) && emojiPart(next)
+}
+
+// emojiPart is a character an emoji ZWJ sequence joins: a pictograph, a
+// skin tone modifier or the emoji variation selector.
+func emojiPart(r rune) bool {
+	return unicode.Is(unicode.So, r) || r >= 0x1f3fb && r <= 0x1f3ff || r == 0xfe0f
 }
 
 func invisible(r rune) bool {
@@ -387,19 +442,33 @@ func containsWord(text, word string) bool {
 			return false
 		}
 		start, end := from+i, from+i+len(word)
-		if wordBoundary(text, start-1) && wordBoundary(text, end) {
+		if boundaryBefore(text, start) && boundaryAfter(text, end) {
 			return true
 		}
 		from = start + 1
 	}
 }
 
-func wordBoundary(text string, i int) bool {
-	if i < 0 || i >= len(text) {
+// boundaryBefore and boundaryAfter report whether text has no word
+// character just before or just at byte i.
+func boundaryBefore(text string, i int) bool {
+	if i <= 0 {
 		return true
 	}
-	c := rune(text[i])
-	return !unicode.IsLetter(c) && !unicode.IsDigit(c) && c != '_' && c != '-'
+	c, _ := utf8.DecodeLastRuneInString(text[:i])
+	return !wordRune(c)
+}
+
+func boundaryAfter(text string, i int) bool {
+	if i >= len(text) {
+		return true
+	}
+	c, _ := utf8.DecodeRuneInString(text[i:])
+	return !wordRune(c)
+}
+
+func wordRune(c rune) bool {
+	return unicode.IsLetter(c) || unicode.IsDigit(c) || c == '_' || c == '-'
 }
 
 // excerpt quotes text around [start, end), at most

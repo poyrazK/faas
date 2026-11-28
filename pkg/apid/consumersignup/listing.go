@@ -109,9 +109,13 @@ func (s *Service) listingToolScan(ctx context.Context, app state.App, listing st
 		if err != nil || baseline.AccountID != app.AccountID {
 			return nil
 		}
-		return mcplisting.ToolScanBadge(baseline.ToolScan, baseline.ToolScanAt)
+		source := api.MCPToolScanSourceListing
+		if baseline.FromDeployment != "" {
+			source = api.MCPToolScanSourceDeployment
+		}
+		return mcplisting.ToolScanBadge(baseline.ToolScan, baseline.ToolScanAt, source)
 	}
-	return mcplisting.ToolScanBadge(listing.ToolScan, listing.ToolScanAt)
+	return mcplisting.ToolScanBadge(listing.ToolScan, listing.ToolScanAt, api.MCPToolScanSourceListing)
 }
 
 // ListingPage serves a published listing's page.

@@ -45,9 +45,10 @@ func ScanListing(l state.MCPListing) (mcptoolscan.Report, error) {
 
 // ApplyToolScan scans the listing about to be published. High findings
 // refuse the publish (422 mcp_tool_scan_blocked) unless the request carries
-// the seller's review reason; reviewer names who gave it. The scan and the
-// review are stored on the returned listing.
-func ApplyToolScan(req api.PutMCPListingRequest, l state.MCPListing, reviewer string) (state.MCPListing, *api.Problem) {
+// the seller's review reason (reviewer names who gave it) or prev, the
+// listing published now, carries a review of exactly these findings. The
+// scan and the review are stored on the returned listing.
+func ApplyToolScan(req api.PutMCPListingRequest, l state.MCPListing, prev *state.MCPListing, reviewer string) (state.MCPListing, *api.Problem) {
 	reason := strings.TrimSpace(req.ScanReviewReason)
 	if n := len(reason); n > api.MCPContractReasonMax || !utf8.ValidString(reason) {
 		return state.MCPListing{}, invalid(fmt.Sprintf("scan_review_reason must be valid UTF-8 of at most %d bytes", api.MCPContractReasonMax)).
@@ -65,13 +66,30 @@ func ApplyToolScan(req api.PutMCPListingRequest, l state.MCPListing, reviewer st
 	}
 	high := report.High()
 	if high > 0 && reason == "" {
-		return state.MCPListing{}, scanBlocked(report, high)
+		if prior, ok := priorReview(prev, report); ok {
+			reason, reviewer = prior.ToolScanReview, prior.ToolScanReviewedBy
+		} else {
+			return state.MCPListing{}, scanBlocked(report, high)
+		}
 	}
 	l.ToolScan, l.ToolScanHigh, l.ToolScanReview, l.ToolScanReviewedBy = raw, high, "", ""
 	if high > 0 {
 		l.ToolScanReview, l.ToolScanReviewedBy = reason, reviewer
 	}
 	return l, nil
+}
+
+// priorReview is the published listing whose review covers every high
+// finding of report; a republish of unchanged tools is not asked again.
+func priorReview(prev *state.MCPListing, report mcptoolscan.Report) (*state.MCPListing, bool) {
+	if prev == nil || prev.ToolScanReview == "" {
+		return nil, false
+	}
+	reviewed, ok := readReport(prev.ToolScan)
+	if !ok || reviewed.RuleSet != report.RuleSet {
+		return nil, false
+	}
+	return prev, len(mcptoolscan.UnreviewedHigh(report, reviewed)) == 0
 }
 
 func scanBlocked(report mcptoolscan.Report, high int) *api.Problem {
@@ -111,13 +129,13 @@ func ToolScanView(raw json.RawMessage, at *time.Time, review string) *api.MCPToo
 }
 
 // ToolScanBadge is what the public listing shows of a stored scan; nil when
-// none.
-func ToolScanBadge(raw json.RawMessage, at *time.Time) *api.MCPToolScanBadge {
+// none. source says whose tools were scanned.
+func ToolScanBadge(raw json.RawMessage, at *time.Time, source string) *api.MCPToolScanBadge {
 	report, ok := readReport(raw)
 	if !ok {
 		return nil
 	}
-	b := &api.MCPToolScanBadge{RuleSet: report.RuleSet, Status: api.MCPToolScanClean}
+	b := &api.MCPToolScanBadge{RuleSet: report.RuleSet, Status: api.MCPToolScanClean, Source: source}
 	if at != nil {
 		b.ScannedAt = *at
 	}

@@ -137119,13 +137119,15 @@ components:
         name: { type: string }
         path: { type: string, description: "JSON pointer to the matched text within the item." }
         excerpt: { type: string, description: "The matched text, escaped and at most 120 characters." }
+        text_sha256: { type: string, description: "SHA-256 of the whole field; a review covers exactly this text." }
     MCPToolScanBadge:
       description: "What a public listing shows of the tool safety scan."
       type: object
-      required: [rule_set, scanned_at, status]
+      required: [rule_set, scanned_at, status, source]
       properties:
         rule_set: { type: integer }
         scanned_at: { type: string, format: date-time }
+        source: { type: string, enum: [listing, deployment], description: "listing: the tools the seller published; deployment: the tools the live deployment served to the deploy check." }
         status: { type: string, enum: [clean, reviewed], description: "clean: no high-severity findings; reviewed: the seller shipped reviewed_high findings with an audited reason." }
         reviewed_high: { type: integer }
     MCPListingInstall:

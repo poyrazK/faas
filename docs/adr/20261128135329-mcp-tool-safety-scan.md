@@ -54,14 +54,17 @@ for the owner.
    contract sent, or the one a republish keeps); a listing without a
    contract has its published tool snapshot scanned. High findings refuse
    the publish with `422 mcp_tool_scan_blocked` (the findings in the
-   problem's `findings` extension) unless the request carries
+   problem's `tool_scan_findings` extension) unless the request carries
    `scan_review_reason` (1–512 bytes), which records the seller's review
-   (`mcp_listing.tool_scan_reviewed` audit event). The report, its time
-   and the review are stored on the listing.
+   (`mcp_listing.tool_scan_reviewed` audit event), or the listing
+   published now carries a review of the same high findings. The report,
+   its time and the review are stored on the listing.
 3. **Deploy gate.** In the tool contract gate, imaged scans each production
    candidate's listed catalog and stores the report on the candidate's
    check. A high finding the effective baseline already carries as
-   reviewed (same rule, entry, path and excerpt) passes; any other high
+   reviewed (same rule, entry, path and the same whole field text, by
+   SHA-256, so any edit to a reviewed field, another match of the same rule
+   included, needs a new review) passes; any other high
    finding fails the deployment with `mcp_tool_scan_blocked`, like a
    breaking change, unless a `tool_scan` override admits it. Overrides gain
    a kind (`contract` or `tool_scan`, default `contract`) so a reason given
@@ -74,8 +77,11 @@ for the owner.
    A candidate whose catalog cannot be listed is handled as before
    (unverified); there is nothing to scan.
 4. **Visibility.** The public listing (JSON and page) shows a badge from
-   the effective baseline's scan: the scan date, rule set, and either "no
-   high-severity findings" or "N findings reviewed by the seller". No
+   the effective baseline's scan: the scan date, rule set, whose tools were
+   scanned (`listing`: the tools the seller published, which the platform
+   has not served itself; `deployment`: the tools a live deployment served
+   to the deploy check), and either "no high-severity findings" or "N
+   findings reviewed by the seller". No
    excerpts or rules are public. The owner sees every finding on the
    listing (`GET /v1/apps/{slug}/mcp-listing`), on each check in
    `GET /v1/apps/{slug}/mcp-contract`, and in `gregale mcp server listing

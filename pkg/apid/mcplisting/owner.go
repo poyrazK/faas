@@ -116,7 +116,18 @@ func (o Owner) validate(ctx context.Context, req api.PutMCPListingRequest, app s
 	if problem != nil {
 		return listing, problem
 	}
-	return ApplyToolScan(req, listing, "user:"+acct.ID)
+	var prev *state.MCPListing
+	if store, ok := o.Host.Store().(state.MCPListingStore); ok {
+		current, err := store.GetMCPListing(ctx, app.AccountID, app.ID)
+		switch {
+		case err == nil:
+			prev = &current
+		case !errors.Is(err, state.ErrNotFound):
+			o.Log.Error("read MCP listing", "app_id", app.ID, "err", err)
+			return state.MCPListing{}, api.ErrInternal("could not read the MCP listing")
+		}
+	}
+	return ApplyToolScan(req, listing, prev, "user:"+acct.ID)
 }
 
 // keepOrValidate checks the request and, on a republish without a contract,

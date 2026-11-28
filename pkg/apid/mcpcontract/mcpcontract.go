@@ -176,11 +176,15 @@ func (o Owner) checkDeployment(ctx context.Context, app state.App, id string) *a
 // ValidateOverride trims the reason and resolves the lifetime.
 func ValidateOverride(req api.CreateMCPContractOverrideRequest) (string, time.Duration, *api.Problem) {
 	reason := strings.TrimSpace(req.Reason)
-	if reason == "" {
-		return "", 0, invalid("reason is required: say why paying customers' tools may break")
-	}
-	if !state.ValidMCPContractOverrideKind(overrideKind(req.Kind)) {
+	kind := overrideKind(req.Kind)
+	if !state.ValidMCPContractOverrideKind(kind) {
 		return "", 0, invalid("kind must be contract or tool_scan")
+	}
+	if reason == "" {
+		if kind == state.MCPContractOverrideKindToolScan {
+			return "", 0, invalid("reason is required: say why the flagged tool text is safe for customers' models")
+		}
+		return "", 0, invalid("reason is required: say why paying customers' tools may break")
 	}
 	if n := len(reason); n > api.MCPContractReasonMax || !utf8.ValidString(reason) {
 		return "", 0, invalid(fmt.Sprintf("reason must be valid UTF-8 of at most %d bytes", api.MCPContractReasonMax)).

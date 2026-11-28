@@ -171,26 +171,19 @@ func scanCandidate(check *state.MCPContractCheck, candidate mcphosting.Contract,
 	if err != nil {
 		return nil, fmt.Errorf("encode MCP tool scan: %w", err)
 	}
-	reviewed := map[string]bool{}
+	var prior mcptoolscan.Report
 	if baseline.ToolScanReviewed && len(baseline.ToolScan) > 0 {
-		var prior mcptoolscan.Report
-		if json.Unmarshal(baseline.ToolScan, &prior) == nil {
-			for _, f := range prior.Findings {
-				if f.Severity == mcptoolscan.SeverityHigh {
-					reviewed[findingKey(f)] = true
-				}
-			}
-		}
+		_ = json.Unmarshal(baseline.ToolScan, &prior)
 	}
 	out := &apihostingreceipt.MCPToolScanReport{RuleSet: scan.RuleSet}
+	for _, f := range mcptoolscan.UnreviewedHigh(scan, prior) {
+		out.NewHigh++
+		out.Findings = append(out.Findings, apihostingreceipt.MCPToolScanFinding(f))
+	}
 	for _, f := range scan.Findings {
 		switch f.Severity {
 		case mcptoolscan.SeverityHigh:
 			out.High++
-			if !reviewed[findingKey(f)] {
-				out.NewHigh++
-				out.Findings = append(out.Findings, apihostingreceipt.MCPToolScanFinding(f))
-			}
 		case mcptoolscan.SeverityMedium:
 			out.Medium++
 		default:
@@ -199,12 +192,6 @@ func scanCandidate(check *state.MCPContractCheck, candidate mcphosting.Contract,
 	}
 	check.ToolScan, check.ToolScanHigh, check.ToolScanNewHigh = raw, out.High, out.NewHigh
 	return out, nil
-}
-
-// findingKey identifies a finding across scans: the same rule on the same
-// text of the same entry.
-func findingKey(f mcptoolscan.Finding) string {
-	return f.Rule + "\x00" + f.Kind + "\x00" + f.Name + "\x00" + f.Path + "\x00" + f.Excerpt
 }
 
 // toolScanSummary names the unreviewed high findings, at most

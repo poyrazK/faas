@@ -106,6 +106,8 @@ type MCPToolScanFinding struct {
 	Name     string `json:"name"`
 	Path     string `json:"path"`
 	Excerpt  string `json:"excerpt,omitempty"`
+	// TextSHA256 digests the whole field; a review covers that exact text.
+	TextSHA256 string `json:"text_sha256,omitempty"`
 }
 
 // MCPContractChange is one mcphosting.ContractChange (same JSON shape).
