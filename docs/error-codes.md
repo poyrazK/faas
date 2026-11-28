@@ -2486,6 +2486,12 @@ HTTP 403 Forbidden · Plan doesn't allow private-registry credentials for jobs
 
 See [Registry credentials](registry-credentials.md).
 
+### `plan_limit_app_tasks`
+
+HTTP 429 Too Many Requests · App task limit reached
+
+See [Apps](apps.md#task-history).
+
 ### `plan_limit_apps`
 
 HTTP 403 Forbidden · App limit reached; Environment branch limit reached; PR preview environment too large

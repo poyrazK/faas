@@ -6350,6 +6350,14 @@ type Limits struct {
 	CronLimitPerApp     int
 	CronLimitPerAccount int
 
+	// AppTaskConcurrency caps how many app tasks (`app exec`, interactive
+	// sessions, `app cp`, `app port-forward`) one account may have queued or
+	// running at once, across all its apps. Each holds a VM of the app's size.
+	// Release commands, command crons and platform probes are not counted.
+	// The hot `app_task_concurrency` runtime-config key overrides it per plan
+	// (pkg/api/app_task_concurrency.go).
+	AppTaskConcurrency int
+
 	// EventSubscriptionsPerApp and EventSubscriptionsPerAccount cap the
 	// enabled event subscriptions (gregale.yaml event_triggers) of one app
 	// and of all apps sharing a billing subject (ADR-20261031130000). Every
@@ -7672,6 +7680,7 @@ var planLimits = map[Plan]Limits{
 		// value the store still reads.
 		CronLimitPerApp:              0,
 		CronLimitPerAccount:          0,
+		AppTaskConcurrency:           2,
 		EventSubscriptionsPerApp:     0,
 		EventSubscriptionsPerAccount: 0,
 		// M-2 / ADR-137+138: Free stays request-only — same
@@ -8124,6 +8133,7 @@ var planLimits = map[Plan]Limits{
 		// template's tutorials.
 		CronLimitPerApp:              5,
 		CronLimitPerAccount:          10,
+		AppTaskConcurrency:           4,
 		EventSubscriptionsPerApp:     5,
 		EventSubscriptionsPerAccount: 10,
 		// M-2 / ADR-137+138: Hobby gets the documented 30 s
@@ -8577,6 +8587,7 @@ var planLimits = map[Plan]Limits{
 		// run more apps (25) than Hobby (5).
 		CronLimitPerApp:              20,
 		CronLimitPerAccount:          50,
+		AppTaskConcurrency:           10,
 		EventSubscriptionsPerApp:     20,
 		EventSubscriptionsPerAccount: 50,
 		// M-2 / ADR-137+138: Pro doubles Hobby's defaults
@@ -9004,6 +9015,7 @@ var planLimits = map[Plan]Limits{
 		// at the per-app cap, the typical SaaS fan-out.
 		CronLimitPerApp:              100,
 		CronLimitPerAccount:          500,
+		AppTaskConcurrency:           25,
 		EventSubscriptionsPerApp:     100,
 		EventSubscriptionsPerAccount: 500,
 		// M-2 / ADR-137+138: Scale doubles Pro (ADR-138
