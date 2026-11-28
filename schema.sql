@@ -83787,6 +83787,13 @@ CREATE INDEX app_task_network_address ON public.app_task_networks USING btree (n
 
 
 --
+-- Name: app_tasks_account_active_manual_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_tasks_account_active_manual_idx ON public.app_tasks USING btree (account_id) WHERE ((kind = 'manual'::text) AND (status = ANY (ARRAY['queued'::text, 'restoring'::text, 'running'::text])));
+
+
+--
 -- Name: app_tasks_account_app_created_idx; Type: INDEX; Schema: public; Owner: -
 --
 

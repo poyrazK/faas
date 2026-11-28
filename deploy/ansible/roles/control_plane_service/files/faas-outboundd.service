@@ -4,19 +4,24 @@ After=network.target postgresql.service faas-cp.slice
 Wants=faas-cp.slice
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
 User=faas-outboundd
 Group=faas
 ExecStart=/opt/faas/current/bin/outboundd --config /etc/faas/outboundd.toml
+ExecReload=/bin/kill -USR2 $MAINPID
 Restart=on-failure
 RestartSec=2s
+WatchdogSec=60s
 Slice=faas-cp.slice
-MemoryMax=256M
+MemoryMax=512M
+OOMPolicy=continue
 EnvironmentFile=-/etc/faas/compute-db.env
 EnvironmentFile=-/etc/faas/secrets/outboundd/outboundd.env
 EnvironmentFile=-/etc/faas/otel.env
 Environment=FAAS_FLEET_AGE_IDENTITY_PATH=%d/faas_fleet_age_identity
 Environment=FAAS_WORKFLOW_OUTBOUND_ENABLED=1
+Environment=FAAS_OUTBOUNDD_CACHE_SNAPSHOT_DIR=/run/faas-outboundd
 LoadCredential=faas_fleet_age_identity:/etc/faas/secrets/fleet.age
 NoNewPrivileges=yes
 ProtectSystem=strict
@@ -27,6 +32,9 @@ ProtectKernelModules=yes
 ProtectControlGroups=yes
 ReadOnlyPaths=/etc/faas
 ReadWritePaths=/var/log/faas
+RuntimeDirectory=faas-outboundd
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=restart
 
 [Install]
 WantedBy=multi-user.target

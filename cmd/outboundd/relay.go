@@ -55,9 +55,9 @@ func (c *Config) relayTLSConfig(verifier wire.NodeVerifier) (*tls.Config, error)
 	return cfg, nil
 }
 
-// startRelay serves the gateway handler on the vmmd relay listener. It
-// returns a shutdown function; a nil function means the relay is disabled.
-func startRelay(ctx context.Context, cfg *Config, pool *pgxpool.Pool, handler http.Handler, identity outbound.IdentityVerifier, metrics *outbound.Metrics, log *slog.Logger) (func(context.Context), error) {
+// relayServer binds the vmmd relay listener and builds its server; run
+// serves it. A nil server means the relay is disabled.
+func relayServer(ctx context.Context, cfg *Config, pool *pgxpool.Pool, handler http.Handler, identity outbound.IdentityVerifier, metrics *outbound.Metrics, log *slog.Logger) (*drainServer, error) {
 	if cfg.RelayListen == "" {
 		return nil, nil
 	}
@@ -109,13 +109,8 @@ func startRelay(ctx context.Context, cfg *Config, pool *pgxpool.Pool, handler ht
 		_ = listener.Close()
 		return nil, err
 	}
-	go func() {
-		if serveErr := server.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-			log.Error("outboundd: relay server stopped", "err", serveErr)
-		}
-	}()
 	log.Info("outboundd relay listening", "listen", cfg.RelayListen)
-	return func(shutdownCtx context.Context) { _ = server.Shutdown(shutdownCtx) }, nil
+	return &drainServer{name: "relay", server: server, listener: listener}, nil
 }
 
 // listenRelaySocket prefers a socket a systemd socket unit holds open across
@@ -137,5 +132,6 @@ func listenRelaySocket(address string) (net.Listener, error) {
 		_ = l.Close()
 		return nil, fmt.Errorf("outboundd: relay socket mode: %w", err)
 	}
+	wire.Share(l) // a hand-off successor serves the same socket (ADR-1736)
 	return l, nil
 }

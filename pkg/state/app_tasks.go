@@ -131,6 +131,13 @@ type CreateAppTaskParams struct {
 	RetryMax                       int
 	RetryBackoffSeconds            int
 	CreatedAt                      time.Time
+	// CapActiveTasks limits the account's own manual tasks queued, restoring
+	// or running at once to MaxActiveTasks, this one included (0 refuses
+	// every one). Platform probe commands (api.AppTaskCountsTowardConcurrency)
+	// neither count nor are capped. The count and the insert are serialized
+	// per account.
+	CapActiveTasks bool
+	MaxActiveTasks int
 }
 
 // CompleteAppTaskParams is the scheduler-owned terminal compare-and-swap.
@@ -162,7 +169,9 @@ type AppTaskSweepResult struct {
 }
 
 var (
-	ErrAppTaskInvalid               = errors.New("state: invalid app task")
+	ErrAppTaskInvalid = errors.New("state: invalid app task")
+	// ErrAppTaskConcurrencyLimit is wrapped by *AppTaskConcurrencyError.
+	ErrAppTaskConcurrencyLimit      = errors.New("state: app task concurrency limit reached")
 	ErrAppTaskDeploymentUnavailable = errors.New("state: app task deployment artifact is unavailable")
 	ErrAppTaskLeaseLost             = errors.New("state: app task lease lost")
 	ErrAppTaskCancellationPending   = errors.New("state: app task cancellation is pending")
@@ -492,4 +501,37 @@ func cloneAppTaskTimePtr(value *time.Time) *time.Time {
 	}
 	copyValue := *value
 	return &copyValue
+}
+
+// AppTaskConcurrencyError refuses a manual task at MaxActiveTasks; Active is
+// the account's counted tasks queued, restoring or running.
+type AppTaskConcurrencyError struct {
+	Limit, Active int
+}
+
+func (e *AppTaskConcurrencyError) Error() string {
+	return fmt.Sprintf("%v: %d active, limit %d", ErrAppTaskConcurrencyLimit, e.Active, e.Limit)
+}
+
+func (e *AppTaskConcurrencyError) Unwrap() error { return ErrAppTaskConcurrencyLimit }
+
+// capsAppTaskConcurrency reports whether params is a manual task the
+// account's concurrency cap applies to.
+func capsAppTaskConcurrency(params CreateAppTaskParams) bool {
+	return params.CapActiveTasks && params.Kind == AppTaskKindManual &&
+		params.BindingVerification == nil && !params.RequireLiveDeployment &&
+		api.AppTaskCountsTowardConcurrency(params.Command)
+}
+
+// countsTowardAppTaskConcurrency reports whether an existing task holds one
+// of the account's concurrency slots.
+func countsTowardAppTaskConcurrency(task AppTask) bool {
+	if task.Kind != AppTaskKindManual || !api.AppTaskCountsTowardConcurrency(task.Command) {
+		return false
+	}
+	switch task.Status {
+	case AppTaskQueued, AppTaskRestoring, AppTaskRunning:
+		return true
+	}
+	return false
 }

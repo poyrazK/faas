@@ -7962,6 +7962,8 @@ type Querier interface {
 	ReleaseManagedPostgresComputeHold(ctx context.Context, db DBTX, arg ReleaseManagedPostgresComputeHoldParams) (int64, error)
 	ReleaseManagedPostgresCutover(ctx context.Context, db DBTX, arg ReleaseManagedPostgresCutoverParams) (int64, error)
 	ReleaseManagedPostgresDrainHostPorts(ctx context.Context, db DBTX, arg ReleaseManagedPostgresDrainHostPortsParams) error
+	// A release without an error code is the provider still working, not a
+	// failed attempt: it resets the attempt count retry backoff grows with.
 	ReleaseManagedPostgresLifecycleLease(ctx context.Context, db DBTX, arg ReleaseManagedPostgresLifecycleLeaseParams) (int64, error)
 	// ADR-1448: managed PostgreSQL databases whose migration binding delivers a
 	// secret into this app scope, the rows a release task receives.

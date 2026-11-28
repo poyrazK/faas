@@ -25,9 +25,18 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
-func main() { wire.Daemon("outboundd", run) }
+// outboundd hands off to a second generation on `systemctl reload`
+// (ADR-1736, ADR-20261128150000), so a release does not cut AI calls that
+// run for minutes.
+func main() { wire.HandoffDaemon("outboundd", run) }
 
 func run(ctx context.Context, log *slog.Logger) error {
+	// stopping is the unit's SIGTERM. ctx also ends once a hand-off
+	// successor serves: this generation's workers stop and its listeners
+	// close while its requests finish.
+	stopping := ctx
+	ctx, endGeneration := context.WithCancel(ctx)
+	defer endGeneration()
 	// ADR 20261029202403 amendment 1: the outbound credential ring: outboundd checks integration and AI
 	// access tokens.
 	if err := credhash.Install(os.Getenv, credhash.FamilyOutbound); err != nil {
@@ -258,6 +267,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if handler.Prompts, err = outbound.NewPostgresPromptResolver(pool); err != nil {
 		return err
 	}
+	// ADR-20261128150000: the caches the previous generation handed over.
+	cacheDir := os.Getenv("FAAS_OUTBOUNDD_CACHE_SNAPSHOT_DIR")
+	if loaded, err := handler.LoadCacheSnapshot(cacheDir, time.Now()); err != nil {
+		log.Warn("outboundd: cache snapshot not loaded; starting with empty caches", "err", err)
+	} else if loaded > 0 {
+		log.Info("outboundd: loaded the previous generation's caches", "responses", loaded)
+	}
 	go runAIUsagePrune(ctx, backend, log)
 	// ADR-997: replays recorded by apid run through this daemon's handler.
 	replayWorker := &outbound.AIReplayWorker{Store: backend, Handler: handler, Log: log}
@@ -285,15 +301,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 	qualificationWorker := &outbound.QualificationProbeWorker{Store: state.NewPgStore(pool), Handler: handler, Log: log}
 	go qualificationWorker.Run(ctx)
 	relayHandler := outbound.WithSimulationRelay(trace.HTTPHandler("outboundd-relay", handler), handler.SimulationHandler)
-	shutdownRelay, err := startRelay(ctx, cfg, pool, relayHandler, identityVerifier, outboundMetrics, log)
+	relay, err := relayServer(ctx, cfg, pool, relayHandler, identityVerifier, outboundMetrics, log)
 	if err != nil {
 		return err
 	}
 	aiGatewayOn := func() bool { return aiGatewayFlags.Snapshot().GloballyEnabled(platformflags.AIGateway) }
-	if err := registerAIGatewayReadiness(ops.Registry(), aiGatewayOn, shutdownRelay != nil); err != nil {
+	if err := registerAIGatewayReadiness(ops.Registry(), aiGatewayOn, relay != nil); err != nil {
 		return err
 	}
-	if aiGatewayOn() && shutdownRelay == nil {
+	if aiGatewayOn() && relay == nil {
 		log.Warn("outbound AI gateway is on but the app relay is off; deployed apps cannot reach it until relay_listen and the workload-identity JWKS are set (ADR-989)")
 	}
 	readyProbe := &wire.ReadyzProbe{}
@@ -314,33 +330,52 @@ func run(ctx context.Context, log *slog.Logger) error {
 		WriteTimeout: cfg.WriteTimeout,
 		IdleTimeout:  cfg.IdleTimeout,
 	}
-	publicServer := startPublicServer(cfg, handler, backend, log)
-	var metricsServer *http.Server
+	// Every listener binds here, before the check below, and is shared with
+	// a hand-off successor (wire.ListenInherited).
+	servers := []*drainServer{}
+	if relay != nil {
+		servers = append(servers, relay)
+	}
+	closeListeners := func() {
+		for _, s := range servers {
+			_ = s.listener.Close()
+		}
+	}
+	public, err := publicServer(cfg, handler, backend, log)
+	if err != nil {
+		closeListeners()
+		return err
+	}
+	if public != nil {
+		servers = append(servers, public)
+	}
 	if cfg.MetricsAddr != "" {
 		metricsMux := http.NewServeMux()
 		metricsMux.Handle("/metrics", ops.Handler())
 		wire.ControlMuxLite(metricsMux, nil, nil)
-		metricsServer = &http.Server{
+		metricsListener, err := wire.ListenInherited("tcp", cfg.MetricsAddr)
+		if err != nil {
+			closeListeners()
+			return fmt.Errorf("outboundd: metrics listen %s: %w", cfg.MetricsAddr, err)
+		}
+		servers = append(servers, &drainServer{name: "metrics", listener: metricsListener, server: &http.Server{
 			Addr:              cfg.MetricsAddr,
 			Handler:           metricsMux,
 			ReadHeaderTimeout: 10 * time.Second,
 			ReadTimeout:       10 * time.Second,
 			WriteTimeout:      10 * time.Second,
 			IdleTimeout:       30 * time.Second,
-		}
-		go func() {
-			if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				log.Error("outboundd: metrics http", "err", err)
-			}
-		}()
+		}})
 		log.Info("outboundd metrics listening", "addr", cfg.MetricsAddr)
 	}
 	listener, err := wire.ListenInherited("tcp", cfg.ListenAddr)
 	if err != nil {
+		closeListeners()
 		return fmt.Errorf("outboundd: listen %s: %w", cfg.ListenAddr, err)
 	}
+	servers = append(servers, &drainServer{name: "control", server: server, listener: listener})
 	if err := wire.RequireInheritedListenersClaimed("outboundd"); err != nil {
-		_ = listener.Close()
+		closeListeners()
 		return err
 	}
 	// All startup dependencies (config, Postgres, policy resolution, and the
@@ -349,26 +384,22 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// flips it back to 0 on shutdown or an early return.
 	ops.MarkReady("outboundd", true, "")
 	log.Info("outbound gateway listening", "addr", cfg.ListenAddr, "integrations", len(configured))
-	// Billable AI calls still running near the end of the drain grace are
-	// ended so they settle at their reservation before the process exits.
-	stops := []func(context.Context){handler.DrainAICalls}
-	if metricsServer != nil {
-		stops = append(stops, func(ctx context.Context) { _ = metricsServer.Shutdown(ctx) })
-	}
-	if publicServer != nil {
-		stops = append(stops, func(ctx context.Context) { _ = publicServer.Shutdown(ctx) })
-	}
-	if shutdownRelay != nil {
-		stops = append(stops, shutdownRelay)
-	}
-	return wire.ServeUntilShutdown(ctx, server, listener, outbounddDrainGrace, stops...)
+	notifyStop := wire.NotifyReadyWhen(ctx, readyProbe.ReadyFunc())
+	defer notifyStop()
+	defer wire.StartWatchdog(ctx, wire.NewLiveness(), ops, log)()
+	handoff := watchHandoffs(ctx, handler, cacheDir, log, endGeneration)
+	return serveGeneration(stopping, ctx, handoff, servers, handler, handler, cacheDir, log)
 }
 
-// startPublicServer serves access-token callers on the public listener when
-// one is configured (ADR-1431). It carries no control or metrics endpoints.
-func startPublicServer(cfg *Config, handler *outbound.Handler, tokens outbound.AIAccessTokenStore, log *slog.Logger) *http.Server {
+// publicServer binds the public listener for access-token callers when one
+// is configured (ADR-1431). It carries no control or metrics endpoints.
+func publicServer(cfg *Config, handler *outbound.Handler, tokens outbound.AIAccessTokenStore, log *slog.Logger) (*drainServer, error) {
 	if cfg.PublicListenAddr == "" {
-		return nil
+		return nil, nil
+	}
+	listener, err := wire.ListenInherited("tcp", cfg.PublicListenAddr)
+	if err != nil {
+		return nil, fmt.Errorf("outboundd: public listen %s: %w", cfg.PublicListenAddr, err)
 	}
 	public := &outbound.PublicHandler{Handler: handler, Tokens: tokens}
 	server := &http.Server{
@@ -380,13 +411,8 @@ func startPublicServer(cfg *Config, handler *outbound.Handler, tokens outbound.A
 		IdleTimeout:       cfg.IdleTimeout,
 		MaxHeaderBytes:    64 << 10,
 	}
-	go func() {
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Error("outboundd: public http", "err", err)
-		}
-	}()
 	log.Info("outbound AI gateway public listener", "addr", cfg.PublicListenAddr)
-	return server
+	return &drainServer{name: "public", server: server, listener: listener}, nil
 }
 
 // outbounddDrainGrace bounds how long a stopping outboundd lets in-flight
