@@ -49,6 +49,9 @@ var hopByHopHeaders = map[string]struct{}{
 type Handler struct {
 	// aiAccountRates bounds each account's AI calls per second.
 	aiAccountRates aiAccountRates
+	// aiDrain ends billable AI calls still running when the daemon stops,
+	// so they settle (DrainAICalls).
+	aiDrain aiDrain
 	// Log, when set, records failures the caller only sees as a generic 503.
 	Log                       *slog.Logger
 	SimulationHandler         http.Handler
@@ -549,11 +552,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		retry := retryAfterSeconds(decision.RetryAfter)
-		if traceRejection(decision.Reason) {
+		if traceRejection(decision.Reason) || strings.HasSuffix(decision.Reason, ReasonReservationSuffix) {
+			// Retrying the same call cannot succeed: a trace cap, or a
+			// reservation larger than the budget left until it resets.
 			retry = ""
 		}
 		w.Header().Set("X-Gregale-Outbound-Rejection", decision.Reason)
-		writeProblem(w, http.StatusTooManyRequests, "outbound_budget_exhausted", "Outbound integration budget is exhausted", retry)
+		writeAdmissionRefusal(w, decision.Reason, retry)
 		return
 	}
 	h.Metrics.ObserveAdmission(metricIntegrationID, "granted")
@@ -579,6 +584,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if aiPlan != nil && aiPlan.endpoint.billable() && batch == nil && realtime == realtimeNone {
 		aiCall = newAICallContext(ctx, requestTimeout, time.Now())
 		defer aiCall.Close()
+		// Deferred before the settlement, so it runs after it.
+		defer h.aiDrain.track(aiCall)()
 		ctx = aiCall //nolint:contextcheck // aiCall is derived from ctx through context.WithDeadline and WithCancelCause.
 		defer h.renewAILease(integration.ID, decision.LeaseID, requestTimeout)()
 	} else if requestTimeout > 0 {
@@ -1244,4 +1251,49 @@ func (h *Handler) aiGatewayAdmitsAccount(integration Integration) bool {
 		})
 	}
 	return h.AIGatewayRollout.Allows(integration.AccountID)
+}
+
+// admissionRefusalProblem names a refused admission by what refused it
+// (prod hunt 2026-11-28): every refusal used to read "budget is exhausted",
+// including rate limits and a call whose own reservation did not fit an
+// unspent budget. X-Gregale-Outbound-Rejection still carries the reason.
+func admissionRefusalProblem(reason string) (code, title string) {
+	switch {
+	case strings.HasSuffix(reason, ReasonReservationSuffix):
+		return CodeAIReservationExceedsBudget, titleAIReservationExceedsBudget
+	case reason == ReasonRate || reason == ReasonConcurrency || reason == ReasonRequestsPerMinute || reason == ReasonTokensPerMinute:
+		return CodeOutboundRateLimited, titleOutboundRateLimited
+	case reason == ReasonCircuitOpen || reason == ReasonProviderCooldown:
+		// The code the provider-requested cooldown already uses.
+		return CodeOutboundProviderCooldown, titleOutboundProviderCoolingDown
+	}
+	return CodeOutboundBudgetExhausted, titleOutboundBudgetExhausted
+}
+
+// Admission refusal codes and titles. writeAdmissionRefusal passes each as
+// a constant so cmd/errorcodes-md lists it in docs/error-codes.md.
+const (
+	CodeAIReservationExceedsBudget  = "outbound_ai_reservation_exceeds_budget"
+	titleAIReservationExceedsBudget = "The call's reservation does not fit the budget left: set a smaller max_tokens (or the format's output limit), " +
+		"since a call that names none reserves its model's longest response"
+	CodeOutboundRateLimited          = "outbound_rate_limited"
+	titleOutboundRateLimited         = "Outbound integration rate limit reached"
+	CodeOutboundProviderCooldown     = "outbound_provider_cooldown"
+	titleOutboundProviderCoolingDown = "The provider is cooling down after failing calls"
+	CodeOutboundBudgetExhausted      = "outbound_budget_exhausted"
+	titleOutboundBudgetExhausted     = "Outbound integration budget is exhausted"
+)
+
+// writeAdmissionRefusal writes a refused admission's problem.
+func writeAdmissionRefusal(w http.ResponseWriter, reason, retry string) {
+	switch code, _ := admissionRefusalProblem(reason); code {
+	case CodeAIReservationExceedsBudget:
+		writeProblem(w, http.StatusTooManyRequests, CodeAIReservationExceedsBudget, titleAIReservationExceedsBudget, retry)
+	case CodeOutboundRateLimited:
+		writeProblem(w, http.StatusTooManyRequests, CodeOutboundRateLimited, titleOutboundRateLimited, retry)
+	case CodeOutboundProviderCooldown:
+		writeProblem(w, http.StatusTooManyRequests, CodeOutboundProviderCooldown, titleOutboundProviderCoolingDown, retry)
+	default:
+		writeProblem(w, http.StatusTooManyRequests, CodeOutboundBudgetExhausted, titleOutboundBudgetExhausted, retry)
+	}
 }

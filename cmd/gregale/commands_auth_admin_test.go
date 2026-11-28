@@ -222,6 +222,83 @@ func TestAuthAdminKeyListJSON(t *testing.T) {
 	}
 }
 
+// The running app no longer lists admin keys in its public settings; the
+// CLI asks for each key it found among the app's secrets by ID.
+func TestAuthAdminKeyListReadsScopesByID(t *testing.T) {
+	resetJSONEnv(t)
+	authIssuerServer(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method != "GET" || r.URL.Path != "/v1/apps/shop-auth/secrets" {
+			return false
+		}
+		main.WriteJSONTest(w, api.AppSecretListResponse{Secrets: []api.AppSecretResponse{{Key: "AUTH_ADMIN_KEY_0A1B2C3D", CreatedAt: "2026-10-14T00:00:00Z"}}})
+		return true
+	})
+	var asked []string
+	old := (*main.AuthAdminHTTPClient)
+	(*main.AuthAdminHTTPClient) = &http.Client{Transport: authRoundTrip(func(r *http.Request) (*http.Response, error) {
+		asked = append(asked, r.URL.Path)
+		recorder := httptest.NewRecorder()
+		switch r.URL.Path {
+		case "/settings/v1":
+			main.WriteJSONTest(recorder, map[string]any{"keys": map[string]any{"signing": "K1", "verifying": []string{"K1"}}})
+		case "/settings/v1/admin-keys/0A1B2C3D":
+			main.WriteJSONTest(recorder, map[string]any{"id": "0A1B2C3D", "scopes": []string{"users:read"}, "expires_at": nil})
+		default:
+			recorder.WriteHeader(http.StatusNotFound)
+		}
+		return recorder.Result(), nil
+	})}
+	t.Cleanup(func() { (*main.AuthAdminHTTPClient) = old })
+	out := captureAuthStdout(t)
+	(*main.JsonOutput) = true
+	t.Cleanup(main.ResetJSONOutput)
+	if code := main.CmdAuth([]string{"admin-key", "list", "shop-auth"}); code != 0 {
+		t.Fatalf("list = %d", code)
+	}
+	var body struct {
+		AdminKeys []struct {
+			ID     string   `json:"id"`
+			Scopes []string `json:"scopes"`
+		} `json:"admin_keys"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &body); err != nil || len(body.AdminKeys) != 1 || strings.Join(body.AdminKeys[0].Scopes, ",") != "users:read" {
+		t.Fatalf("json = %s (%v), asked %v", out.String(), err, asked)
+	}
+}
+
+// A lookup the app limits says so, and the CLI stops asking rather than
+// spending more of the budget or suggesting a restart.
+func TestAuthAdminKeyListSaysWhenLookupsAreLimited(t *testing.T) {
+	resetJSONEnv(t)
+	authIssuerServer(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method != "GET" || r.URL.Path != "/v1/apps/shop-auth/secrets" {
+			return false
+		}
+		main.WriteJSONTest(w, api.AppSecretListResponse{Secrets: []api.AppSecretResponse{{Key: "AUTH_ADMIN_KEY_0A1B2C3D"}, {Key: "AUTH_ADMIN_KEY_0A1B2C3E"}}})
+		return true
+	})
+	lookups := 0
+	old := (*main.AuthAdminHTTPClient)
+	(*main.AuthAdminHTTPClient) = &http.Client{Transport: authRoundTrip(func(r *http.Request) (*http.Response, error) {
+		recorder := httptest.NewRecorder()
+		if r.URL.Path == "/settings/v1" {
+			main.WriteJSONTest(recorder, map[string]any{"keys": map[string]any{"signing": "K1", "verifying": []string{"K1"}}})
+		} else {
+			lookups++
+			recorder.WriteHeader(http.StatusTooManyRequests)
+		}
+		return recorder.Result(), nil
+	})}
+	t.Cleanup(func() { (*main.AuthAdminHTTPClient) = old })
+	out := captureAuthStdout(t)
+	if code := main.CmdAuth([]string{"admin-key", "list", "shop-auth"}); code != 0 {
+		t.Fatalf("list = %d", code)
+	}
+	if lookups != 1 || strings.Count(out.String(), "limits key lookups") != 2 || strings.Contains(out.String(), "restart") {
+		t.Fatalf("lookups = %d\n%s", lookups, out.String())
+	}
+}
+
 func TestAuthActivityReadsTheAdminAPIWithTheOwnerKey(t *testing.T) {
 	resetJSONEnv(t)
 	authIssuerServer(t, func(http.ResponseWriter, *http.Request) bool { return false })

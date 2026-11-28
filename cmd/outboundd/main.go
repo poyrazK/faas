@@ -349,7 +349,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// flips it back to 0 on shutdown or an early return.
 	ops.MarkReady("outboundd", true, "")
 	log.Info("outbound gateway listening", "addr", cfg.ListenAddr, "integrations", len(configured))
-	var stops []func(context.Context)
+	// Billable AI calls still running near the end of the drain grace are
+	// ended so they settle at their reservation before the process exits.
+	stops := []func(context.Context){handler.DrainAICalls}
 	if metricsServer != nil {
 		stops = append(stops, func(ctx context.Context) { _ = metricsServer.Shutdown(ctx) })
 	}

@@ -1166,10 +1166,19 @@ var cliCommands = []cliCommand{
 				{Name: "min-calls", Short: "canary: calls needed before judging (default 50)", Value: "N"},
 				{Name: "window", Short: "canary: minutes of calls to judge (default 30)", Value: "N"},
 			}},
-			{Name: "keys", Short: "List, add (value from stdin) or remove (rm) extra provider keys", Positionals: []string{"<list|add|rm>", "<integration-id>", "[<key-id>]"}, Flags: []cliFlag{
-				{Name: "label", Short: "key label for add", Value: "LABEL"},
-				{Name: "from-stdin", Short: "read the key value from stdin for add", Bool: true},
-			}},
+			{Name: "keys", Short: "List, add or remove (rm) extra provider keys", Notes: []string{
+				"add needs --label and --from-stdin, and reads the whole Authorization value from stdin, such as Bearer sk-...; rm takes the key ID that list prints."},
+				Positionals: []string{"<list|add|rm>", "<integration-id>", "[<key-id>]"}, Flags: []cliFlag{
+					{Name: "label", Short: "key label for add (required)", Value: "LABEL"},
+					{Name: "from-stdin", Short: "read the key value from stdin for add (required)", Bool: true},
+				},
+				Examples: []string{
+					"echo \"Bearer $OPENAI_KEY_2\" | gregale ai keys add <integration-id> --label second --from-stdin",
+					"gregale ai keys rm <integration-id> <key-id>",
+				}},
+			{Name: "integrations", Short: "List AI integrations, or remove one (rm)", Positionals: []string{"<list|rm>", "[<integration-id>]"}, Flags: []cliFlag{
+				{Name: "yes", Short: "rm: remove without asking", Bool: true},
+			}, Examples: []string{"gregale ai integrations list", "gregale ai integrations rm <integration-id> --yes"}},
 			{Name: "alerts", Short: "List budget alerts recorded at 80% and 100%", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "limit", Short: "alerts to show, 1 to 100", Value: "N"},
 			}},
@@ -2959,6 +2968,7 @@ var cliCommands = []cliCommand{
 			{Name: "env-file", Value: "FILE", Short: "with --boot, pass KEY=VALUE lines from this file to the container (docker env-file format)"},
 			{Name: "ram", Value: "MB", Short: "with --boot, the container's memory limit (default: --app's RAM, else your plan's default for a new app; no swap)"},
 			{Name: "healthcheck-path", Value: "PATH", Short: "with --boot, probe this readiness path instead of / and require 2xx, as Gregale does"},
+			{Name: "execution-mode", Value: "MODE", Short: "with --boot, the app's lifecycle mode (request|service|worker|job): a worker must keep running and a job exit 0, with no HTTP check"},
 			{Name: "strict", Short: "exit 1 on warn (default: exit 0 on warn)"},
 			{Name: "json", Short: "machine output (default: human prose)"},
 		},
