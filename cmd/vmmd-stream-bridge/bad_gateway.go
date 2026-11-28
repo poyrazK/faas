@@ -13,8 +13,10 @@ import (
 // verbatim (prod hunt r30); each body keeps only the category a customer can
 // act on.
 const (
-	guestBadGatewayBody      = "Bad gateway: the app closed the connection or did not send a response"
-	guestNotListeningBody    = "Bad gateway: the app is not accepting connections on its port; check that it listens on 0.0.0.0 and $PORT"
+	guestBadGatewayBody = "Bad gateway: the app closed the connection or did not send a response"
+	// The bridge cannot tell a crash or OOM from a wrong port (prod hunt r78:
+	// an app that exited 3 was told to fix its port), so it names both.
+	guestNotListeningBody    = "Bad gateway: the app is not accepting connections on its port. If it crashed or ran out of memory, `gregale logs` shows why; otherwise check that it listens on 0.0.0.0 and $PORT"
 	guestForwardFailedBody   = "Bad gateway: Gregale could not forward the request to the app"
 	guestBuildRequestFailure = "build outbound request"
 )
