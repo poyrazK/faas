@@ -26,6 +26,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -46,6 +47,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
+	"github.com/onebox-faas/faas/pkg/sourcecontext"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -597,11 +599,15 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	if cronProblem != nil {
 		return nil, grpcerr.ToStatus(cronProblem)
 	}
-	spooled, err := g.spoolSource(req.SourcePath)
+	spooled, narrowedBytes, err := g.spoolBuildSource(req.SourcePath, app)
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "EnqueueBuild: %v", err)
 	}
 	params.SourcePath = spooled
+	if narrowedBytes > 0 {
+		// The archive root is the service's build context now.
+		params.SourceRoot, params.SourceBytes = "", narrowedBytes
+	}
 	undoSettings := func(context.Context) {}
 	// A branch build serves the branch's copied settings: the pull request's
 	// gregale.yaml would otherwise change the production app's.
@@ -643,6 +649,11 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		}
 		return nil, g.asGRPC("enqueue", err)
 	}
+	if spooled != req.SourcePath && g.sourceInSpool(req.SourcePath) {
+		// The build reads the narrowed archive; the repository archive
+		// already in the spool would otherwise stay there.
+		_ = os.Remove(req.SourcePath)
+	}
 
 	// §12 metric: apid_githubd_bridge_enqueued_total. The
 	// accessor is nil-receiver safe; when ops is nil (test path)
@@ -663,6 +674,52 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	}, nil
 }
 
+// spoolBuildSource spools the staged source for the build. githubd stages
+// the whole repository; a Compose service built from a Dockerfile in its
+// own directory gets that directory as the archive root instead, as a
+// project deploy stages it (stageApplyTarball), so the Dockerfile's COPY
+// paths resolve the same from the CLI and from GitHub (trial 2026-11-28:
+// `build: ./web` failed on GitHub with "/app.py": not found). narrowedBytes
+// is the narrowed archive's size, or 0 when the source is spooled as it is.
+// A service whose directory has no Dockerfile at this commit, or whose
+// archive cannot be narrowed, builds from the repository as before.
+func (g *githubdBridge) spoolBuildSource(sourcePath string, app state.App) (spooled string, narrowedBytes int64, err error) {
+	root, rootErr := sourcecontext.EffectiveRoot(app.RootDir)
+	if !app.Manifest.BuildComposeContext || app.Manifest.ProjectImage != "" || rootErr != nil || root == sourcecontext.DefaultRoot {
+		spooled, err = g.spoolSource(sourcePath)
+		return spooled, 0, err
+	}
+	dockerfile := app.Manifest.BuildDockerfile
+	if dockerfile == "" {
+		dockerfile = "Dockerfile"
+	}
+	spool := filepath.Clean(g.spool)
+	if err := os.MkdirAll(spool, 0o770); err != nil {
+		return "", 0, fmt.Errorf("create source spool: %w", err)
+	}
+	dst := filepath.Join(spool, randomToken(12)+".tar.gz")
+	hasDockerfile, narrowErr := narrowTarGz(sourcePath, root, path.Clean(dockerfile), dst)
+	if narrowErr == nil && hasDockerfile {
+		info, statErr := os.Stat(dst)
+		if statErr == nil {
+			return dst, info.Size(), nil
+		}
+		narrowErr = statErr
+	}
+	_ = os.Remove(dst)
+	if narrowErr != nil {
+		g.log.Warn("githubd bridge: build context not narrowed; building from the repository",
+			notifyAppField, app.ID, "root", root, "err", narrowErr)
+	}
+	spooled, err = g.spoolSource(sourcePath)
+	return spooled, 0, err
+}
+
+// sourceInSpool reports whether sourcePath is already in apid's build spool.
+func (g *githubdBridge) sourceInSpool(sourcePath string) bool {
+	return strings.HasPrefix(filepath.Clean(sourcePath), filepath.Clean(g.spool)+string(filepath.Separator))
+}
+
 // spoolSource copies githubd's staged archive into apid's build spool and
 // returns the copy's path. builderd reads only sources under the spool root
 // (FAAS_SPOOL_ROOT), and a split-box builder materializes them there from
@@ -671,7 +728,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 // the spool is used as it is.
 func (g *githubdBridge) spoolSource(sourcePath string) (string, error) {
 	root := filepath.Clean(g.spool)
-	if strings.HasPrefix(filepath.Clean(sourcePath), root+string(filepath.Separator)) {
+	if g.sourceInSpool(sourcePath) {
 		return sourcePath, nil
 	}
 	if err := os.MkdirAll(root, 0o770); err != nil {

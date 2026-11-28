@@ -67,7 +67,16 @@ type SandboxClaim struct {
 	// its newest backup the shared store holds.
 	VolumeNodeID         string
 	VolumeStoredBackupID string
-	LeaseToken           string
+	// Reattach is the running VM a detached persistent session's claim takes
+	// over (ADR-20261122132055 §7), nil for any other claim; Frozen marks
+	// one that was frozen.
+	Reattach *SandboxPlacement
+	Frozen   bool
+	// ForkOf is a fork's source session (ADR-20261122132055 §3): Resume is
+	// the source's capture, which the shared store holds, and the volume
+	// restores from the source's backup VolumeBackupID.
+	ForkOf     string
+	LeaseToken string
 	SandboxLease
 }
 
@@ -106,8 +115,11 @@ type SandboxLease struct {
 	CloseRequested bool
 	// PauseRequested: apid asked to pause a persistent session.
 	PauseRequested bool
-	IdleTimeout    time.Duration
-	ExpiresAt      time.Time
+	// ForkRequested: apid queued forks of the running session and waits for
+	// its fork capture (ADR-20261122132055 §3).
+	ForkRequested bool
+	IdleTimeout   time.Duration
+	ExpiresAt     time.Time
 }
 
 // ClaimSandbox moves the oldest claimable queued session to starting under
@@ -143,9 +155,42 @@ func (s *Store) ClaimSandbox(ctx context.Context, owner, token string, ttl time.
 	if err != nil || id == "" {
 		return SandboxClaim{}, false, err
 	}
+	claim, err = s.readClaim(ctx, id, token)
+	return claim, err == nil, err
+}
+
+// SandboxPlacement is where a session's VM runs.
+type SandboxPlacement struct {
+	NodeID     string
+	InstanceID string
+}
+
+// ClaimDetachedSandbox takes over a running persistent session whose
+// replica stopped renewing, within grace of its lease (ADR-20261122132055
+// §7): the claim reattaches to its VM.
+func (s *Store) ClaimDetachedSandbox(ctx context.Context, owner, token string, ttl, grace time.Duration) (SandboxClaim, bool, error) {
+	row, err := s.q.ClaimDetachedSandboxSession(ctx, s.pool, sqlc.ClaimDetachedSandboxSessionParams{LeaseToken: token, LeaseOwner: owner,
+		TtlSeconds: ttl.Seconds(), GraceSeconds: grace.Seconds()})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SandboxClaim{}, false, nil
+	}
+	if err != nil {
+		return SandboxClaim{}, false, fmt.Errorf("claim detached session: %w", err)
+	}
+	claim, err := s.readClaim(ctx, row.ID, token)
+	if err != nil {
+		return SandboxClaim{}, false, err
+	}
+	claim.Reattach = &SandboxPlacement{NodeID: row.NodeID, InstanceID: row.InstanceID}
+	claim.Frozen = row.State == SandboxFrozen
+	return claim, true, nil
+}
+
+// readClaim reads a session this caller holds under token.
+func (s *Store) readClaim(ctx context.Context, id, token string) (SandboxClaim, error) {
 	row, err := s.q.GetSandboxSessionClaim(ctx, s.pool, id)
 	if err != nil {
-		return SandboxClaim{}, false, fmt.Errorf("read claimed session: %w", err)
+		return SandboxClaim{}, fmt.Errorf("read claimed session: %w", err)
 	}
 	var task *SandboxTask
 	if row.TaskKind != "" {
@@ -157,14 +202,23 @@ func (s *Store) ClaimSandbox(ctx context.Context, owner, token string, ttl time.
 			VMStateStorageKey: row.CaptureVmstateStorageKey, FCVersion: row.CaptureFcVersion, MemBytes: row.CaptureMemBytes,
 			Remote: row.Durability == "remote"}
 	}
-	return SandboxClaim{Kind: row.Kind, VCPU: int(row.Vcpu), Resuming: row.State == SandboxResuming, Resume: resume,
-		VolumeGB: int(row.VolumeGb), VolumeBackupID: row.VolumeBackupID, VolumeNodeID: row.VolumeNodeID,
+	volumeBackup, forkOf := row.VolumeBackupID, ""
+	if row.ForkCaptureID != "" {
+		// Before the upload only the capture's node holds it (same-node
+		// forks, ADR-20261122132055 §3).
+		resume = &SandboxCapture{ID: row.CaptureID, NodeID: row.CaptureNodeID, StorageKey: row.CaptureStorageKey,
+			VMStateStorageKey: row.CaptureVmstateStorageKey, FCVersion: row.CaptureFcVersion, MemBytes: row.CaptureMemBytes,
+			Remote: row.CaptureUploaded}
+		volumeBackup, forkOf = row.CaptureVolumeBackupID, row.CaptureSessionID
+	}
+	return SandboxClaim{ForkOf: forkOf, Kind: row.Kind, VCPU: int(row.Vcpu), Resuming: row.State == SandboxResuming, Resume: resume,
+		VolumeGB: int(row.VolumeGb), VolumeBackupID: volumeBackup, VolumeNodeID: row.VolumeNodeID,
 		VolumeStoredBackupID: row.VolumeStoredBackupID, ID: row.ID, AccountID: row.AccountID, Plan: row.Plan, RAMMB: int(row.RamMb), Network: row.NetworkMode,
 		WorkspaceKey: row.WorkspaceKey, WorkspaceMissing: row.WorkspaceMissing, ImageKey: row.ImageKey,
 		ImageMissing: row.FromImage && row.ImageKey == "", StartCmd: row.StartCmd, ReadyCmd: row.ReadyCmd,
 		ReadyTimeout: time.Duration(row.ReadyTimeoutS) * time.Second, Browser: row.Browser, Task: task, EgressAllow: row.EgressAllow, EgressDeny: row.EgressDeny, LeaseToken: token,
 		SandboxLease: SandboxLease{CloseRequested: row.CloseRequested, IdleTimeout: time.Duration(row.IdleTimeoutSec) * time.Second,
-			ExpiresAt: row.ExpiresAt.Time.UTC()}}, true, nil
+			ExpiresAt: row.ExpiresAt.Time.UTC()}}, nil
 }
 
 // MarkSandboxPlaced records the node schedd placed the session on, before
@@ -193,7 +247,7 @@ func (s *Store) RenewSandbox(ctx context.Context, id, token string, ttl time.Dur
 	if err != nil {
 		return SandboxLease{}, fmt.Errorf("renew session lease: %w", err)
 	}
-	return SandboxLease{CloseRequested: row.CloseRequested, PauseRequested: row.PauseRequested,
+	return SandboxLease{CloseRequested: row.CloseRequested, PauseRequested: row.PauseRequested, ForkRequested: row.ForkRequested,
 		IdleTimeout: time.Duration(row.IdleTimeoutSec) * time.Second, ExpiresAt: row.ExpiresAt.Time.UTC()}, nil
 }
 
@@ -260,9 +314,10 @@ func (s *Store) RecordAbandonedSandboxCapture(ctx context.Context, sessionID str
 
 // MarkSandboxPaused records a pausing session's capture and moves it to
 // paused: it holds no lease and no VM, and expires retention from now unless
-// it resumes first.
-func (s *Store) MarkSandboxPaused(ctx context.Context, id, token string, c SandboxCapture, retention time.Duration) error {
-	n, err := s.q.MarkSandboxSessionPaused(ctx, s.pool, sqlc.MarkSandboxSessionPausedParams{SessionID: id, LeaseToken: token,
+// it resumes first. resume asks for its resume at once (an evacuation,
+// ADR-20261122132055 §7).
+func (s *Store) MarkSandboxPaused(ctx context.Context, id, token string, c SandboxCapture, retention time.Duration, resume bool) error {
+	n, err := s.q.MarkSandboxSessionPaused(ctx, s.pool, sqlc.MarkSandboxSessionPausedParams{SessionID: id, LeaseToken: token, ResumeAfter: resume,
 		CaptureID: c.ID, NodeID: c.NodeID, StorageKey: c.StorageKey, VmstateStorageKey: c.VMStateStorageKey, FcVersion: c.FCVersion,
 		MemBytes: c.MemBytes, VmstateBytes: c.VMStateBytes, HasBacking: c.HasBacking, VolumeBackupID: c.VolumeBackupID,
 		RetentionSeconds: retention.Seconds()})
@@ -343,6 +398,13 @@ func (s *Store) PauseLostSandbox(ctx context.Context, id, token string, retentio
 	return n == 1, nil
 }
 
+// RequeueSandboxForkElsewhere puts a fork its capture's node refused back in
+// the queue to start on any node once the shared store holds the capture.
+func (s *Store) RequeueSandboxForkElsewhere(ctx context.Context, id, token string) error {
+	n, err := s.q.RequeueSandboxForkElsewhere(ctx, s.pool, sqlc.RequeueSandboxForkElsewhereParams{SessionID: id, LeaseToken: token})
+	return fenced(n, err, "requeue fork elsewhere")
+}
+
 // FinishSandbox ends a held session in state, one of SandboxClosed,
 // SandboxExpired and SandboxFailed, with its outcome.
 func (s *Store) FinishSandbox(ctx context.Context, id, token, state, code, message string) error {
@@ -369,21 +431,23 @@ func (s *Store) ExpireSandboxLeases(ctx context.Context) (requeued, failed, expi
 		return requeued, 0, 0, fmt.Errorf("return expired resumes: %w", err)
 	}
 	requeued += returned
-	// A persistent session with a volume lost its VM, not its files: it
-	// goes back to paused and resumes cold (ADR-20261122132055 §4).
+	// A persistent session with a volume lost its VM, not its files: once
+	// the reattach grace is over it goes back to paused and resumes cold
+	// (ADR-20261122132055 §4, §7).
 	plans := make([]string, 0, len(api.SandboxPausedRetentionDays))
 	days := make([]int32, 0, len(api.SandboxPausedRetentionDays))
 	for _, p := range []api.Plan{api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale} {
 		plans = append(plans, string(p))
 		days = append(days, int32(api.SandboxPausedRetentionDays[p.PlanIndex()])) //nolint:gosec // G115: days of retention.
 	}
+	grace := float64(api.SandboxReattachGraceSec)
 	paused, err := s.q.PauseExpiredPersistentSandboxSessions(ctx, s.pool, sqlc.PauseExpiredPersistentSandboxSessionsParams{
-		RetentionDays: days, Plans: plans})
+		RetentionDays: days, Plans: plans, GraceSeconds: grace})
 	if err != nil {
 		return requeued, 0, 0, fmt.Errorf("pause expired persistent sessions: %w", err)
 	}
 	requeued += paused
-	if failed, err = s.q.FailExpiredLiveSandboxSessions(ctx, s.pool); err != nil {
+	if failed, err = s.q.FailExpiredLiveSandboxSessions(ctx, s.pool, grace); err != nil {
 		return requeued, 0, 0, fmt.Errorf("fail expired sessions: %w", err)
 	}
 	if expired, err = s.q.ExpireQueuedSandboxSessions(ctx, s.pool); err != nil {

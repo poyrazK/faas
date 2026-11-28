@@ -32,13 +32,18 @@ func requestUsageAttribution(r *http.Request) usageAttribution {
 		// A stage's consumers are never billed (ADR-20261104120000).
 		return a
 	}
+	// A consumer key stamps its identity; an MCP OAuth caller enrolled as
+	// a consumer (attachOAuthConsumer) has only the authenticated
+	// consumer ID, and is billed the same (ADR-20261124094745).
+	consumerID := auth.ConsumerID
 	if identity, ok := authmw.ConsumerFromContext(r); ok {
-		// Consumer IDs are UUIDs in the control-plane store. Keep
-		// malformed/legacy context stamps out of the nullable DB
-		// column rather than turning telemetry into a request failure.
-		if parsed, err := uuid.Parse(identity.ID); err == nil {
-			a.ConsumerID = parsed.String()
-		}
+		consumerID = identity.ID
+	}
+	// Consumer IDs are UUIDs in the control-plane store. Keep
+	// malformed/legacy context stamps out of the nullable DB
+	// column rather than turning telemetry into a request failure.
+	if parsed, err := uuid.Parse(consumerID); err == nil {
+		a.ConsumerID = parsed.String()
 	}
 	if parsed, err := uuid.Parse(auth.PlatformTenantID); err == nil &&
 		(a.ConsumerID != "" || auth.PlatformTenantSurfaceID != "" || auth.PlatformTenantJWTAuthorizationRuleID != "") {

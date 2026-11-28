@@ -1104,6 +1104,12 @@ const (
 	//   every cors_presets INSERT / UPDATE / DELETE. ADR-129
 	//   D4 (issue #975 #4 PR-B).
 	NotifyCorsPresetChanged = "cors_preset_changed"
+
+	// NotifySandboxSessionRequest carries a sandbox session id after apid
+	// records a pause, close or fork request on it (ADR-20261122132055).
+	// The agentd replica holding the session renews its lease at once; the
+	// lease renewal every third of its TTL stays the fallback.
+	NotifySandboxSessionRequest = "sandbox_session_request"
 )
 
 // Subscribe holds a dedicated connection on the pool in LISTEN state for the

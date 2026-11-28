@@ -2170,6 +2170,12 @@ type AppManifest struct {
 	// Dockerfile build (ADR-20261019142544); project-managed like
 	// BuildDockerfile and captured per deployment at enqueue.
 	DockerfileBuild *api.DockerfileBuildOptions `json:"dockerfile_build,omitempty"`
+	// BuildComposeContext says the app is a Compose service that builds
+	// from source: its RootDir is the service's build context, which a
+	// project deploy stages as the archive root. A GitHub build, which
+	// stages the whole repository, narrows to it the same way when the
+	// Dockerfile is there. Project-managed like BuildDockerfile.
+	BuildComposeContext bool `json:"build_compose_context,omitempty"`
 	// BuildGoCommand selects the `cmd/<name>` main package a Railpack build
 	// of a multi-command Go module compiles (ADR-20261025134512);
 	// project-managed like BuildDockerfile.
@@ -2318,7 +2324,7 @@ func (m AppManifest) EffectivePreviewServiceCallsPolicy() api.PreviewServiceCall
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
 	return m.APISandboxSourceDeploymentID == "" && !m.APISandboxPartner && !m.APISandboxRun && len(m.PublicBuildURLs) == 0 && m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
-		m.BuildDockerfile == "" && m.DockerfileBuild == nil && m.BuildGoCommand == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && m.ProjectReadinessCheck == nil && m.ProjectImageProcess == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ProjectSecretFiles) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && (m.Uses == nil || m.Uses.IsZero()) && m.WorkingDir == "" &&
+		m.BuildDockerfile == "" && m.DockerfileBuild == nil && !m.BuildComposeContext && m.BuildGoCommand == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && m.ProjectReadinessCheck == nil && m.ProjectImageProcess == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ProjectSecretFiles) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && (m.Uses == nil || m.Uses.IsZero()) && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Warmup == nil && m.Pause == "" && m.Profiling == nil && m.Tracing == nil &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 && m.FunctionConcurrency == 0 &&
@@ -2339,6 +2345,7 @@ func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
 	existing.ProjectSourceSHA256 = desired.ProjectSourceSHA256
 	existing.BuildDockerfile = desired.BuildDockerfile
 	existing.DockerfileBuild = desired.DockerfileBuild.Clone()
+	existing.BuildComposeContext = desired.BuildComposeContext
 	existing.BuildGoCommand = desired.BuildGoCommand
 	existing.ProjectImage = desired.ProjectImage
 	existing.ProjectImageCommand = desired.ProjectImageCommand
@@ -4014,6 +4021,15 @@ const (
 	// running out of memory within the window (Observe audit 2026-11-21,
 	// finding 18).
 	AlertMetricOOMKills AlertMetric = "oom_kills"
+	// AlertMetricBootFailures counts the app's failed boots (wake.boot_failed
+	// events) within the window: an app that crashes on start and scales to
+	// zero between wakes.
+	AlertMetricBootFailures AlertMetric = "boot_failures"
+	// AlertMetricJobFailures counts the account's job runs that finished
+	// failed or dead-lettered within the window. Jobs belong to the account,
+	// not an app, so a rule on any app counts every job, like
+	// account_spend_eur.
+	AlertMetricJobFailures AlertMetric = "job_failures"
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.

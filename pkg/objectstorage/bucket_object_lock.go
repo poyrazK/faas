@@ -17,6 +17,9 @@ type BucketObjectLockService struct {
 	Provider      BucketObjectLockProvider
 	Versioning    BucketVersioningProvider
 	BeforeRequest func(context.Context) error
+	// CreationOnly is the backend's object_lock.creation_only: Object Lock
+	// cannot be added to a bucket created without it (ADR-20261119065000).
+	CreationOnly bool
 }
 
 func (s BucketObjectLockService) before(ctx context.Context) error {
@@ -64,6 +67,9 @@ func (s BucketObjectLockService) Request(ctx context.Context, b state.ObjectBuck
 		return j, err
 	}
 	enabled := j.EnabledRequired || j.NativeEnabledObserved || native.Enabled
+	if s.CreationOnly && !enabled {
+		return j, ErrObjectLockRequiresNewBucket
+	}
 	if err = CheckObjectLockPlan(ctx, s.Store, b, func(l api.ObjectStoragePlanLimits) *api.ObjectLockPlanViolation {
 		return l.ObjectLockConfigurationViolation(c, enabled)
 	}); err != nil {
@@ -119,6 +125,11 @@ func (s BucketObjectLockService) Reconcile(ctx context.Context, b state.ObjectBu
 
 func (s BucketObjectLockService) reconcileClaimed(ctx context.Context, b state.ObjectBucket, j state.ObjectBucketObjectLock, native api.ObjectBucketObjectLockConfiguration) (state.ObjectBucketObjectLock, error) {
 	if j.DesiredConfiguration != nil && !j.DesiredConfiguration.Equal(native) {
+		// A creation-only provider rejects enabling an existing bucket; do
+		// not send a PUT that cannot succeed.
+		if s.CreationOnly && !native.Enabled {
+			return j, ErrUnsupported
+		}
 		var err error
 		j, err = s.Store.DispatchObjectBucketObjectLock(ctx, b.ID, j.Token)
 		if err != nil {

@@ -1,0 +1,67 @@
+name: gotrue-release-watch
+
+# ADR-1190: application Auth runs GoTrue (supabase/auth) pinned by digest
+# in cmd/gregale/templates/auth/Dockerfile. Security fixes upstream reach
+# Auth apps only when Gregale moves that pin, so once a week this compares
+# the pinned version with upstream's latest release and opens one issue
+# (never a second while one is open) when they differ. It never bumps the
+# pin: a new GoTrue needs its migrations, hooks and parsers checked
+# (attempts.mjs and sms.mjs mirror GoTrue's request parsing).
+
+on:
+  schedule:
+    # Mondays 07:17 UTC.
+    - cron: "17 7 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Compare the pinned GoTrue with upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          dockerfile=cmd/gregale/templates/auth/Dockerfile
+          pinned=$(sed -n 's/^# GoTrue (supabase\/auth) \(v[0-9][0-9.]*\),.*/\1/p' "$dockerfile" | head -n1)
+          if [ -z "$pinned" ]; then
+            echo "::error::no '# GoTrue (supabase/auth) vX.Y.Z' line in $dockerfile"
+            exit 1
+          fi
+          latest=$(gh api repos/supabase/auth/releases/latest --jq .tag_name)
+          echo "pinned $pinned, upstream $latest"
+          if [ "$latest" = "$pinned" ]; then
+            exit 0
+          fi
+          title="GoTrue ${latest} is out (Auth apps pin ${pinned})"
+          existing=$(gh issue list --state open --search '"Auth apps pin" in:title' --json number --jq length)
+          if [ "$existing" != "0" ]; then
+            echo "an open GoTrue release issue already exists"
+            exit 0
+          fi
+          body=$(printf '%s\n' \
+            "Upstream supabase/auth released ${latest}; application Auth pins ${pinned} in \`${dockerfile}\` (ADR-1190)." \
+            "" \
+            "Release notes: https://github.com/supabase/auth/releases/tag/${latest}" \
+            "" \
+            "Before moving the pin:" \
+            "- read the changes between ${pinned} and ${latest} for security fixes, new migrations and changed hooks;" \
+            "- check that the request parsing the front mirrors (attempts.mjs, sms.mjs, sends.mjs) still matches;" \
+            "- update the digest and migrations.sha256, then run the template tests and the Auth journeys." \
+            "" \
+            "Opened by .github/workflows/gotrue-release-watch.yml; close this issue once the pin moves or the release is judged not needed.")
+          gh issue create --title "$title" --body "$body"

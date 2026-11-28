@@ -104,7 +104,7 @@ func formatAllowedModels(models []string) string {
 	return strings.Join(models, ",")
 }
 
-const aiKeysUsage = "usage: gregale ai keys <list|add|rm> <integration-id> [--label <label> --from-stdin] [<key-id>]"
+const aiKeysUsage = "usage: gregale ai keys list <integration-id> | gregale ai keys add <integration-id> --label <label> --from-stdin (stdin holds the whole Authorization value, e.g. Bearer sk-...) | gregale ai keys rm <integration-id> <key-id>"
 
 // cmdAIKeys manages an integration's extra provider keys. Key values are
 // read from stdin only, never from flags, so they stay out of shell history.

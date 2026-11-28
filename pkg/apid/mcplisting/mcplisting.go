@@ -4,7 +4,10 @@
 package mcplisting
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -13,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/mcphosting"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -79,8 +83,85 @@ func Validate(req api.PutMCPListingRequest, accountID, appID string, hosts []str
 		return state.MCPListing{}, invalid(fmt.Sprintf("the tools take more than %d bytes; shorten their descriptions or list fewer", api.MCPListingToolsMaxBytes)).
 			WithLimit(api.MCPListingToolsMaxBytes, int64(len(raw)))
 	}
-	return state.MCPListing{AccountID: accountID, AppID: appID, Title: req.Title, Summary: req.Summary, Endpoint: req.Endpoint,
-		Tools: tools, RegistryName: req.RegistryName, ShowUsage: req.ShowUsage}, nil
+	listing := state.MCPListing{AccountID: accountID, AppID: appID, Title: req.Title, Summary: req.Summary, Endpoint: req.Endpoint,
+		Tools: tools, RegistryName: req.RegistryName, ShowUsage: req.ShowUsage, ProbeSecret: req.ProbeSecret}
+	if req.ProbeSecret != "" && api.ValidateEnvKey(req.ProbeSecret) != nil {
+		return state.MCPListing{}, invalid("probe_secret must name an app secret: a letter, then letters, digits and _, at most 128")
+	}
+	if len(req.Contract) > 0 && req.DropContract {
+		return state.MCPListing{}, invalid("contract and drop_contract are exclusive")
+	}
+	if len(req.Contract) == 0 {
+		if req.ProbeSecret != "" && req.DropContract {
+			return state.MCPListing{}, invalid("probe_secret is used only with a contract")
+		}
+		return listing, nil
+	}
+	var p *api.Problem
+	listing.Contract, listing.ContractSHA256, p = canonicalContract(req.Contract, seen)
+	if p != nil {
+		return state.MCPListing{}, p
+	}
+	return listing, nil
+}
+
+// KeepContract completes a republish that sent no contract: unless the
+// request drops it, the listing keeps the contract production deploys are
+// checked against now (current, from MCPContractBaseline; nil when there is
+// none) and its probe secret, so leaving the contract out of a republish
+// cannot end the gate (ADR-20261127191645).
+func KeepContract(req api.PutMCPListingRequest, listing state.MCPListing, current *state.MCPContractBaseline) (state.MCPListing, *api.Problem) {
+	if len(req.Contract) > 0 || req.DropContract {
+		return listing, nil
+	}
+	if current == nil || len(current.Contract) == 0 {
+		if listing.ProbeSecret != "" {
+			return state.MCPListing{}, invalid("probe_secret is used only with a contract")
+		}
+		return listing, nil
+	}
+	listed := map[string]bool{}
+	for _, t := range listing.Tools {
+		listed[t.Name] = true
+	}
+	var p *api.Problem
+	if listing.Contract, listing.ContractSHA256, p = canonicalContract(current.Contract, listed); p != nil {
+		return state.MCPListing{}, p
+	}
+	if listing.ProbeSecret == "" {
+		listing.ProbeSecret = current.ProbeSecret
+	}
+	return listing, nil
+}
+
+// canonicalContract parses the tool contract (ADR-20261127191645) and
+// returns its canonical form and digest, so equal catalogs compare equal
+// whatever the CLI's key order. Every listed tool must be in it.
+func canonicalContract(raw json.RawMessage, listed map[string]bool) (json.RawMessage, string, *api.Problem) {
+	if len(raw) > api.MCPListingContractMaxBytes {
+		return nil, "", invalid(fmt.Sprintf("the contract takes more than %d bytes", api.MCPListingContractMaxBytes)).
+			WithLimit(api.MCPListingContractMaxBytes, int64(len(raw)))
+	}
+	contract, err := mcphosting.ReadContract(bytes.NewReader(raw))
+	if err != nil {
+		return nil, "", invalid("contract is not an MCP catalog contract: " + err.Error())
+	}
+	canonical, err := mcphosting.MarshalContract(contract)
+	if err != nil || len(canonical) > api.MCPListingContractMaxBytes {
+		return nil, "", invalid(fmt.Sprintf("the contract takes more than %d bytes", api.MCPListingContractMaxBytes)).
+			WithLimit(api.MCPListingContractMaxBytes, int64(len(canonical)))
+	}
+	inContract := map[string]bool{}
+	for _, t := range contract.Tools {
+		inContract[t.Name] = true
+	}
+	for name := range listed {
+		if !inContract[name] {
+			return nil, "", invalid(fmt.Sprintf("tool %q is listed but not in the contract; publish both from the same server", name))
+		}
+	}
+	sum := sha256.Sum256(canonical)
+	return canonical, hex.EncodeToString(sum[:]), nil
 }
 
 func checkEndpoint(raw string, hosts []string) *api.Problem {
@@ -143,7 +224,7 @@ func Tools(in []state.MCPListingTool) []api.MCPListingTool {
 func Response(l state.MCPListing, slug, origin string) api.MCPListingResponse {
 	out := api.MCPListingResponse{App: slug, Title: l.Title, Summary: l.Summary, Endpoint: l.Endpoint, Tools: Tools(l.Tools),
 		RegistryName: l.RegistryName, ShowUsage: l.ShowUsage, Version: l.Version, PublishedAt: l.PublishedAt,
-		PageURL: PageURL(origin, slug)}
+		PageURL: PageURL(origin, slug), ContractSHA256: l.ContractSHA256, ProbeSecret: l.ProbeSecret}
 	if l.RegistryName != "" {
 		out.ServerJSONURL = ServerJSONURL(origin, slug)
 	}

@@ -51,6 +51,20 @@ func describeCapabilities(scopes []string) []string {
 	return out
 }
 
+// connectGrantPermission is how the consent page names the Connect grant
+// (ADR-20261127160000 §6).
+const connectGrantPermission = "Deploy, promote, roll back, restart and undo its changes in production without Gregale asking you again each time. Each one is recorded in your audit log; your organization's approval rules still apply."
+
+// consentPermissions are the additional permissions the consent page lists:
+// the capabilities, and the Connect grant when the sign-in code carried one.
+func consentPermissions(capabilities []string, connectGrant bool) []string {
+	out := describeCapabilities(capabilities)
+	if connectGrant {
+		out = append(out, connectGrantPermission)
+	}
+	return out
+}
+
 // grantCLI is the hosted bridge's CLI runner for one grant's credential.
 func (r *remoteServer) grantCLI(accountID, token string) LocalCLI {
 	if r.opts.CLIRunner == nil {

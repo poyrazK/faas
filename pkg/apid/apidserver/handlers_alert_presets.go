@@ -179,7 +179,7 @@ func (s *server) enableAlertPresetFromForm(ctx context.Context, acct state.Accou
 		return state.AlertRule{}, prob
 	}
 	if req.Action != nil && !api.AlertRuleActionAllowedForMetric(preset.Metric, *req.Action) {
-		return state.AlertRule{}, api.ErrAlertPresetInvalid("login target alerts support webhook action only")
+		return state.AlertRule{}, api.ErrAlertPresetInvalid(api.AlertMetricActionRestriction(preset.Metric))
 	}
 	if !channelOnly {
 		if prob := resolveAndCheckEgress(ctx, req.WebhookURL); prob != nil {

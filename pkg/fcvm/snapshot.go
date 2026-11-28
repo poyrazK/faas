@@ -324,6 +324,10 @@ type SnapshotSpec struct {
 	// shared backend (ADR-733 sealed crash captures: a crashcrypt.Backend
 	// that stores only ciphertext). Local-path publication is disabled.
 	Storage storage.StorageBackend
+	// whilePaused runs once the snapshot files exist and before the guest
+	// resumes (a sandbox fork clones the session's volume there,
+	// ADR-20261122132055 §3). Its error fails the capture.
+	whilePaused func() error
 }
 
 // SnapshotInfo is the result of a snapshot create.

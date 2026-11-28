@@ -442,6 +442,49 @@ gregale alert create --app shop --name "Out of memory" \
 
 The rule needs an app and accepts every alert window and action.
 
+## Boot and job failures
+
+`boot_failures` counts the times the app's instances failed to start within
+the window. An app that crashes on start (a missing secret, a bad config, a
+failed migration) can still answer some requests between attempts, so
+`api_up` and the error rate may stay quiet while visitors wait on failed
+wakes. Boots of a canary's mirrored candidate do not count. The rule needs an
+app.
+
+`job_failures` counts the [job](jobs.md) runs in your account that finished
+`failed` or `dead_letter` within the window. Jobs belong to the account, not
+an app, so the rule counts every job whichever app you create it on.
+
+`job_failures` supports the webhook action only. `boot_failures` also takes
+`--action rollback` together with `--post-deploy-rollback-window`: it rolls
+back a release that already finished, judged only on that release's own
+boots. Its failed boots since the release went live must meet the rule, and
+it must not have started once. A failed boot counts only on a node that
+started other apps in the same window, so a broken node or a platform
+incident never rolls your release back. A release that crashes on start rolls
+back. A canary still in flight is never rolled back or demoted on this
+metric, and a release rolled back this way is not rolled back again.
+
+```bash
+gregale alert create --app shop --name "Crash on start" \
+  --metric boot_failures --comparison gte --threshold 3 --window-spec 15m \
+  --action rollback --post-deploy-rollback-window 30m --channel OPS_SLACK_ID
+```
+
+```bash
+gregale alert preset enable boot_failing --app shop --channel OPS_SLACK_ID
+gregale alert preset enable job_failures --app shop --channel OPS_SLACK_ID
+
+# Or set your own threshold:
+gregale alert create --app shop --name "Boot failures" \
+  --metric boot_failures --comparison gte --threshold 5 --window-spec 1h \
+  --channel OPS_SLACK_ID
+```
+
+The `boot_failing` preset fires at 3 failed boots in 15 minutes; the
+`job_failures` preset fires on any failed run within 60 minutes. Both wait 60
+minutes before firing again.
+
 ## AI budget alerts
 
 `ai_budget_alerts` counts the AI budget thresholds crossed within the window

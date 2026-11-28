@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -41,6 +42,9 @@ type remoteFixture struct {
 	keyScopes map[string][]string
 	apiHook   func(http.ResponseWriter, *http.Request, string) bool
 	mints     []api.CliAuthCodeRequest
+	// refuseConnect answers a code request carrying the Connect grant as an
+	// apid that predates it does (ADR-20261127160000 §2).
+	refuseConnect bool
 	// agentClients and disconnects record what the bridge told apid about
 	// its keys (ADR-20261030133644), by key.
 	agentClients map[string]api.AgentClientRequest
@@ -69,7 +73,12 @@ func newRemoteFixtureWithOptions(t *testing.T, writes bool, options HTTPOptions)
 			}
 			f.mu.Lock()
 			f.mints = append(f.mints, input)
+			refuse := f.refuseConnect && slices.Contains(input.Scopes, api.ScopeConnectApproval)
 			f.mu.Unlock()
+			if refuse {
+				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid request", "unknown scope"))
+				return
+			}
 			_ = json.NewEncoder(w).Encode(api.CliAuthCodeResponse{Code: "MCPR-fixture", URL: "https://console.example/cli-auth?code=MCPR-fixture", ExpiresAt: time.Now().Add(time.Minute).Format(time.RFC3339)})
 			return
 		}
@@ -413,11 +422,11 @@ func TestRemoteManagementOAuthAccountIsolation(t *testing.T) {
 			aliceSession, ctx := f.connect(alice, version)
 			bobSession, _ := f.connect(bob, version)
 			aliceCatalog, err := aliceSession.ListTools(ctx, nil)
-			if err != nil || len(aliceCatalog.Tools) != 164 {
+			if err != nil || len(aliceCatalog.Tools) != 165 {
 				t.Fatalf("alice tools=%d error=%v", len(aliceCatalog.Tools), err)
 			}
 			bobCatalog, err := bobSession.ListTools(ctx, nil)
-			if err != nil || len(bobCatalog.Tools) != 143 {
+			if err != nil || len(bobCatalog.Tools) != 144 {
 				t.Fatalf("bob count=%d tools=%+v error=%v", len(bobCatalog.Tools), bobCatalog, err)
 			}
 			aliceContext := callTool(t, ctx, aliceSession, "gregale_context", map[string]any{}, false)

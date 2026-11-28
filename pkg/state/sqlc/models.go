@@ -1232,6 +1232,13 @@ type ApiKeyApprovalCategory struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
+// ADR-20261127160000 the Connect consent that approves a hosted MCP key's deploys; apid is the only writer.
+type ApiKeyConnectGrant struct {
+	KeyID     pgtype.UUID
+	GrantedBy pgtype.UUID
+	GrantedAt pgtype.Timestamptz
+}
+
 // ADR-20261104085712 the projects an agent or mcp-login key is limited to; apid is the only writer.
 type ApiKeyProjectLimit struct {
 	KeyID      pgtype.UUID
@@ -10813,18 +10820,49 @@ type McpCatalogMonitor struct {
 	Payload   []byte
 }
 
+type McpContractCheck struct {
+	DeploymentID    pgtype.UUID
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+	BaselineSha256  string
+	CandidateSha256 pgtype.Text
+	Candidate       []byte
+	Verdict         string
+	Changes         []byte
+	OverrideID      pgtype.UUID
+	CheckedAt       pgtype.Timestamptz
+	AcceptedAt      pgtype.Timestamptz
+	LiveAt          pgtype.Timestamptz
+}
+
+type McpContractOverride struct {
+	ID               pgtype.UUID
+	AppID            pgtype.UUID
+	AccountID        pgtype.UUID
+	Reason           string
+	CreatedBy        string
+	CreatedAt        pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+	DeploymentID     pgtype.UUID
+	UsedByDeployment pgtype.UUID
+	UsedAt           pgtype.Timestamptz
+}
+
 type McpListing struct {
-	AppID        pgtype.UUID
-	AccountID    pgtype.UUID
-	Title        string
-	Summary      string
-	Endpoint     string
-	Tools        []byte
-	RegistryName string
-	ShowUsage    bool
-	Version      int32
-	PublishedAt  pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
+	AppID          pgtype.UUID
+	AccountID      pgtype.UUID
+	Title          string
+	Summary        string
+	Endpoint       string
+	Tools          []byte
+	RegistryName   string
+	ShowUsage      bool
+	Version        int32
+	PublishedAt    pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	Contract       []byte
+	ContractSha256 pgtype.Text
+	ProbeSecret    string
 }
 
 type McpOauthRetirement struct {
@@ -17158,19 +17196,22 @@ type SandboxSession struct {
 	TaskMaxChars pgtype.Int4
 	TaskExitCode pgtype.Int4
 	// ADR-20261116182615: the task command's standard output, capped at SandboxTaskOutputMaxBytes.
-	TaskOutput        []byte
-	EgressAllow       []string
-	EgressDeny        []string
-	PlacedNodeID      pgtype.Text
-	Vcpu              pgtype.Int2
-	VolumeGb          pgtype.Int4
-	PauseRequestedAt  pgtype.Timestamptz
-	ResumeRequestedAt pgtype.Timestamptz
-	PausedAt          pgtype.Timestamptz
-	Durability        pgtype.Text
-	ResumedCold       bool
-	ForkedFrom        pgtype.UUID
-	ResumeNotBefore   pgtype.Timestamptz
+	TaskOutput         []byte
+	EgressAllow        []string
+	EgressDeny         []string
+	PlacedNodeID       pgtype.Text
+	Vcpu               pgtype.Int2
+	VolumeGb           pgtype.Int4
+	PauseRequestedAt   pgtype.Timestamptz
+	ResumeRequestedAt  pgtype.Timestamptz
+	PausedAt           pgtype.Timestamptz
+	Durability         pgtype.Text
+	ResumedCold        bool
+	ForkedFrom         pgtype.UUID
+	ResumeNotBefore    pgtype.Timestamptz
+	ForkCaptureID      pgtype.UUID
+	ForkRequestedAt    pgtype.Timestamptz
+	ForkLocalRefusedAt pgtype.Timestamptz
 }
 
 type SandboxSessionCapture struct {
@@ -17189,6 +17230,8 @@ type SandboxSessionCapture struct {
 	ConsumedAt        pgtype.Timestamptz
 	CheckedAt         pgtype.Timestamptz
 	VolumeBackupID    pgtype.UUID
+	Purpose           string
+	UploadedAt        pgtype.Timestamptz
 }
 
 // ADR-20261117091026 domains a web-mode sandbox session was granted or refused, written by agentd from vmmd's domain log.
@@ -17774,6 +17817,20 @@ type SpendCapNoticeOutbox struct {
 	DeliveredAt   pgtype.Timestamptz
 }
 
+type StageWorkflowScheduleCursor struct {
+	EnvironmentID   pgtype.UUID
+	WorkflowName    string
+	AppID           pgtype.UUID
+	DeploymentID    pgtype.UUID
+	TriggerSnapshot []byte
+	LastEvaluatedAt pgtype.Timestamptz
+	ScheduledFor    pgtype.Timestamptz
+	Status          string
+	LastRunID       pgtype.UUID
+	LastAdmittedAt  pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type StaticEgressProvisioningGrant struct {
 	SourceID   string
 	AccountID  pgtype.UUID
@@ -17858,6 +17915,7 @@ type StoredWorkflow struct {
 	UpdatedAt        pgtype.Timestamptz
 	TestSuite        []byte
 	TestReport       []byte
+	EnvironmentID    pgtype.UUID
 }
 
 type StoredWorkflowFailureGuard struct {
@@ -17967,6 +18025,7 @@ type StoredWorkflowRevision struct {
 	PublishedByAccountID pgtype.UUID
 	PublishedByApiKeyID  pgtype.UUID
 	CheckEvidence        []byte
+	EnvironmentID        pgtype.UUID
 }
 
 type StripePushDedupe struct {

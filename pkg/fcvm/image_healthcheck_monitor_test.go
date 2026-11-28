@@ -69,6 +69,55 @@ func TestImageHealthcheckMonitorConsecutiveFailuresAndRecovery(t *testing.T) {
 	}
 }
 
+// TestImageHealthcheckMonitorWaitsOutQuietPause: production 2026-11-27, a
+// quiet-paused Compose app ran out of transport attempts after ~95 s and was
+// destroyed as liveness_infrastructure, which also staled its snapshot. No
+// attempt may run while the guest is paused, an attempt that overlapped a
+// pause counts for nothing, and a paused monitor never spins.
+func TestImageHealthcheckMonitorWaitsOutQuietPause(t *testing.T) {
+	interval := 1250 * time.Microsecond
+	paused, epoch := false, uint64(0)
+	pause := func() { paused, epoch = true, epoch+1 }
+	pausedWaits, attempts, observed := 0, 0, 0
+	// Attempts 1 and 4 time out because the guest pauses while they run.
+	overlapsPause := map[int]bool{1: true, 4: true}
+	monitor := imageHealthcheckMonitor{
+		config: func(context.Context) (healthcheckproto.Config, error) {
+			return healthcheckproto.Config{RuntimeID: "main", IntervalNS: int64(interval), TimeoutNS: int64(time.Millisecond), Retries: 3}, nil
+		},
+		probe: func(context.Context, string) (healthcheckproto.Response, error) {
+			if paused {
+				t.Fatal("probed a quiet-paused guest")
+			}
+			attempts++
+			if overlapsPause[attempts] {
+				pause()
+			}
+			return healthcheckproto.Response{}, errors.New("vsock timeout")
+		},
+		wait: func(_ context.Context, delay time.Duration) bool {
+			if paused {
+				if delay < api.ImageHealthcheckTransportRetryInterval {
+					t.Fatalf("paused monitor polled after %s", delay)
+				}
+				if pausedWaits++; pausedWaits%4 == 0 {
+					paused = false // a request resumed the guest
+				}
+			}
+			return true
+		},
+		observe: func(string, int, time.Duration) { observed++ },
+		quiet:   func() (bool, uint64) { return paused, epoch },
+	}
+	if reason := monitor.run(t.Context()); reason != LivenessReasonInfrastructure {
+		t.Fatalf("reason=%q", reason)
+	}
+	// Attempts 2, 3 and 5 are the three real transport misses.
+	if attempts != 5 || observed != 3 || pausedWaits != 8 {
+		t.Fatalf("attempts=%d observed=%d pausedWaits=%d", attempts, observed, pausedWaits)
+	}
+}
+
 func TestImageHealthcheckMonitorFreshWireProof(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -106,7 +155,7 @@ func TestImageHealthcheckMonitorFreshWireProof(t *testing.T) {
 			})
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
-			if got := RunImageHealthcheckMonitor(ctx, v.VsockUDSSocketPath(lease.Instance), nil); got != tc.want {
+			if got := RunImageHealthcheckMonitor(ctx, v.VsockUDSSocketPath(lease.Instance), nil, nil); got != tc.want {
 				t.Fatalf("reason=%q want=%q", got, tc.want)
 			}
 		})
@@ -116,7 +165,7 @@ func TestImageHealthcheckMonitorFreshWireProof(t *testing.T) {
 func TestImageHealthcheckMonitorCancellationAndLegacyGuest(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if got := RunImageHealthcheckMonitor(ctx, "unused", nil); got != "" {
+	if got := RunImageHealthcheckMonitor(ctx, "unused", nil, nil); got != "" {
 		t.Fatal("shutdown requested recovery")
 	}
 	v, lease := imageHealthcheckTestSocket(t, func(_ uint32, req healthcheckproto.Request) (uint32, any) {

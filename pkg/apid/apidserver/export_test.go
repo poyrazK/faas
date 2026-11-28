@@ -264,6 +264,7 @@ const RequestAnalyticsRouteMaxLength = requestAnalyticsRouteMaxLength
 const RouteCostByRequestTime = routeCostByRequestTime
 const RouteCostByRequests = routeCostByRequests
 const RuntimeConfigAppNameBlocklist = runtimeConfigAppNameBlocklist
+const RuntimeConfigAppTaskConcurrency = runtimeConfigAppTaskConcurrency
 const RuntimeConfigDataPlacement = runtimeConfigDataPlacement
 const RuntimeConfigDomainDoctor = runtimeConfigDomainDoctor
 const RuntimeConfigDomainDoctorTTL = runtimeConfigDomainDoctorTTL
@@ -1985,6 +1986,17 @@ func (s *server) EnableStageAlertRulesForTest(t *testing.T) {
 	}
 }
 
+// EnableStageStoredWorkflowsForTest turns stage_stored_workflows_enabled on.
+func (s *server) EnableStageStoredWorkflowsForTest(t *testing.T) {
+	t.Helper()
+	if s.runtimeConfig == nil {
+		s.runtimeConfig = newRuntimeConfigManager(nil)
+	}
+	if err := s.runtimeConfig.apply(runtimeConfigStageStoredWorkflows, json.RawMessage("true")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (s *server) RehearsalSimulationEnabled() *bool { return &s.rehearsalSimulationEnabled }
 func (s *server) RehearsalCommandsEnabled() *bool   { return &s.rehearsalCommandsEnabled }
 
@@ -2452,6 +2464,14 @@ func CapabilitiesWithInstallationGates(crashSnapshots, forks, profiling bool) *h
 func CapabilitiesWithRuntimeGates(appTasks, tcp, udp bool) *httptest.ResponseRecorder {
 	recorder := httptest.NewRecorder()
 	(&server{}).WithAppTaskAPIEnabled(appTasks).WithListenersEnabled(tcp, udp).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanPro})
+	return recorder
+}
+
+// CapabilitiesWithAppTaskGates runs GET /v1/capabilities for a Pro account
+// with the app-task API and interactive-session gates set.
+func CapabilitiesWithAppTaskGates(appTasks, interactive bool) *httptest.ResponseRecorder {
+	recorder := httptest.NewRecorder()
+	(&server{}).WithAppTaskAPIEnabled(appTasks).WithInteractiveAppTasksEnabled(interactive).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanPro})
 	return recorder
 }
 

@@ -1397,6 +1397,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				jailer.WithListenerStore(fdStore)
 				mgr.WithAdoptAdmittedRuntimes(cfg.AdoptAdmittedRuntimes)
 			}
+			mgr.WithAdoptionDriveBase(cfg.AdoptionDriveBase)
 			adoptionReport, err = startAdoption(ctx, mgr, cfg.AdoptionRecord, cfg.AdoptRunningVMs, claimEpoch, newAdoptionMetrics(ops.Registry()), log)
 			if err != nil {
 				return err
@@ -2665,10 +2666,27 @@ heartbeat:
 	// we don't want to drop before its replacement lease is acquired.
 	stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	// ADR-20261122132055 §7: sandbox sessions are not adopted; their owners
+	// pause persistent ones (kept on this node) and end the others while
+	// vmmd still serves their streams.
+	// The planned-restart notice goes out before the wait, so wakes during
+	// it are retried, and again after it, since the wait can outlast the
+	// notice.
 	if cfg.AdoptRunningVMs && adoptionReport != nil {
 		// The caller ctx is already done; the notice is shutdown work.
 		announceRestart(context.WithoutCancel(ctx), store, adoptionReport.NodeID, log)
 	}
+	evacuateStarted := time.Now()
+	//nolint:contextcheck // the caller ctx is already done; evacuation is shutdown work.
+	impl.EvacuateSandboxes(context.WithoutCancel(ctx), vmmdgrpc.SandboxEvacuateWait, log)
+	if cfg.AdoptRunningVMs && adoptionReport != nil && time.Since(evacuateStarted) > time.Second {
+		//nolint:contextcheck // the caller ctx is already done; the notice is shutdown work.
+		announceRestart(context.WithoutCancel(ctx), store, adoptionReport.NodeID, log)
+	}
+	// Streams the stop cuts from here on end their VMs: the successor
+	// adopts no session, so none is kept for a reattach.
+	//nolint:contextcheck // the caller ctx is already done; this is shutdown work.
+	impl.StopDetachingSandboxes(context.WithoutCancel(ctx))
 	localDataStopped := localData.stop(cfg.AdoptRunningVMs, log)
 	stopGRPC(gsrv, cfg.AdoptRunningVMs, log)
 	<-localDataStopped

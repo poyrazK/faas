@@ -18,6 +18,7 @@ import (
 const (
 	SandboxVolumeBackupPeriodic = "periodic"
 	SandboxVolumeBackupPause    = "pause"
+	SandboxVolumeBackupFork     = "fork"
 )
 
 // SandboxVolumeBackup is one backup of a session's volume vmmd reported.

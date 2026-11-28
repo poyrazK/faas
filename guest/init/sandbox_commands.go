@@ -36,6 +36,8 @@ type backgroundCommand struct {
 	stderr  *outputRing
 	done    chan struct{}
 	exit    sandboxExit
+	// reseedOnFork: the command gets SIGUSR2 in each fork of the session.
+	reseedOnFork bool
 
 	// inTurn admits one exec_input at a time; a call waits for its turn no
 	// longer than one write may take. linePending is guarded by it.
@@ -70,7 +72,7 @@ func (c *sandboxCommands) start(spec sandboxCommandSpec, req sandboxproto.Reques
 	}
 	cmd := &backgroundCommand{handle: newCommandHandle(), argv: append([]string(nil), spec.argv...), tty: spec.tty, started: c.now(), proc: proc,
 		stdout: newOutputRing(req.MaxOutputBytes), stderr: newOutputRing(req.MaxOutputBytes), done: make(chan struct{}),
-		inTurn: make(chan struct{}, 1)}
+		inTurn: make(chan struct{}, 1), reseedOnFork: req.ReseedOnFork}
 	c.byID[cmd.handle] = cmd
 	c.order = append(c.order, cmd.handle)
 	go cmd.run(time.Duration(req.TimeoutMillis) * time.Millisecond)
@@ -164,6 +166,27 @@ func (c *sandboxCommands) find(handle string) (*backgroundCommand, error) {
 		return nil, sandboxError(sandboxproto.CodeNotFound, "no background command %s", handle)
 	}
 	return cmd, nil
+}
+
+// signalFork sends SIGUSR2 to the running commands that asked for it at
+// exec, in a session just restored as a fork (ADR-20261122132055 §3), and
+// counts them.
+func (c *sandboxCommands) signalFork() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for _, handle := range c.order {
+		cmd := c.byID[handle]
+		select {
+		case <-cmd.done:
+			continue
+		default:
+		}
+		if cmd.reseedOnFork && cmd.proc.signal(syscall.SIGUSR2) == nil {
+			n++
+		}
+	}
+	return n
 }
 
 func (c *sandboxCommands) list() sandboxproto.ExecList {

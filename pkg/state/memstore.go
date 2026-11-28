@@ -675,6 +675,8 @@ type MemStore struct {
 	flagNotificationKeys                 map[string]flagNotificationKey      // ADR-20261125085913
 	routeSplits                          map[string]RouteSplit               // ADR-20261121170000 amendment 2, by ID, lazily made
 	mcpListings                          map[string]MCPListing               // ADR-20261126175800, by app ID, lazily made
+	mcpContractChecks                    map[string]MCPContractCheck         // ADR-20261127191645, by deployment ID, lazily made
+	mcpContractOverrides                 map[string]MCPContractOverride      // ADR-20261127191645, by ID, lazily made
 	platformTenantReconciliationReceipts map[string]api.PlatformTenantReconciliationReceiptResponse
 	platformTenantOffboardingReceipts    map[string]api.PlatformTenantOffboardingReceiptResponse
 	platformTenantAccessTokens           map[string]PlatformTenantAccessToken
@@ -857,6 +859,7 @@ type MemStore struct {
 	storedWorkflowLiveBaselines           map[string][]api.StoredWorkflowLiveBaseline
 	storedWorkflowLiveBaselineRetirements map[string]api.StoredWorkflowLiveBaselineRetirement
 	workflowSchedules                     map[string]WorkflowScheduleCursor
+	stageWorkflowSchedules                map[string]WorkflowScheduleCursor // environment/name (ADR-20261104120000)
 	workflowTenantSchedules               map[string]WorkflowScheduleCursor
 	workflowScheduleOccurrences           map[string]WorkflowScheduleOccurrence
 	storedWorkflowFailurePolicies         map[string]api.StoredWorkflowFailurePolicy
@@ -1555,7 +1558,9 @@ type MemStore struct {
 	keyProjectLimits map[string][]string       // ADR-20261104085712
 	// ADR-20261104140058: agent keys' approval categories and requests.
 	keyApprovalCategories map[string][]string
-	agentApprovals        map[string]AgentApproval
+	// keyConnectGrants mirrors api_key_connect_grants (ADR-20261127160000).
+	keyConnectGrants map[string]AgentConnectGrant
+	agentApprovals   map[string]AgentApproval
 	// ADR-20261107140000: the notification outbox and email log.
 	agentApprovalNotifications   map[string]*memAgentApprovalNotification
 	agentApprovalEmailLog        map[memEmailLogKey]time.Time
@@ -4642,6 +4647,14 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	for key, subscription := range m.eventSubscriptions {
 		if app, ok := m.eventSubscriptionAppLocked(subscription.AppID); ok && app.ProjectID == projectID && subscription.DeploymentScope == slug {
 			delete(m.eventSubscriptions, key)
+		}
+	}
+	// So do its stored workflows and their revisions (FK ON DELETE CASCADE).
+	for key, workflow := range m.storedWorkflows {
+		if workflow.EnvironmentID == environmentID {
+			delete(m.storedWorkflows, key)
+			delete(m.storedWorkflowRevisions, key)
+			m.deleteStageWorkflowScheduleLocked(environmentID, workflow.Name)
 		}
 	}
 	m.deleteProjectEnvironmentBranchLocked(environmentID)

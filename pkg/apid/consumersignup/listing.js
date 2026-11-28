@@ -104,7 +104,19 @@
     if (!tools.length) item($("tools"), "No tools listed", "span", []);
     for (const t of tools) item($("tools"), t.name, "code", [t.title, t.description]);
     $("published").textContent = "Tools as of " + new Date(l.published_at).toLocaleDateString();
+    renderChangelog(l.changelog || []);
     $("listing-view").hidden = false;
+  }
+
+  // ADR-20261127191645: tool contract changes shipped since publishing.
+  function renderChangelog(entries) {
+    const words = { compatible: "Added or widened", review: "Changed", breaking: "Breaking change", unverified: "Unverified release" };
+    for (const e of entries) {
+      const head = new Date(e.date).toLocaleDateString() + " · " + (words[e.verdict] || e.verdict);
+      const tools = (e.tools || []).join(", ");
+      item($("changelog"), head, "strong", [tools ? "Tools: " + tools : "", e.changes ? e.changes + (e.changes === 1 ? " change" : " changes") : ""]);
+    }
+    $("changelog-section").hidden = entries.length === 0;
   }
 
   async function copyEndpoint() {

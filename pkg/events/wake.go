@@ -876,6 +876,10 @@ type BootCompleted struct {
 	QueuedCount           int    // ADR-123 — ledger.Concurrency at admit
 	ConcurrencyAtAdmit    int    // ADR-123 — same reading; 0 is cold start
 	PostRPC               PostRPCTimings
+	// DeploymentID is the deployment the instance runs. A boot_failures
+	// rollback judges a release on its own boots (ADR-605 amendment 2,
+	// 2026-11-28). Omitted when empty.
+	DeploymentID string
 }
 
 // PostRPCTimings splits schedd's work between the vmmd Wake RPC returning and
@@ -943,6 +947,9 @@ func (e BootCompleted) Payload() map[string]any {
 	if e.RestoreFallbackReason != "" {
 		p["restore_fallback_reason"] = e.RestoreFallbackReason
 	}
+	if e.DeploymentID != "" {
+		p["deployment_id"] = e.DeploymentID
+	}
 	if e.PostRPC.Set {
 		p["post_rpc_pre_commit_ms"] = e.PostRPC.PreCommitMs
 		p["post_rpc_stamp_join_ms"] = e.PostRPC.StampJoinMs
@@ -966,13 +973,20 @@ type BootFailed struct {
 	Method     string
 	Reason     string
 	FailedAt   time.Time
+	// Mirror marks a failed boot of a mirror-mode (shadow) instance of a
+	// candidate deployment, not of the live app. The boot_failures alert
+	// metric leaves these out. Written to the payload only when true.
+	Mirror bool
+	// DeploymentID is the deployment the instance runs (ADR-605 amendment 2,
+	// 2026-11-28). Omitted when empty.
+	DeploymentID string
 }
 
 func (e BootFailed) Kind() string     { return WakeBootFailed }
 func (e BootFailed) At() time.Time    { return e.EmitAt }
 func (e BootFailed) Subject() *string { return nil }
 func (e BootFailed) Payload() map[string]any {
-	return map[string]any{
+	out := map[string]any{
 		"wake_id":     e.WakeID,
 		"app_id":      e.AppID,
 		"instance_id": e.InstanceID,
@@ -981,6 +995,13 @@ func (e BootFailed) Payload() map[string]any {
 		"reason":      e.Reason,
 		"failed_at":   e.FailedAt.UTC(),
 	}
+	if e.Mirror {
+		out["mirror"] = true
+	}
+	if e.DeploymentID != "" {
+		out["deployment_id"] = e.DeploymentID
+	}
+	return out
 }
 
 // Readiness200 — vmmd's waitReady saw its first 2xx probe. The

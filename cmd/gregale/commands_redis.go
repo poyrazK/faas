@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const redisUsage = "usage: gregale redis <list|create|get|bind|unbind|resize|update|restart|delete>"
+const redisUsage = "usage: gregale redis <list|create|get|bind|unbind|cli|resize|update|restart|delete>"
 
 func cmdRedis(args []string) int {
 	if len(args) == 0 {
@@ -32,6 +32,8 @@ func cmdRedis(args []string) int {
 		return cmdRedisBind(args[1:])
 	case "unbind":
 		return cmdRedisUnbind(args[1:])
+	case "cli":
+		return cmdRedisCLI(args[1:])
 	case "resize":
 		return cmdRedisResize(args[1:])
 	case "update":
@@ -119,13 +121,16 @@ func cmdRedisGet(args []string) int {
 	}
 	cache, err := client.GetRedisCache(context.Background(), fs.Arg(0))
 	if err != nil {
-		return printErr("Could not find Redis cache", err)
+		return printErr("Could not find Redis cache", redisCacheNotFound(fs.Arg(0), err))
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(cache))
 	}
 	_, _ = fmt.Fprintf(osStdout, "Name:      %s\nEngine:    %s\nHost:      %s:%d\nMemory:    %d MB\nEviction:  %s\nIdle park: %ds\nStatus:    %s\n",
 		cache.Name, cache.Engine, cache.Host, cache.Port, cache.MemoryMB, cache.EvictionPolicy, cache.IdleTimeoutS, cache.Status)
+	if len(cache.BoundApps) > 0 {
+		_, _ = fmt.Fprintf(osStdout, "Bound to:  %s\n", strings.Join(cache.BoundApps, ", "))
+	}
 	return 0
 }
 
@@ -233,7 +238,7 @@ func cmdRedisResize(args []string) int {
 	}
 	out, err := client.UpdateRedisCache(context.Background(), fs.Arg(0), api.UpdateRedisCacheRequest{MemoryMB: *memory, EvictionPolicy: *policy, Evict: *evict})
 	if err != nil {
-		return printErr("Could not resize Redis cache", err)
+		return printErr("Could not resize Redis cache", redisCacheNotFound(fs.Arg(0), err))
 	}
 	return printRedisChange(out, "Resizing")
 }
@@ -250,7 +255,7 @@ func cmdRedisUpgrade(args []string) int {
 	}
 	out, err := client.UpgradeRedisCache(context.Background(), fs.Arg(0))
 	if err != nil {
-		return printErr("Could not upgrade Redis cache", err)
+		return printErr("Could not upgrade Redis cache", redisCacheNotFound(fs.Arg(0), err))
 	}
 	return printRedisChange(out, "Upgrading")
 }
@@ -276,7 +281,7 @@ func cmdRedisRestart(args []string) int {
 	}
 	out, err := client.RestartRedisCache(context.Background(), fs.Arg(0))
 	if err != nil {
-		return printErr("Could not restart Redis cache", err)
+		return printErr("Could not restart Redis cache", redisCacheNotFound(fs.Arg(0), err))
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
@@ -314,11 +319,23 @@ func cmdRedisDelete(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	if err := client.DeleteRedisCache(context.Background(), name); err != nil {
-		return printErr("Could not delete Redis cache", err)
+		return printErr("Could not delete Redis cache", redisCacheNotFound(name, err))
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(map[string]any{"name": name, "deleted": true}))
 	}
 	_, _ = fmt.Fprintf(osStdout, "Deleted Redis cache %s\n", name)
 	return 0
+}
+
+// redisCacheNotFound names the cache a 404 is about. A cache is an app
+// underneath, so `redis get nope` answered "no such app" (prod hunt r75).
+func redisCacheNotFound(name string, err error) error {
+	if !isNotFound(err) {
+		return err
+	}
+	// Still a 404 problem, so the exit code stays not_found (4).
+	problem := api.Problem{Status: http.StatusNotFound, Code: api.CodeNotFound, Title: "Redis cache not found",
+		Detail: fmt.Sprintf("no Redis cache named %q; gregale redis list names them", name)}
+	return &api.APIError{Problem: problem}
 }

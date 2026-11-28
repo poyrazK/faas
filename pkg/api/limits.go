@@ -495,6 +495,26 @@ const (
 	UnverifiedAccountExpiryBatch = 100
 )
 
+// DeletedOrgPurgeAfter is how long a deleted shared organization keeps its
+// slug before apid's hourly purge releases it (ADR-061 amendment 1); one
+// sweep purges at most DeletedOrgPurgeBatch.
+const (
+	DeletedOrgPurgeAfter = 30 * 24 * time.Hour
+	DeletedOrgPurgeBatch = 100
+)
+
+// schedd's sweep of snapshots whose object is missing from the canonical
+// store (prod hunt r72): a snapshot must be SnapshotOriginMissingGrace old
+// when a node's fan-out found it missing before schedd marks it stale (a
+// capture's upload lands well inside it); the sweep runs every
+// SnapshotOriginMissingInterval and retires at most SnapshotOriginMissingBatch
+// per pass.
+const (
+	SnapshotOriginMissingGrace    = time.Hour
+	SnapshotOriginMissingInterval = 5 * time.Minute
+	SnapshotOriginMissingBatch    = 50
+)
+
 // Customer-granted support access (ADR-20261116163508). A grant lasts
 // SupportGrantDefaultTTL unless its owner or admin picks another duration,
 // at most SupportGrantMaxTTL, and names at most SupportGrantMaxApps apps. A
@@ -2102,9 +2122,38 @@ const (
 	MCPListingToolTitleMax           = 128
 	MCPListingToolDescriptionMax     = 1024
 	MCPListingEndpointMax            = 2048
-	MCPListingRequestMaxBytes        = 512 << 10
+	MCPListingRequestMaxBytes        = 1536 << 10
 	MCPListingRegistryDescriptionMax = 100
 	MCPListingToolsMaxBytes          = 256000
+	// Tool contract gate (ADR-20261127191645): the catalog contract a
+	// listing is published with is at most MCPListingContractMaxBytes of
+	// canonical JSON, below the 2 MiB CHECK on mcp_listings.contract and
+	// mcp_contract_checks.candidate. An override admits one candidate for
+	// MCPContractOverrideDefaultTTL unless asked for less or more, between
+	// MCPContractOverrideMinTTL and MCPContractOverrideMaxTTL; an app holds
+	// at most MCPContractOverrideOpenCap open overrides (one bound to a
+	// deployment that ended no longer counts). The owner view lists the
+	// newest MCPContractChecksMax checks; the public changelog the newest
+	// MCPContractChangelogMax accepted changes. A check stores at most
+	// MCPContractChangesMax changes in at most MCPContractChangesMaxBytes
+	// (the column allows 262,144 bytes of jsonb text). An override request
+	// body is at most MCPContractOverrideRequestMaxBytes. The gate spends at
+	// most MCPContractGateBudget opening one candidate's session, probe
+	// secret and catalog, and a refused deploy's failure detail names at
+	// most MCPContractBreakingSummaryMax breaking changes.
+	MCPContractChangesMax              = 200
+	MCPContractGateBudget              = 45 * time.Second
+	MCPContractBreakingSummaryMax      = 8
+	MCPContractOverrideMinTTL          = time.Minute
+	MCPContractChangesMaxBytes         = 120_000
+	MCPContractOverrideRequestMaxBytes = 8 << 10
+	MCPListingContractMaxBytes         = 1_000_000
+	MCPContractOverrideDefaultTTL      = time.Hour
+	MCPContractOverrideMaxTTL          = 24 * time.Hour
+	MCPContractOverrideOpenCap         = 5
+	MCPContractReasonMax               = 512
+	MCPContractChecksMax               = 20
+	MCPContractChangelogMax            = 20
 )
 
 // Consumer and platform tenant controls (ADR-1314, ADR-1315, ADR-1322,
@@ -3612,6 +3661,17 @@ const (
 	// model the catalog does not know (cost-control review 2026-11-19, N17).
 	OutboundAIUnknownModelOutputReserveTokens int64 = 32_768
 	OutboundAIReserveBytesPerToken            int64 = 4
+	// A generation call that continues context stored at the provider
+	// (previous_response_id, a conversation, a stored prompt, cached
+	// content, an uploaded file) reserves its model's context window from
+	// the catalog, or this for a model the catalog does not know (prod hunt
+	// 2026-11-28).
+	OutboundAIUnknownModelInputReserveTokens int64 = 200_000
+	// The most answers (n, best_of, candidateCount, completions prompts) a
+	// call's reservation counts, so a hostile count cannot overflow it;
+	// providers refuse far fewer (OpenAI: 128). Untyped: it bounds int and
+	// float counts.
+	OutboundAIReserveChoicesMax = 1 << 16
 	// Per-app AI guardrails on a binding (ADR-991).
 	MaxOutboundAIRequestsPerMinute       = 100_000
 	MaxOutboundAITokensPerMinute   int64 = 1_000_000_000
@@ -5147,10 +5207,11 @@ func PlanMeetsMinimumPlan(customer, minimumPlan Plan) bool {
 // FullRootfsAllowedPlans (M-3 / ADR-141 §Decision 2) is the closed
 // set of plans whose customers may auto-dispatch to the
 // full-rootfs build path on the typed `oci.ErrLayersNotAboveBase`
-// signal. PlanFree is intentionally absent — Free customers
-// must explicitly opt in via `deployment.FullRootfsOverride=&true`.
+// signal. Every plan is in it since the ADR-147 amendment of
+// 2026-11-28: a full-rootfs layer is held to the plan's existing
+// app-layer cap, so Free gains no disk beyond its 256 MB.
 // Order matters for PlanMeetsFullRootfs's rank comparison.
-var FullRootfsAllowedPlans = []Plan{PlanHobby, PlanPro, PlanScale}
+var FullRootfsAllowedPlans = []Plan{PlanFree, PlanHobby, PlanPro, PlanScale}
 
 // PlanMeetsFullRootfs returns true iff the customer's plan is in
 // FullRootfsAllowedPlans. Mirrors PlanMeetsMinimumPlan's closed-set
@@ -5160,10 +5221,8 @@ var FullRootfsAllowedPlans = []Plan{PlanHobby, PlanPro, PlanScale}
 //
 // imaged.buildImageLayer consults this on the typed
 // `ErrLayersNotAboveBase` dispatch (commit 6) to decide whether
-// to auto-dispatch. Free-plan customers must pass
-// `FullRootfsOverride=&true` to opt in; the dispatch table
-// honours override-first so an explicit override wins over the
-// auto gate.
+// to auto-dispatch. The dispatch table honours override-first so
+// an explicit override wins over the auto gate.
 func PlanMeetsFullRootfs(p Plan) bool {
 	for _, allowed := range FullRootfsAllowedPlans {
 		if p == allowed {
@@ -5184,15 +5243,16 @@ const (
 // cap on the number of /etc/passwd entries BuildFullRootfs merges
 // into /etc/faas/app_passwd. Hobby 16 / Pro 64 / Scale 256 — the
 // scale cap matches the on-disk binary table ceiling
-// (defaultPasswdTableMaxEntries in pkg/rootfs). PlanFree is 0
-// because Free does not auto-dispatch to full-rootfs.
+// (defaultPasswdTableMaxEntries in pkg/rootfs). Free matches Hobby
+// (ADR-147 amendment 2026-11-28): at 0, a Free image's named USER
+// such as distroless' "nonroot" could not be resolved at boot.
 //
 // Excess entries are silently dropped at table-write time; the
 // metric counter imaged_passwd_entries_total{outcome="over_cap"}
 // fires so the dashboard tripwires on misbuilt images without
 // polluting the success series. Lookup is O(1) per call.
 var UserUIDOverrideMax = map[Plan]int{
-	PlanFree:  0,
+	PlanFree:  16,
 	PlanHobby: 16,
 	PlanPro:   64,
 	PlanScale: 256,
@@ -5200,27 +5260,28 @@ var UserUIDOverrideMax = map[Plan]int{
 
 // MaxFullRootfsLayerBytes (M-3 / ADR-141 §Decision 5) is the
 // per-plan ceiling on the unpacked full-rootfs staging tree size.
-// Hobby 256 MB / Pro 1 GB / Scale 4 GB. PlanFree absent because
-// Free cannot auto-dispatch; an explicit Free + override deploy
-// is gated at admission time on PlanMeetsFullRootfs.
+// Free 256 MB / Hobby 256 MB / Pro 1 GB / Scale 4 GB. Free's entry
+// equals its AppLayerMaxMB, so full-rootfs gives Free no more disk
+// than a two-drive layer (ADR-147 amendment 2026-11-28).
 //
 // pkg/rootfs.CheckCapForStaging consults this in addition to the
 // two-drive AppLayerMaxMB ceiling so a Hobby customer cannot ship
 // a 4 GB full-rootfs image that would push them onto the
 // Scale-plan billing rate.
 var MaxFullRootfsLayerBytes = map[Plan]int64{
+	PlanFree:  256 << 20, // 256 MB
 	PlanHobby: 256 << 20, // 256 MB
 	PlanPro:   1 << 30,   // 1 GB
 	PlanScale: 4 << 30,   // 4 GB
 }
 
 // FullRootfsAllowAutoDefault (M-3 / ADR-141 §Decision 2) is the
-// per-plan default for state.Deployment.FullRootfsAllowAuto. Free
-// customers default to false (no auto-dispatch); paid plans default
-// to true. The customer can override per-deployment via
-// FullRootfsOverride (commit 6's tri-state).
+// per-plan default for state.Deployment.FullRootfsAllowAuto. Every
+// plan defaults to true since the ADR-147 amendment of 2026-11-28.
+// The customer can override per-deployment via FullRootfsOverride
+// (commit 6's tri-state).
 var FullRootfsAllowAutoDefault = map[Plan]bool{
-	PlanFree:  false,
+	PlanFree:  true,
 	PlanHobby: true,
 	PlanPro:   true,
 	PlanScale: true,
@@ -6288,6 +6349,14 @@ type Limits struct {
 	// pkg/state.PgStore.CreateCronIfUnderQuota.
 	CronLimitPerApp     int
 	CronLimitPerAccount int
+
+	// AppTaskConcurrency caps how many app tasks (`app exec`, interactive
+	// sessions, `app cp`, `app port-forward`) one account may have queued or
+	// running at once, across all its apps. Each holds a VM of the app's size.
+	// Release commands, command crons and platform probes are not counted.
+	// The hot `app_task_concurrency` runtime-config key overrides it per plan
+	// (pkg/api/app_task_concurrency.go).
+	AppTaskConcurrency int
 
 	// EventSubscriptionsPerApp and EventSubscriptionsPerAccount cap the
 	// enabled event subscriptions (gregale.yaml event_triggers) of one app
@@ -7611,6 +7680,7 @@ var planLimits = map[Plan]Limits{
 		// value the store still reads.
 		CronLimitPerApp:              0,
 		CronLimitPerAccount:          0,
+		AppTaskConcurrency:           2,
 		EventSubscriptionsPerApp:     0,
 		EventSubscriptionsPerAccount: 0,
 		// M-2 / ADR-137+138: Free stays request-only — same
@@ -8063,6 +8133,7 @@ var planLimits = map[Plan]Limits{
 		// template's tutorials.
 		CronLimitPerApp:              5,
 		CronLimitPerAccount:          10,
+		AppTaskConcurrency:           4,
 		EventSubscriptionsPerApp:     5,
 		EventSubscriptionsPerAccount: 10,
 		// M-2 / ADR-137+138: Hobby gets the documented 30 s
@@ -8516,6 +8587,7 @@ var planLimits = map[Plan]Limits{
 		// run more apps (25) than Hobby (5).
 		CronLimitPerApp:              20,
 		CronLimitPerAccount:          50,
+		AppTaskConcurrency:           10,
 		EventSubscriptionsPerApp:     20,
 		EventSubscriptionsPerAccount: 50,
 		// M-2 / ADR-137+138: Pro doubles Hobby's defaults
@@ -8943,6 +9015,7 @@ var planLimits = map[Plan]Limits{
 		// at the per-app cap, the typical SaaS fan-out.
 		CronLimitPerApp:              100,
 		CronLimitPerAccount:          500,
+		AppTaskConcurrency:           25,
 		EventSubscriptionsPerApp:     100,
 		EventSubscriptionsPerAccount: 500,
 		// M-2 / ADR-137+138: Scale doubles Pro (ADR-138
@@ -10421,6 +10494,14 @@ const (
 	// a block rule unchecked. Warn and block count a longer URI as a
 	// detection; a sampled check scores its first 8 KiB.
 	EdgeWAFMaxInspectURIBytes = 8 << 10
+	// EdgeWAFMaxInlineBodyBytes is how much of a request body a warn or
+	// block WAF rule scores in-path (ADR-831 amendment 22). A check costs
+	// about 60-100 us per parsed JSON or form field (M3), so a typical API
+	// body of 10-30 fields adds 1-3 ms, while a full 8 KiB body of small
+	// fields took 20-50 ms and would empty the app's check budget at a few
+	// requests a second. The rest of the rule's inspect_body_bytes is still
+	// sampled off-path and reported.
+	EdgeWAFMaxInlineBodyBytes = 2 << 10
 	// EdgeWAFInlineAccountSharePercent is the share of the node's check
 	// slots (at least one) an account's waiting checks are served first
 	// for (ADR-831 amendment 16). An account may use every free slot, but a
@@ -12246,6 +12327,10 @@ var (
 	SandboxPersistentRunMaxSec    = [4]int{0, 86_400, 259_200, 604_800}
 	SandboxPausedRetentionDays    = [4]int{0, 7, 30, 90}
 	SandboxResumeWaitSec          = 30
+	// SandboxReattachGraceSec is how long vmmd keeps a persistent session's VM
+	// running after its stream ended without a close or a pause, for agentd
+	// to take it over again (§7: schedd and agentd restarts).
+	SandboxReattachGraceSec = 120
 	// SandboxForkMax bounds the forks one request makes (§3).
 	SandboxForkMax = [4]int{0, 1, 10, 100}
 	// SandboxVolumeMaxGB bounds a persistent session's workspace volume, and
@@ -12259,6 +12344,11 @@ var (
 	// contract.
 	SandboxPersistentRAMMBMax = [4]int{0, 2048, 8192, 16_384}
 	SandboxPersistentVCPUMax  = [4]int{0, 2, 4, 8}
+	// SandboxLargeShapeRAMMB and SandboxLargeShapeVCPU are the largest shape
+	// any agent-pool node takes (the largest ephemeral one, §5): a session
+	// above either runs only on the nodes that declare large shapes.
+	SandboxLargeShapeRAMMB = 4096
+	SandboxLargeShapeVCPU  = 2
 	// SandboxPausedBytesFreePerAccount is the stored bytes of paused sessions
 	// (captures and volume backups) an account keeps free each month (§8).
 	SandboxPausedBytesFreePerAccount = [4]int64{0, 5 << 30, 25 << 30, 100 << 30}
@@ -18413,6 +18503,57 @@ const (
 	// AuthOAuthMaxClients bounds the OAuth clients one Auth app holds,
 	// registered by the owner or by the clients themselves (RFC 7591).
 	AuthOAuthMaxClients = 1000
+	// AuthOAuthRegistrationsPerAddress bounds the clients one client address
+	// (an IPv4 address or IPv6 /64) may self-register in
+	// AuthOAuthRegistrationWindowSeconds. Self-registration also stops while
+	// AuthOAuthUnusedClients self-registered clients nobody has used (no
+	// consent, session or approved authorization) exist, so clients people
+	// use and the owner's keep AuthOAuthMaxClients minus that many places
+	// whoever floods registration. An unused client with no authorization in
+	// the last AuthOAuthUnusedClientHours is soft-deleted that long after it
+	// registered.
+	AuthOAuthRegistrationsPerAddress   = 10
+	AuthOAuthRegistrationWindowSeconds = 3600
+	AuthOAuthUnusedClients             = 500
+	AuthOAuthUnusedClientHours         = 24
+	// AuthAdminKeyLookupsPerAddress bounds how often one client address may
+	// look up an admin key's scopes by ID in an hour, so IDs cannot be
+	// enumerated.
+	AuthAdminKeyLookupsPerAddress = 60
+	// AuthTrustedNetworkDays is how long a network (an IPv4 address or IPv6
+	// /64) a user signed in from stays trusted: from it, the user's password
+	// sign-ins pass even while their account-wide failure budget is spent,
+	// so a stranger guessing from elsewhere cannot lock them out.
+	AuthTrustedNetworkDays = 30
+	// AuthTrustedNetworkMaxAccounts: a network more accounts than this
+	// signed in from in AuthTrustedNetworkDays (an app's own server, a shared
+	// egress) is trusted for none of them.
+	AuthTrustedNetworkMaxAccounts = 20
+	// AuthTrustedBudgetMultiplier caps the exceptions to a spent budget: a
+	// solved CAPTCHA passes a spent account-wide password budget, and a
+	// trusted network a spent message budget for one recipient, only up to
+	// this many times the budget.
+	AuthTrustedBudgetMultiplier = 4
+	// AuthNewDeviceDays is how long an Auth app remembers the networks and
+	// device kinds a user signed in from; a sign-in from both a network and a
+	// device kind unseen that long emails the user (new-device alerts).
+	// AuthSignInSeenRefreshSeconds is how often one sign-in record is
+	// refreshed, so frequent token refreshes do not each write.
+	AuthNewDeviceDays            = 90
+	AuthSignInSeenRefreshSeconds = 3600
+	// AuthMessagesPerRecipientDefault bounds the sign-in codes, magic links,
+	// password resets and confirmations an Auth app sends in
+	// AuthMessageWindowSeconds to one email address or phone number, unless
+	// the owner sets AUTH_MESSAGES_PER_RECIPIENT, up to
+	// AuthMessagesPerRecipientMax. AUTH_MESSAGES_PER_NETWORK, off by default
+	// because an app sending from its own server asks from one network for
+	// all its users, bounds those one network asks for, up to
+	// AuthMessagesPerNetworkMax. Each message costs the owner money and may
+	// land in a stranger's inbox.
+	AuthMessagesPerRecipientDefault = 5
+	AuthMessagesPerRecipientMax     = 50
+	AuthMessagesPerNetworkMax       = 1000
+	AuthMessageWindowSeconds        = 3600
 	// AuthAnonymousRetentionMaxDays bounds how long idle anonymous users may
 	// be kept before the Auth app deletes them, when the owner sets a limit.
 	AuthAnonymousRetentionMaxDays = 3650

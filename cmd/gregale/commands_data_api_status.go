@@ -67,8 +67,13 @@ func cmdDataAPIStatus(args []string) int {
 		return 1
 	}
 	token, refresh := os.Getenv(*accessEnv), os.Getenv(*refreshEnv)
+	if token == "" {
+		// Unset read as "Invalid application JWT" without naming the
+		// variable it reads (prod hunt r65).
+		return printErr("Application JWT not set", fmt.Errorf("data-api status reads the app's Data API JWT from %s, which is unset; export it there or name another variable with --access-token-env (an account key does not work)", *accessEnv))
+	}
 	if !validDataAPIAccessToken(token) {
-		return printErr("Invalid application JWT", errors.New("configure the application JWT in access-token-env; do not use an account key"))
+		return printErr("Invalid application JWT", fmt.Errorf("%s does not hold an application JWT; set it to the app's Data API JWT, not an account key", *accessEnv))
 	}
 	if refresh != "" && !dataAPIApprovalFingerprint(refresh) {
 		return printErr("Invalid refresh token", errors.New("refresh-token-env must contain 64 lowercase hexadecimal characters, or be unset"))

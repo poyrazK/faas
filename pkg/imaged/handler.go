@@ -2249,6 +2249,13 @@ func (h *Handler) handoffSnapshotPrime(ctx context.Context, app state.App, dep s
 		// command, queue consumer or serving deployment to execute.
 		return nil
 	}
+	// A pull request's build into its environment branch waits for the
+	// branch's data: its release command and workloads read the branch's
+	// binding URLs. The release approval sweep resumes one with a release
+	// command, and the branch data reconciler primes one without.
+	if held, err := h.holdForEnvironmentBranchData(ctx, dep); err != nil || held {
+		return err
+	}
 	if len(dep.ReleaseCommand) > 0 {
 		if !h.releasePhaseEnabled {
 			return h.failReleasePhaseUnavailable(ctx, dep)
@@ -5651,16 +5658,15 @@ func (h *Handler) emitWarmSnapshotStale(ctx context.Context, fcVersion string, b
 //
 // Tri-state resolution:
 //   - dep.FullRootfsOverride=&false → today-equivalent failure (force-off).
-//   - dep.FullRootfsOverride=&true  → full-rootfs (force-on, even on Free).
+//   - dep.FullRootfsOverride=&true  → full-rootfs (force-on).
 //   - dep.FullRootfsOverride=nil:
-//   - dep.FullRootfsAllowAuto && paid plan → full-rootfs (auto).
-//   - else                              → today-equivalent failure.
+//   - dep.FullRootfsAllowAuto && api.PlanMeetsFullRootfs → full-rootfs (auto).
+//   - else                                             → today-equivalent failure.
 //
-// "Paid plan" means PlanHobby / PlanPro / PlanScale per
-// api.PlanMeetsMinimumPlan(_, PlanHobby). Free plan auto-fallback
-// is rejected; the customer MUST opt in via FullRootfsOverride=&true.
-// The two-drive path's behavior is unchanged for any image whose
-// layers prefix one of our runner-* bases.
+// Every plan, Free included, meets api.PlanMeetsFullRootfs since the
+// ADR-147 amendment of 2026-11-28; the layer stays within the plan's
+// app-layer cap. The two-drive path's behavior is unchanged for any
+// image whose layers prefix one of our runner-* bases.
 func (h *Handler) dispatchFullRootfs(
 	ctx context.Context,
 	app state.App,
@@ -5680,15 +5686,14 @@ func (h *Handler) dispatchFullRootfs(
 		return h.buildFullRootfsLayer(ctx, app, dep, acct, manifest, appAuth, prepared)
 	}
 	if dep.FullRootfsAllowAuto && api.PlanMeetsFullRootfs(acct.Plan) {
-		// Auto-dispatch: paid plans opt-in by default. Free plans
-		// must explicitly opt in via FullRootfsOverride=&true.
+		// Auto-dispatch: every plan opts in by default.
 		return h.buildFullRootfsLayer(ctx, app, dep, acct, manifest, appAuth, prepared)
 	}
-	// Default: today-equivalent failure on Free without override
-	// (and on any future plan whose AllowAuto=false without
-	// override).
-	return fmt.Errorf("%w: plan %s does not auto-dispatch to full-rootfs; pass FullRootfsOverride=&true to opt in",
-		oci.ErrLayersNotAboveBase, acct.Plan)
+	// Default: today-equivalent failure when the deployment turned
+	// auto-fallback off (full_rootfs_allow_auto=false), or on a plan
+	// outside api.FullRootfsAllowedPlans. The message is customer-facing.
+	return fmt.Errorf("%w: this image is not built on a Gregale runtime base and self-contained deploys are off for this deployment; set full_rootfs_override to true, or deploy from a Dockerfile",
+		oci.ErrLayersNotAboveBase)
 }
 
 // buildFullRootfsLayer pulls ALL of the app image's layers

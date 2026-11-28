@@ -141,8 +141,18 @@ type ProjectEnvironmentBranchDataStore interface {
 	RemoveProjectEnvironmentBranchDatabase(ctx context.Context, id, leaseToken string) error
 	// ProjectEnvironmentBranchDeploymentsAwaitingActivation lists the branch
 	// deployments still in snapshotting, so the reconciler can prime them once
-	// the data is ready.
+	// the data is ready: the branch's own, and builds into its scope with no
+	// release command (imaged resumes one with a release command).
 	ProjectEnvironmentBranchDeploymentsAwaitingActivation(ctx context.Context, environmentID string) ([]Deployment, error)
+}
+
+// ProjectEnvironmentBranchDataReopener sets a ready branch's data pending
+// again with fresh attempts, due at now, so the branch data reconciler binds
+// what the parent bound after the branch's data was copied. Every copy step
+// is idempotent, so the copies already made are adopted. It reports whether
+// the branch was ready.
+type ProjectEnvironmentBranchDataReopener interface {
+	ReopenProjectEnvironmentBranchData(ctx context.Context, environmentID string, now time.Time) (bool, error)
 }
 
 // ProjectEnvironmentBranchCreate asks for a new branch of ParentSlug.
@@ -246,7 +256,8 @@ type ProjectEnvironmentBranchStore interface {
 type EnvironmentBranchDeploymentReader interface {
 	EnvironmentBranchDeployment(ctx context.Context, deploymentID string) (bool, error)
 	// EnvironmentBranchDataReady reports whether the branch that created the
-	// deployment has its data. A deployment no branch created is ready.
+	// deployment, or whose scope it was built into (a pull request's build),
+	// has its data. A deployment of no branch is ready.
 	EnvironmentBranchDataReady(ctx context.Context, deploymentID string) (bool, error)
 }
 

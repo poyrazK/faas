@@ -341,7 +341,7 @@ func verifyMCPRole(ctx context.Context, candidate string, role mcpReleaseRole) (
 	return entry, nil
 }
 
-func finishMCPDeployWithSmoke(ctx context.Context, c *Client, slug, id string, cfg mcphosting.Config, token string, roles []mcpReleaseRole, audit *mcpAccessAuditOptions, smoke *mcpSmokeGate, pin ...*mcpCatalogPinReceipt) int {
+func finishMCPDeployWithSmoke(ctx context.Context, c *Client, path, slug, id string, cfg mcphosting.Config, token string, roles []mcpReleaseRole, audit *mcpAccessAuditOptions, smoke *mcpSmokeGate, pin ...*mcpCatalogPinReceipt) int {
 	// Management publication plans pin the app and serving baseline before the
 	// build. Check these before ingress changes or executing any tool fixture.
 	if len(pin) > 0 && pin[0] != nil {
@@ -499,6 +499,9 @@ func finishMCPDeployWithSmoke(ctx context.Context, c *Client, slug, id string, c
 					receipt["promotion_error"] = err.Error()
 				} else {
 					receipt["promoted"] = true
+					if checks := syncExternalOAuthGatewayPolicy(ctx, c, path, slug, cfg, token, audit); checks != nil {
+						receipt["gateway_token_checks"] = checks
+					}
 				}
 			}
 		}

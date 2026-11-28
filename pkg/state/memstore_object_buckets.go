@@ -95,6 +95,9 @@ func (m *MemStore) reserveObjectBucketPlacedLocked(b ObjectBucket, limit int, ca
 			if row.PublicRead != b.PublicRead || row.ServeAt != b.ServeAt || row.EnvironmentCloneSourceBucketID != b.EnvironmentCloneSourceBucketID || row.EnvironmentCloneOperationID != b.EnvironmentCloneOperationID {
 				return ObjectBucket{}, false, ErrConflict
 			}
+			if b.ObjectLockAtCreation && !m.objectBucketObjectLock[row.ID].EnabledRequired {
+				return ObjectBucket{}, false, ErrConflict
+			}
 			return row, false, nil
 		}
 		count++
@@ -116,11 +119,26 @@ func (m *MemStore) reserveObjectBucketPlacedLocked(b ObjectBucket, limit int, ca
 	if m.objectBuckets == nil {
 		m.objectBuckets = map[string]ObjectBucket{}
 	}
+	lockAtCreation := b.ObjectLockAtCreation
+	b.ObjectLockAtCreation = false
 	b.State = "provisioning"
 	b.CreatedAt = m.clock().UTC()
 	b.UpdatedAt = b.CreatedAt
 	b.RetryAt = b.CreatedAt
+	var lock ObjectBucketObjectLock
+	if lockAtCreation {
+		if err := objectLockCreationPlanError(m.objectPlanLimitsLocked(m.objectBillingSubjectLocked(b))); err != nil {
+			return ObjectBucket{}, false, err
+		}
+		var err error
+		if lock, err = objectLockAtCreation(b, b.CreatedAt); err != nil {
+			return ObjectBucket{}, false, err
+		}
+	}
 	m.objectBuckets[b.ID] = b
+	if lockAtCreation {
+		m.saveObjectBucketObjectLockLocked(lock)
+	}
 	return b, true, nil
 }
 

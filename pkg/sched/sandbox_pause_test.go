@@ -23,7 +23,8 @@ import (
 const sessionCapture = "snap/sandbox-session-acct/captures/c1/v2/mem"
 
 func TestSandboxRunnerResumesFromTheSessionCapture(t *testing.T) {
-	runner, router, ledger, node := sandboxRunnerFixture(t, "base/sandbox-layer-v1-amd64.ext4")
+	// An 8 GB session is a large shape: its node declares them (§5).
+	runner, router, ledger, node, _ := sandboxRunnerLargeFixture(t, "base/sandbox-layer-v1-amd64.ext4", []string{"agents-1"}, "agents-1")
 	a := sandboxAdmission()
 	a.Persistent, a.RAMMB, a.VCPU, a.CPUMillicores = true, 8192, 4, 4000
 	a.Resume = &sched.SandboxResume{NodeID: node, Snapshot: sched.AgentRunSnapshot{StorageKey: sessionCapture,
@@ -137,6 +138,42 @@ func TestVMMClientRelaysAPauseAndEndsCleanly(t *testing.T) {
 	}
 	if refused != "busy" || paused.Snapshot != snap || paused.VMStateBytes != 3 || paused.PauseMs != 4 {
 		t.Fatalf("refused %q, paused %+v", refused, paused)
+	}
+}
+
+// adr: 20261122132055 §3 — a fork pinned to its capture's node (same-node
+// forks, before the upload) starts there or is refused: never elsewhere,
+// even when the node is gone, since no other node holds the capture.
+func TestSandboxRunnerPinnedForkStaysOnItsCapturesNode(t *testing.T) {
+	runner, router, ledger, full := sandboxRunnerPoolFixture(t, "base/sandbox-layer-v1-amd64.ext4", "agents-1", "agents-2")
+	a := sandboxAdmission()
+	a.Resume = &sched.SandboxResume{NodeID: full, RequireNode: true, Fork: true,
+		Snapshot: sched.AgentRunSnapshot{StorageKey: sessionCapture, FCVersion: "1.10.0", MemBytes: 1}}
+
+	// Room on the capture's node: the fork starts there.
+	ctx, cancel := context.WithCancel(context.Background())
+	booted := func(context.Context, sched.SandboxBooted) error { cancel(); return nil }
+	_ = runner.RunSandbox(ctx, a, nil, sched.SandboxHooks{Booted: booted}, nil)
+	if router.nodeID != full || router.spec.Snapshot == nil {
+		t.Fatalf("pinned fork placed on %q with %+v, want %q", router.nodeID, router.spec.Snapshot, full)
+	}
+
+	var problem *api.Problem
+	// No room there: refused, not placed on the other node.
+	if err := ledger.Admit(sched.Request{Instance: "filler", NodeID: full, NodeCeilingMB: 47600, Plan: api.PlanScale, RAMMB: 47000}); err != nil {
+		t.Fatal(err)
+	}
+	router.nodeID = ""
+	if err := runner.RunSandbox(context.Background(), a, nil, sched.SandboxHooks{}, nil); !errors.As(err, &problem) || problem.Code != api.CodeCapacity {
+		t.Fatalf("pinned fork on a full node = %v, want a capacity refusal", err)
+	}
+	// Its node gone: refused too, unlike a pause resume.
+	a.Resume.NodeID = "a-node-that-is-gone"
+	if err := runner.RunSandbox(context.Background(), a, nil, sched.SandboxHooks{}, nil); !errors.As(err, &problem) || problem.Code != api.CodeCapacity {
+		t.Fatalf("pinned fork of a gone node = %v, want a capacity refusal", err)
+	}
+	if router.nodeID != "" {
+		t.Fatalf("a refused pinned fork reached node %q", router.nodeID)
 	}
 }
 

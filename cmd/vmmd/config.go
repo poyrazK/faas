@@ -100,6 +100,12 @@ type Config struct {
 	// this process (docs/adr/20261018-runtime-admission-rebind.md). Off,
 	// they are refused and re-admitted. Requires adopt_running_vms.
 	AdoptAdmittedRuntimes bool `toml:"adopt_admitted_runtimes"`
+	// AdoptionDriveBase writes each guest's drive layer key into its
+	// adoption block, so an adopted guest's park uploads a drive delta
+	// (ADR-20261115213230 amendment 1). Older vmmd binaries fail to open a
+	// journal holding the field, so turn it on only after every compute
+	// node, and any rollback target, runs a reader.
+	AdoptionDriveBase bool `toml:"adoption_drive_base"`
 	// FlatTenantCgroups launches every new tenant VM directly under
 	// faas-tenant.slice instead of its plan's sub-slice
 	// (ADR-20261109172421 step 6.5). This release adopts and tears down VMs
@@ -536,6 +542,9 @@ type ComputeNodeConfig struct {
 	// PublicIngressCIDRs, which the drop-in sends beside it for a vmmd that
 	// predates this field.
 	PublicEntryAddrs []string `toml:"public_entry_addrs"`
+	// PublicEntryNoHTTP closes port 80 on the entry addresses when the edge
+	// runs no HTTP redirect (FAAS_PUBLIC_ENTRY_HTTP=off).
+	PublicEntryNoHTTP bool `toml:"public_entry_no_http"`
 	// PeerEntryAddrs are the other compute edges' IPv4 entry addresses, as
 	// the nftables role renders for faas_peer_entry_addrs
 	// (ADR-20261123100000): a guest's 443 call to one is DNATed to this
@@ -844,6 +853,7 @@ func loadConfig(path string, readConfig func(string) ([]byte, error)) (*Config, 
 		{"FAAS_VMMD_ADOPTION_RECORD", &c.AdoptionRecord},
 		{"FAAS_VMMD_ADOPT_RUNNING_VMS", &c.AdoptRunningVMs},
 		{"FAAS_VMMD_ADOPT_ADMITTED_RUNTIMES", &c.AdoptAdmittedRuntimes},
+		{"FAAS_VMMD_ADOPTION_DRIVE_BASE", &c.AdoptionDriveBase},
 		{"FAAS_VMMD_FLAT_TENANT_CGROUPS", &c.FlatTenantCgroups},
 	} {
 		if v := os.Getenv(sw.env); v != "" {
@@ -972,6 +982,9 @@ func loadConfig(path string, readConfig func(string) ([]byte, error)) (*Config, 
 	}
 	if v := os.Getenv("FAAS_PUBLIC_ENTRY_ADDRS"); v != "" {
 		c.ComputeNode.PublicEntryAddrs = splitNonEmpty(v)
+	}
+	if v := os.Getenv("FAAS_PUBLIC_ENTRY_HTTP"); v != "" {
+		c.ComputeNode.PublicEntryNoHTTP = strings.EqualFold(strings.TrimSpace(v), "off")
 	}
 	if v := os.Getenv("FAAS_PEER_ENTRY_ADDRS"); v != "" {
 		c.ComputeNode.PeerEntryAddrs = splitNonEmpty(v)
@@ -1586,6 +1599,7 @@ func runtimeHostPolicy(cfg ComputeNodeConfig, bridge netip.Prefix, serviceHTTPS 
 			policy.PublicEntryAddrs = append(policy.PublicEntryAddrs, addr)
 		}
 	}
+	policy.PublicEntryNoHTTP = cfg.PublicEntryNoHTTP
 	for _, raw := range cfg.PeerEntryAddrs {
 		if addr, err := netip.ParseAddr(raw); err == nil {
 			policy.PeerEntryAddrs = append(policy.PeerEntryAddrs, addr)
