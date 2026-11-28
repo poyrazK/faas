@@ -2797,3 +2797,11 @@ func PlanWorkloadReleaseCommand(scanDir string, workloads []reposcan.Workload, w
 	s := &server{releasePhaseOff: releasePhaseOff}
 	return s.planWorkloadReleaseCommand(scanDir, workloads, workload)
 }
+
+// ValidateAlertFailureFilter exposes the ADR-045 amendment 1 filter check.
+func ValidateAlertFailureFilter(ctx context.Context, store interface {
+	JobGetByName(ctx context.Context, accountID, name string) (state.Job, error)
+	CronByID(ctx context.Context, id string) (state.Cron, error)
+}, rule state.AlertRule) *api.Problem {
+	return validateAlertFailureFilter(ctx, store, rule)
+}

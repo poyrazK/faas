@@ -4226,6 +4226,9 @@ type UpdateAlertRuleParams struct {
 	CooldownMinutes            *int
 	RecoveryConfirmationChecks *int
 	NotifyResolved             *bool
+	// JobName and CronID change a failure rule's filter (ADR-045 amendment
+	// 1); nil leaves it, "" clears it.
+	JobName, CronID *string
 }
 
 // AlertRule is one customer-configurable rule (issue #396, ADR-045).
@@ -4267,8 +4270,13 @@ type AlertRule struct {
 	CustomMetricName   string             // empty unless Metric == custom_metric (ADR-745)
 	// CustomMetricLabels selects one labelled series of the custom metric
 	// instead of its aggregate (ADR-20261108160000 slice C2); nil for none.
-	CustomMetricLabels  map[string]string
-	LogQuery            string      // canonical log search filters; set only for log_search_matches
+	CustomMetricLabels map[string]string
+	LogQuery           string // canonical log search filters; set only for log_search_matches
+	// JobName narrows a job_failures rule to the account's job of that
+	// name; CronID narrows a failed_invocations rule with failure source
+	// cron to one cron of the rule's app (ADR-045 amendment 1). Empty
+	// counts every job or cron.
+	JobName, CronID     string
 	SLOID               string      // set only for the ADR-747 SLO metrics
 	SyntheticCheckID    string      // set only for the ADR-748 synthetic check metrics
 	Action              AlertAction // issue #976 / ADR-122 / SAFE-RELEASES-B

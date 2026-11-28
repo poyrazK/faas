@@ -58,6 +58,11 @@ class UpdateAlertRuleRequest:
     deployment evidence qualifies. A boot_failures rule with action=rollback needs a positive window."""
     notify_resolved: bool | Unset = UNSET
     """Turn the webhook's alert.resolved events on or off. Turning them on requires the rule to have a webhook_url."""
+    job_name: str | Unset = UNSET
+    """Change a job_failures rule's job filter. Omission preserves it and an empty string clears it."""
+    cron_id: str | Unset = UNSET
+    """Change the cron filter of a failed_invocations rule with failure_source cron (a cron id). Omission preserves
+    it and an empty string clears it."""
     name: str | Unset = UNSET
     enabled: bool | Unset = UNSET
     metric: UpdateAlertRuleRequestMetric | Unset = UNSET
@@ -94,6 +99,10 @@ class UpdateAlertRuleRequest:
         post_deploy_rollback_window_seconds = self.post_deploy_rollback_window_seconds
 
         notify_resolved = self.notify_resolved
+
+        job_name = self.job_name
+
+        cron_id = self.cron_id
 
         name = self.name
 
@@ -149,6 +158,10 @@ class UpdateAlertRuleRequest:
             field_dict["post_deploy_rollback_window_seconds"] = post_deploy_rollback_window_seconds
         if notify_resolved is not UNSET:
             field_dict["notify_resolved"] = notify_resolved
+        if job_name is not UNSET:
+            field_dict["job_name"] = job_name
+        if cron_id is not UNSET:
+            field_dict["cron_id"] = cron_id
         if name is not UNSET:
             field_dict["name"] = name
         if enabled is not UNSET:
@@ -192,6 +205,10 @@ class UpdateAlertRuleRequest:
         post_deploy_rollback_window_seconds = d.pop("post_deploy_rollback_window_seconds", UNSET)
 
         notify_resolved = d.pop("notify_resolved", UNSET)
+
+        job_name = d.pop("job_name", UNSET)
+
+        cron_id = d.pop("cron_id", UNSET)
 
         name = d.pop("name", UNSET)
 
@@ -251,6 +268,8 @@ class UpdateAlertRuleRequest:
             mcp_for_minutes=mcp_for_minutes,
             post_deploy_rollback_window_seconds=post_deploy_rollback_window_seconds,
             notify_resolved=notify_resolved,
+            job_name=job_name,
+            cron_id=cron_id,
             name=name,
             enabled=enabled,
             metric=metric,

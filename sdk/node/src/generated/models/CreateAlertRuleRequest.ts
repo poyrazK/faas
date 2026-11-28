@@ -75,6 +75,14 @@ export type CreateAlertRuleRequest = {
    */
   log_query?: string;
   /**
+   * job_failures rules only. Count only the failed runs of the account's job with this name; omitted counts every job. The job must exist.
+   */
+  job_name?: string;
+  /**
+   * failed_invocations rules with failure_source cron only. Count only this cron's failed invocations; omitted counts every cron of the app. The cron must belong to the app.
+   */
+  cron_id?: string;
+  /**
    * Required for slo_budget_burn (multi-window burn rate; 14.4 is the paging threshold) and slo_budget_remaining_pct (percent of the error budget left); names one of this app's SLOs. The rule window_spec is ignored for these metrics.
    */
   slo_id?: string;

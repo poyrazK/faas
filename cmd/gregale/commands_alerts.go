@@ -132,6 +132,8 @@ func cmdAlertAdd(args []string) int {
 	windowSpec := fs.String("window-spec", "", "window (5m|15m|1h|6h|24h|7d|15d)")
 	failureSource := fs.String("failure-source", "", "failure source (any|cron|queue|delayed_task|async_invoke|inbound_webhook) — required iff --metric=failed_invocations")
 	customMetric := fs.String("custom-metric", "", "pushed custom metric name — required iff --metric=custom_metric")
+	jobName := fs.String("job", "", "with --metric job_failures: count only this job's failed runs")
+	cronID := fs.String("cron", "", "with --metric failed_invocations --failure-source cron: count only this cron's failures (cron id)")
 	var metricLabels multiFlag
 	fs.Var(&metricLabels, "metric-label", "with --custom-metric: watch the series with this label, key=value (repeatable)")
 	sloID := fs.String("slo", "", "SLO id — required iff --metric is slo_budget_burn or slo_budget_remaining_pct")
@@ -210,6 +212,8 @@ func cmdAlertAdd(args []string) int {
 		EventSubscriptionID:             *eventSubscription,
 		EdgeRuleID:                      *edgeRule,
 		FailureSource:                   *failureSource,
+		JobName:                         *jobName,
+		CronID:                          *cronID,
 		ChannelIDs:                      channels,
 		CustomMetricName:                *customMetric,
 		CustomMetricLabels:              labels,
@@ -273,7 +277,7 @@ func requireAlertCreateFlags(slug, name, metric, comparison, windowSpec, webhook
 			missing = append(missing, "--webhook-url with --webhook-secret, or --channel")
 		}
 		_, _ = fmt.Fprintf(os.Stderr, "missing: %s\n", strings.Join(missing, ", "))
-		PrintUsage(os.Stderr, "usage: gregale alert create [--app <slug>] --name <text> --metric <v> --comparison <op> --threshold <num> --window-spec <w> (--webhook-url <url> (--webhook-secret-stdin|--webhook-secret <s>) | --channel <id>...) [--failure-source <s>] [--action <webhook|rollback|demote|promote>] [--cooldown-minutes N] [--enabled=false]", "alerts")
+		PrintUsage(os.Stderr, "usage: gregale alert create [--app <slug>] --name <text> --metric <v> --comparison <op> --threshold <num> --window-spec <w> (--webhook-url <url> (--webhook-secret-stdin|--webhook-secret <s>) | --channel <id>...) [--failure-source <s>] [--job <name>] [--cron <id>] [--action <webhook|rollback|demote|promote>] [--cooldown-minutes N] [--enabled=false]", "alerts")
 		return 1, false
 	}
 	if *cooldown < api.AlertRuleCooldownMinMinutes || *cooldown > api.AlertRuleCooldownMaxMinutes {
@@ -357,6 +361,12 @@ func cmdAlertInfo(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "window_spec:  %s\n", resp.WindowSpec)
 	if resp.FailureSource != "" {
 		_, _ = fmt.Fprintf(osStdout, "failure_source: %s\n", resp.FailureSource)
+	}
+	if resp.JobName != "" {
+		_, _ = fmt.Fprintf(osStdout, "job:          %s\n", resp.JobName)
+	}
+	if resp.CronID != "" {
+		_, _ = fmt.Fprintf(osStdout, "cron:         %s\n", resp.CronID)
 	}
 	if len(resp.ChannelIDs) > 0 {
 		_, _ = fmt.Fprintf(osStdout, "channels:     %s\n", strings.Join(resp.ChannelIDs, ", "))
@@ -518,6 +528,8 @@ func cmdAlertUpdate(args []string) int {
 	postWindow := fs.Duration("post-deploy-rollback-window", 0, "completed-release recovery window (0 off; up to 1h; requires rollback action)")
 	cooldown := fs.Int(flagNameCooldownMinutes, api.AlertRuleDefaultCooldownMinutes, fmt.Sprintf("cooldown (%d..%d)", api.AlertRuleCooldownMinMinutes, api.AlertRuleCooldownMaxMinutes))
 	notifyResolved := fs.Bool(flagNameNotifyResolved, false, "send the webhook alert.resolved events (--notify-resolved=false turns them off)")
+	jobName := fs.String("job", "", "job_failures: count only this job's failed runs (--job= clears)")
+	cronID := fs.String("cron", "", "failed_invocations with failure source cron: count only this cron (--cron= clears)")
 	// `alerts info|deliveries|rm <id> --app X` take the id first; update
 	// stopped parsing at it and never saw --app (production-us hunt #4).
 	if err := parseInterspersed(fs, args); err != nil {
@@ -545,7 +557,7 @@ func cmdAlertUpdate(args []string) int {
 
 	fillLinkedApp(slug)
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alert update [--app <slug>] [--name <text>] [--enabled=false] [--metric <v>] [--comparison <op>] [--threshold <num>] [--window-spec <w>] [--action <webhook|rollback|demote|promote>] [--webhook-url <url>] [--webhook-secret-stdin|--webhook-secret <s>] [--cooldown-minutes N] <alert-id>", "alerts")
+		PrintUsage(os.Stderr, "usage: gregale alert update [--app <slug>] [--name <text>] [--enabled=false] [--metric <v>] [--comparison <op>] [--threshold <num>] [--window-spec <w>] [--action <webhook|rollback|demote|promote>] [--webhook-url <url>] [--webhook-secret-stdin|--webhook-secret <s>] [--cooldown-minutes N] [--job <name>] [--cron <id>] <alert-id>", "alerts")
 		return 1
 	}
 	if *webhookSecretStdin || *webhookSecret != "" {
@@ -569,6 +581,7 @@ func cmdAlertUpdate(args []string) int {
 	cooldownSet := false
 	postWindowSet := false
 	notifyResolvedSet := false
+	jobSet, cronSet := false, false
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case flagNameEnabled:
@@ -579,6 +592,10 @@ func cmdAlertUpdate(args []string) int {
 			postWindowSet = true
 		case flagNameNotifyResolved:
 			notifyResolvedSet = true
+		case "job":
+			jobSet = true
+		case "cron":
+			cronSet = true
 		}
 	})
 	req := api.UpdateAlertRuleRequest{
@@ -590,6 +607,12 @@ func cmdAlertUpdate(args []string) int {
 		Action:        ptrIfNonEmpty(*action),
 		WebhookURL:    ptrIfNonEmpty(*webhookURL),
 		WebhookSecret: ptrIfNonEmpty(*webhookSecret),
+	}
+	if jobSet {
+		req.JobName = jobName
+	}
+	if cronSet {
+		req.CronID = cronID
 	}
 	if postWindowSet {
 		seconds, err := alertRollbackWindowSeconds(*postWindow)

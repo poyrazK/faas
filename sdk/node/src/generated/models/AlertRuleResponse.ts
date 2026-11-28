@@ -91,6 +91,14 @@ export type AlertRuleResponse = {
    */
   log_query?: string;
   /**
+   * The job a job_failures rule counts; absent when it counts every job of the account.
+   */
+  job_name?: string;
+  /**
+   * The cron a failed_invocations rule with failure_source cron counts; absent when it counts every cron of the app.
+   */
+  cron_id?: string;
+  /**
    * The customer SLO an slo_budget_burn or slo_budget_remaining_pct rule watches; absent for other metrics.
    */
   slo_id?: string;

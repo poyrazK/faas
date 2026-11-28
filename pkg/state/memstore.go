@@ -25930,7 +25930,7 @@ func (m *MemStore) CreateAlertRule(_ context.Context, in AlertRule) (AlertRule, 
 	if in.RecoveryConfirmationChecks == 0 {
 		in.RecoveryConfirmationChecks = 1
 	}
-	if !validMCPProtocolAlert(in) || !validAlertRollbackWindow(in) || !validAlertObservationMode(in) || !validAlertRecoveryConfirmation(in) || (len(in.CustomMetricLabels) > 0 && in.Metric != AlertMetricCustomMetric) {
+	if !validMCPProtocolAlert(in) || !validAlertRollbackWindow(in) || !validAlertFailureFilter(in) || !validAlertObservationMode(in) || !validAlertRecoveryConfirmation(in) || (len(in.CustomMetricLabels) > 0 && in.Metric != AlertMetricCustomMetric) {
 		return AlertRule{}, ErrInvalidArgument
 	}
 	in.CustomMetricLabels = cloneCustomMetricLabels(in.CustomMetricLabels)
@@ -25970,7 +25970,7 @@ func (m *MemStore) CreateAlertRuleIfUnderQuota(_ context.Context, in AlertRule, 
 	if in.RecoveryConfirmationChecks == 0 {
 		in.RecoveryConfirmationChecks = 1
 	}
-	if !validMCPProtocolAlert(in) || !validAlertRollbackWindow(in) || !validAlertObservationMode(in) || !validAlertRecoveryConfirmation(in) || (len(in.CustomMetricLabels) > 0 && in.Metric != AlertMetricCustomMetric) {
+	if !validMCPProtocolAlert(in) || !validAlertRollbackWindow(in) || !validAlertFailureFilter(in) || !validAlertObservationMode(in) || !validAlertRecoveryConfirmation(in) || (len(in.CustomMetricLabels) > 0 && in.Metric != AlertMetricCustomMetric) {
 		return AlertRule{}, ErrInvalidArgument
 	}
 	in.CustomMetricLabels = cloneCustomMetricLabels(in.CustomMetricLabels)
@@ -26146,6 +26146,12 @@ func (m *MemStore) UpdateAlertRule(_ context.Context, id string, p UpdateAlertRu
 	if p.NotifyResolved != nil {
 		r.NotifyResolved = *p.NotifyResolved
 	}
+	if p.JobName != nil {
+		r.JobName = *p.JobName
+	}
+	if p.CronID != nil {
+		r.CronID = *p.CronID
+	}
 	// Action (issue #976 / ADR-122 / SAFE-RELEASES-B). Pointer PATCH
 	// shape so a missing field leaves the row alone. Mirrors the
 	// pgstore's coalesce($N, action) in the UPDATE statement.
@@ -26155,7 +26161,7 @@ func (m *MemStore) UpdateAlertRule(_ context.Context, id string, p UpdateAlertRu
 	if p.PostDeployRollbackWindowSeconds != nil {
 		r.PostDeployRollbackWindowSeconds = *p.PostDeployRollbackWindowSeconds
 	}
-	if !validMCPProtocolAlert(r) || !validAlertRollbackWindow(r) || !validAlertObservationMode(r) || !validAlertRecoveryConfirmation(r) ||
+	if !validMCPProtocolAlert(r) || !validAlertRollbackWindow(r) || !validAlertFailureFilter(r) || !validAlertObservationMode(r) || !validAlertRecoveryConfirmation(r) ||
 		!alertScopeEditAllowed(before, p, r.ObserveOnly) {
 		return AlertRule{}, ErrInvalidArgument
 	}

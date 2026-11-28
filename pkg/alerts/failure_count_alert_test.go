@@ -84,14 +84,15 @@ type failedJobRunStore struct {
 	n         int64
 	err       error
 	account   string
+	jobName   string
 	since     time.Time
 	until     time.Time
 	callCount int
 }
 
-func (s *failedJobRunStore) CountAccountFailedJobRuns(_ context.Context, accountID string, since, until time.Time) (int64, error) {
+func (s *failedJobRunStore) CountAccountFailedJobRuns(_ context.Context, accountID, jobName string, since, until time.Time) (int64, error) {
 	s.callCount++
-	s.account, s.since, s.until = accountID, since, until
+	s.account, s.jobName, s.since, s.until = accountID, jobName, since, until
 	return s.n, s.err
 }
 
@@ -153,7 +154,7 @@ func TestMemStoreFailureCounts(t *testing.T) {
 	if err != nil || n != 1 {
 		t.Fatalf("CountAppBootFailures = %d, %v; want 1", n, err)
 	}
-	if n, err := store.CountAccountFailedJobRuns(ctx, "acct-1", now.Add(-time.Hour), now); err != nil || n != 0 {
+	if n, err := store.CountAccountFailedJobRuns(ctx, "acct-1", "", now.Add(-time.Hour), now); err != nil || n != 0 {
 		t.Fatalf("CountAccountFailedJobRuns = %d, %v; want 0 with no runs", n, err)
 	}
 }

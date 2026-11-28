@@ -217,6 +217,10 @@ var memDispatched = map[string]bool{
 	"RouteMonitorIncidentsSince":                              true,
 	"AIBudgetAlertsSince":                                     true,
 	"CountAccountFailedJobRuns":                               true,
+	"CountFailedCronInvocations":                              true,
+	"ListAppBootFailures":                                     true,
+	"ListAccountFailedJobRuns":                                true,
+	"ListFailedInvocations":                                   true,
 	"RouteHealthHoldsSince":                                   true,
 	"UpsertRouteInsight":                                      true,
 	"RouteAwakeRouteMinutes":                                  true,
@@ -934,13 +938,49 @@ func (s *Mem) AIBudgetAlertsSince(p0 context.Context, p1, p2 string, p3 time.Tim
 	return s.MemStore.AIBudgetAlertsSince(p0, p1, p2, p3, p4)
 }
 
-func (s *Mem) CountAccountFailedJobRuns(p0 context.Context, p1 string, p2, p3 time.Time) (int64, error) {
+func (s *Mem) CountAccountFailedJobRuns(p0 context.Context, p1, p2 string, p3, p4 time.Time) (int64, error) {
 	if o, ok := s.over.(interface {
-		CountAccountFailedJobRuns(context.Context, string, time.Time, time.Time) (int64, error)
+		CountAccountFailedJobRuns(context.Context, string, string, time.Time, time.Time) (int64, error)
 	}); ok {
-		return o.CountAccountFailedJobRuns(p0, p1, p2, p3)
+		return o.CountAccountFailedJobRuns(p0, p1, p2, p3, p4)
 	}
-	return s.MemStore.CountAccountFailedJobRuns(p0, p1, p2, p3)
+	return s.MemStore.CountAccountFailedJobRuns(p0, p1, p2, p3, p4)
+}
+
+func (s *Mem) CountFailedCronInvocations(p0 context.Context, p1, p2, p3, p4 string, p5 time.Time) (int64, error) {
+	if o, ok := s.over.(interface {
+		CountFailedCronInvocations(context.Context, string, string, string, string, time.Time) (int64, error)
+	}); ok {
+		return o.CountFailedCronInvocations(p0, p1, p2, p3, p4, p5)
+	}
+	return s.MemStore.CountFailedCronInvocations(p0, p1, p2, p3, p4, p5)
+}
+
+func (s *Mem) ListAppBootFailures(p0 context.Context, p1 string, p2, p3 time.Time, p4 int) ([]state.FailedBoot, error) {
+	if o, ok := s.over.(interface {
+		ListAppBootFailures(context.Context, string, time.Time, time.Time, int) ([]state.FailedBoot, error)
+	}); ok {
+		return o.ListAppBootFailures(p0, p1, p2, p3, p4)
+	}
+	return s.MemStore.ListAppBootFailures(p0, p1, p2, p3, p4)
+}
+
+func (s *Mem) ListAccountFailedJobRuns(p0 context.Context, p1, p2 string, p3, p4 time.Time, p5 int) ([]state.FailedJobRun, error) {
+	if o, ok := s.over.(interface {
+		ListAccountFailedJobRuns(context.Context, string, string, time.Time, time.Time, int) ([]state.FailedJobRun, error)
+	}); ok {
+		return o.ListAccountFailedJobRuns(p0, p1, p2, p3, p4, p5)
+	}
+	return s.MemStore.ListAccountFailedJobRuns(p0, p1, p2, p3, p4, p5)
+}
+
+func (s *Mem) ListFailedInvocations(p0 context.Context, p1, p2, p3 string, p4 state.AlertFailureSource, p5 string, p6 time.Time, p7 int) ([]state.FailedInvocation, error) {
+	if o, ok := s.over.(interface {
+		ListFailedInvocations(context.Context, string, string, string, state.AlertFailureSource, string, time.Time, int) ([]state.FailedInvocation, error)
+	}); ok {
+		return o.ListFailedInvocations(p0, p1, p2, p3, p4, p5, p6, p7)
+	}
+	return s.MemStore.ListFailedInvocations(p0, p1, p2, p3, p4, p5, p6, p7)
 }
 
 func (s *Mem) RouteMonitorIncidentsSince(p0 context.Context, p1 string, p2 time.Time, p3 int) ([]state.RouteMonitorIncidentAlert, int64, error) {

@@ -108,6 +108,11 @@ class AlertRuleResponse:
     log_query: str | Unset = UNSET
     """The canonical log search filters a log_search_matches rule counts. Present only when metric is
     log_search_matches."""
+    job_name: str | Unset = UNSET
+    """The job a job_failures rule counts; absent when it counts every job of the account."""
+    cron_id: UUID | Unset = UNSET
+    """The cron a failed_invocations rule with failure_source cron counts; absent when it counts every cron of the
+    app."""
     slo_id: UUID | Unset = UNSET
     """The customer SLO an slo_budget_burn or slo_budget_remaining_pct rule watches; absent for other metrics."""
     synthetic_check_id: UUID | Unset = UNSET
@@ -202,6 +207,12 @@ class AlertRuleResponse:
 
         log_query = self.log_query
 
+        job_name = self.job_name
+
+        cron_id: str | Unset = UNSET
+        if not isinstance(self.cron_id, Unset):
+            cron_id = str(self.cron_id)
+
         slo_id: str | Unset = UNSET
         if not isinstance(self.slo_id, Unset):
             slo_id = str(self.slo_id)
@@ -284,6 +295,10 @@ class AlertRuleResponse:
             field_dict["custom_metric_labels"] = custom_metric_labels
         if log_query is not UNSET:
             field_dict["log_query"] = log_query
+        if job_name is not UNSET:
+            field_dict["job_name"] = job_name
+        if cron_id is not UNSET:
+            field_dict["cron_id"] = cron_id
         if slo_id is not UNSET:
             field_dict["slo_id"] = slo_id
         if synthetic_check_id is not UNSET:
@@ -408,6 +423,15 @@ class AlertRuleResponse:
 
         log_query = d.pop("log_query", UNSET)
 
+        job_name = d.pop("job_name", UNSET)
+
+        _cron_id = d.pop("cron_id", UNSET)
+        cron_id: UUID | Unset
+        if isinstance(_cron_id, Unset):
+            cron_id = UNSET
+        else:
+            cron_id = UUID(_cron_id)
+
         _slo_id = d.pop("slo_id", UNSET)
         slo_id: UUID | Unset
         if isinstance(_slo_id, Unset):
@@ -485,6 +509,8 @@ class AlertRuleResponse:
             custom_metric_name=custom_metric_name,
             custom_metric_labels=custom_metric_labels,
             log_query=log_query,
+            job_name=job_name,
+            cron_id=cron_id,
             slo_id=slo_id,
             synthetic_check_id=synthetic_check_id,
             channel_ids=channel_ids,

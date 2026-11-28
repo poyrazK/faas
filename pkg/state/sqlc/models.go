@@ -768,6 +768,8 @@ type AlertRule struct {
 	EnvironmentScope                string
 	RecoveryConfirmationChecks      int32
 	EnvironmentID                   pgtype.UUID
+	JobName                         pgtype.Text
+	CronID                          pgtype.UUID
 }
 
 type AlertRuleChannel struct {

@@ -237,6 +237,11 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := validateAlertFailureFilter(r.Context(), s.store, state.AlertRule{AccountID: acct.ID, AppID: app.ID, Metric: state.AlertMetric(req.Metric),
+		FailureSource: state.AlertFailureSource(req.FailureSource), JobName: req.JobName, CronID: req.CronID}); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if !s.appEvents.CheckEventConsumerAlertTarget(w, r, acct.ID, app.ID, req) {
 		return
 	}
@@ -284,6 +289,8 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		LogQuery:                        logQuery,
 		SLOID:                           req.SLOID,
 		SyntheticCheckID:                req.SyntheticCheckID,
+		JobName:                         req.JobName,
+		CronID:                          req.CronID,
 		Action:                          alertRuleActionFrom(req.Action),
 		WebhookURL:                      req.WebhookURL,
 		WebhookSecretSealed:             sealed,
@@ -340,6 +347,8 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		"log_query":                           row.LogQuery,
 		"slo_id":                              row.SLOID,
 		"synthetic_check_id":                  row.SyntheticCheckID,
+		"job_name":                            row.JobName,
+		"cron_id":                             row.CronID,
 		"edge_rule_id":                        row.EdgeRuleID,
 		"webhook_url":                         row.WebhookURL,
 		"enabled":                             row.Enabled,
@@ -514,6 +523,10 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := validateAlertFailureFilter(r.Context(), s.store, merged); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if !s.checkUpdatedStageAlertRule(w, merged) {
 		return
 	}
@@ -618,6 +631,8 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		RecoveryConfirmationChecks:      req.RecoveryConfirmationChecks,
 		PostDeployRollbackWindowSeconds: req.PostDeployRollbackWindowSeconds,
 		NotifyResolved:                  req.NotifyResolved,
+		JobName:                         req.JobName,
+		CronID:                          req.CronID,
 	})
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
@@ -869,6 +884,8 @@ func alertRuleResponseFromRow(r state.AlertRule) api.AlertRuleResponse {
 		LogQuery:                        r.LogQuery,
 		SLOID:                           r.SLOID,
 		SyntheticCheckID:                r.SyntheticCheckID,
+		JobName:                         r.JobName,
+		CronID:                          r.CronID,
 		Action:                          string(r.Action),
 		WebhookURL:                      r.WebhookURL,
 		NotifyResolved:                  r.NotifyResolved,
@@ -1292,6 +1309,12 @@ func alertRuleRowForValidation(existing state.AlertRule, req api.UpdateAlertRule
 	}
 	if req.NotifyResolved != nil {
 		merged.NotifyResolved = *req.NotifyResolved
+	}
+	if req.JobName != nil {
+		merged.JobName = *req.JobName
+	}
+	if req.CronID != nil {
+		merged.CronID = *req.CronID
 	}
 	return merged
 }

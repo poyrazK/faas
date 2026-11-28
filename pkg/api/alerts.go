@@ -412,6 +412,11 @@ type CreateAlertRuleRequest struct {
 	LogQuery           string            `json:"log_query,omitempty"`
 	SLOID              string            `json:"slo_id,omitempty"`
 	SyntheticCheckID   string            `json:"synthetic_check_id,omitempty"`
+	// JobName narrows a job_failures rule to the account's job of that
+	// name; CronID narrows a failed_invocations rule with failure_source
+	// cron to one cron of the app (ADR-045 amendment 1).
+	JobName string `json:"job_name,omitempty"`
+	CronID  string `json:"cron_id,omitempty"`
 	// ChannelIDs are ADR-749 notification channels the rule delivers to.
 	// With at least one channel, webhook_url and webhook_secret may be omitted.
 	ChannelIDs                 []string `json:"channel_ids,omitempty"`
@@ -458,6 +463,10 @@ type UpdateAlertRuleRequest struct {
 	CooldownMinutes            *int      `json:"cooldown_minutes,omitempty"`
 	RecoveryConfirmationChecks *int      `json:"recovery_confirmation_checks,omitempty"`
 	NotifyResolved             *bool     `json:"notify_resolved,omitempty"`
+	// JobName and CronID change a failure rule's filter (ADR-045
+	// amendment 1); omitted keeps it, "" clears it.
+	JobName *string `json:"job_name,omitempty"`
+	CronID  *string `json:"cron_id,omitempty"`
 }
 
 // RotateAlertRuleSecretRequest carries a caller-supplied replacement. The
@@ -507,6 +516,8 @@ type AlertRuleResponse struct {
 	LogQuery                   string            `json:"log_query,omitempty"`
 	SLOID                      string            `json:"slo_id,omitempty"`
 	SyntheticCheckID           string            `json:"synthetic_check_id,omitempty"`
+	JobName                    string            `json:"job_name,omitempty"`
+	CronID                     string            `json:"cron_id,omitempty"`
 	ChannelIDs                 []string          `json:"channel_ids,omitempty"`
 	Action                     string            `json:"action"`
 	WebhookURL                 string            `json:"webhook_url"`
@@ -550,6 +561,7 @@ type AlertRuleRow struct {
 	LogQuery                        string
 	SLOID                           string
 	SyntheticCheckID                string
+	JobName, CronID                 string
 	Action                          string
 	WebhookURL                      string
 	NotifyResolved                  bool
@@ -593,6 +605,8 @@ func AlertRuleResponseFromRow(r AlertRuleRow) AlertRuleResponse {
 		LogQuery:                        r.LogQuery,
 		SLOID:                           r.SLOID,
 		SyntheticCheckID:                r.SyntheticCheckID,
+		JobName:                         r.JobName,
+		CronID:                          r.CronID,
 		Action:                          r.Action,
 		WebhookURL:                      r.WebhookURL,
 		WebhookSecretSealedMasked:       AlertRuleWebhookSecretMasked,
@@ -870,3 +884,11 @@ func AlertMetricActionRestriction(metric string) string {
 	}
 	return "pre-auth target metrics support webhook action only"
 }
+
+// AlertJobNameMaxBytes bounds a job_failures rule's job filter, like
+// alert_rules_job_name_chk (ADR-045 amendment 1).
+const AlertJobNameMaxBytes = 128
+
+// AlertFailureNotes caps how many failures one boot_failures, job_failures
+// or failed_invocations notification lists (ADR-045 amendment 1).
+const AlertFailureNotes = 5

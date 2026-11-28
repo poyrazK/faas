@@ -194,6 +194,11 @@ func (e *Evaluator) channelMessage(ctx context.Context, rule state.AlertRule, ev
 		Threshold: rule.Threshold, Observed: observed, Window: string(rule.WindowSpec), OccurredAt: now, DedupKey: rule.ID,
 		EnvironmentScope: rule.EnvironmentScope,
 	}
+	if event == alertchannels.EventFire {
+		// job_failures may be account-wide, so its details come before the
+		// app-only notes (ADR-045 amendment 1).
+		msg.Notes = e.failureNotes(ctx, rule)
+	}
 	if rule.AppID == "" {
 		return msg
 	}

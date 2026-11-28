@@ -2309,7 +2309,7 @@ export class ConsumersService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
-        409: `A paid plan is offered and Stripe is not connected.`,
+        409: `A paid plan is offered and Stripe is not connected, or oauth_consumers is on and the gateway does not check the MCP server's OAuth tokens (no MCP jwt edge rule).`,
         422: `A provider other than Stripe, an unknown plan, an invalid scope or URL, or a value out of range.`,
       },
     });

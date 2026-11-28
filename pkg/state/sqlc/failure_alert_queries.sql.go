@@ -13,23 +13,33 @@ import (
 
 const countAccountFailedJobRuns = `-- name: CountAccountFailedJobRuns :one
 SELECT count(*)::bigint AS total
-  FROM job_runs
- WHERE account_id = $1::uuid
-   AND aggregate_status IN ('failed', 'dead_letter')
-   AND finished_at >= $2::timestamptz
-   AND finished_at <= $3::timestamptz
+  FROM job_runs r
+ WHERE r.account_id = $1::uuid
+   AND r.aggregate_status IN ('failed', 'dead_letter')
+   AND r.finished_at >= $2::timestamptz
+   AND r.finished_at <= $3::timestamptz
+   AND ($4::text IS NULL OR r.job_id IN (
+        SELECT j.id FROM jobs j WHERE j.account_id = $1::uuid AND j.name = $4::text))
 `
 
 type CountAccountFailedJobRunsParams struct {
 	AccountID pgtype.UUID
 	Since     pgtype.Timestamptz
 	Until     pgtype.Timestamptz
+	JobName   pgtype.Text
 }
 
 // The job_failures alert metric: the account's job runs that finished failed
-// or dead-lettered in a window, through job_runs_failed_finished_idx.
+// or dead-lettered in a window, through job_runs_failed_finished_idx. A
+// job_name narrows it to the account's jobs of that name (ADR-045
+// amendment 1).
 func (q *Queries) CountAccountFailedJobRuns(ctx context.Context, db DBTX, arg CountAccountFailedJobRunsParams) (int64, error) {
-	row := db.QueryRow(ctx, countAccountFailedJobRuns, arg.AccountID, arg.Since, arg.Until)
+	row := db.QueryRow(ctx, countAccountFailedJobRuns,
+		arg.AccountID,
+		arg.Since,
+		arg.Until,
+		arg.JobName,
+	)
 	var total int64
 	err := row.Scan(&total)
 	return total, err
@@ -62,6 +72,247 @@ func (q *Queries) CountAppBootFailures(ctx context.Context, db DBTX, arg CountAp
 	var total int64
 	err := row.Scan(&total)
 	return total, err
+}
+
+const countFailedCronInvocations = `-- name: CountFailedCronInvocations :one
+SELECT count(*)::bigint FROM invocations
+ WHERE account_id = $1::uuid AND app_id = $2::uuid
+   AND cron_id = $3::uuid AND source = 'cron'
+   AND state IN ('failed', 'dead_letter')
+   AND environment_id IS NOT DISTINCT FROM $4::uuid
+   AND coalesce(completed_at, created_at) >= $5::timestamptz
+`
+
+type CountFailedCronInvocationsParams struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	CronID        pgtype.UUID
+	EnvironmentID pgtype.UUID
+	Since         pgtype.Timestamptz
+}
+
+// A failed_invocations rule narrowed to one cron (ADR-045 amendment 1):
+// that cron's failed and dead-lettered invocations in production, or in the
+// rule's stage when environment_id is set.
+func (q *Queries) CountFailedCronInvocations(ctx context.Context, db DBTX, arg CountFailedCronInvocationsParams) (int64, error) {
+	row := db.QueryRow(ctx, countFailedCronInvocations,
+		arg.AccountID,
+		arg.AppID,
+		arg.CronID,
+		arg.EnvironmentID,
+		arg.Since,
+	)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const listAccountFailedJobRuns = `-- name: ListAccountFailedJobRuns :many
+SELECT r.id, j.name AS job_name, r.aggregate_status, r.tasks, r.tasks_failed, r.dead_letter_count,
+       r.finished_at::timestamptz AS finished_at,
+       coalesce((SELECT coalesce(t.error_message, t.error_class, '') FROM job_tasks t
+                  WHERE t.run_id = r.id AND t.status <> 'succeeded' AND (t.error_message IS NOT NULL OR t.error_class IS NOT NULL)
+                  ORDER BY t.task_index LIMIT 1), '')::text AS first_error
+  FROM job_runs r
+  JOIN jobs j ON j.id = r.job_id
+ WHERE r.account_id = $1::uuid
+   AND r.aggregate_status IN ('failed', 'dead_letter')
+   AND r.finished_at >= $2::timestamptz
+   AND r.finished_at <= $3::timestamptz
+   AND ($4::text IS NULL OR j.name = $4::text)
+ ORDER BY r.finished_at DESC, r.id
+ LIMIT $5::integer
+`
+
+type ListAccountFailedJobRunsParams struct {
+	AccountID pgtype.UUID
+	Since     pgtype.Timestamptz
+	Until     pgtype.Timestamptz
+	JobName   pgtype.Text
+	RowLimit  int32
+}
+
+type ListAccountFailedJobRunsRow struct {
+	ID              pgtype.UUID
+	JobName         string
+	AggregateStatus string
+	Tasks           int32
+	TasksFailed     int32
+	DeadLetterCount int32
+	FinishedAt      pgtype.Timestamptz
+	FirstError      string
+}
+
+// The newest failed runs a firing job_failures rule counted, for the
+// notification (ADR-045 amendment 1): job name, run, failed task count and
+// the first failed task's error.
+func (q *Queries) ListAccountFailedJobRuns(ctx context.Context, db DBTX, arg ListAccountFailedJobRunsParams) ([]ListAccountFailedJobRunsRow, error) {
+	rows, err := db.Query(ctx, listAccountFailedJobRuns,
+		arg.AccountID,
+		arg.Since,
+		arg.Until,
+		arg.JobName,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAccountFailedJobRunsRow{}
+	for rows.Next() {
+		var i ListAccountFailedJobRunsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.JobName,
+			&i.AggregateStatus,
+			&i.Tasks,
+			&i.TasksFailed,
+			&i.DeadLetterCount,
+			&i.FinishedAt,
+			&i.FirstError,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAppBootFailures = `-- name: ListAppBootFailures :many
+SELECT at,
+       coalesce(data->>'deployment_id', '')::text AS deployment_id,
+       coalesce(data->>'node_id', '')::text AS node_id,
+       coalesce(data->>'method', '')::text AS method
+  FROM events
+ WHERE kind = 'wake.boot_failed'
+   AND data->>'app_id' = $1::text
+   AND data->>'reason' = 'vmm_boot_failed'
+   AND NOT (data ? 'mirror')
+   AND at >= $2::timestamptz
+   AND at <= $3::timestamptz
+ ORDER BY at DESC, id DESC
+ LIMIT $4::integer
+`
+
+type ListAppBootFailuresParams struct {
+	AppID    string
+	Since    pgtype.Timestamptz
+	Until    pgtype.Timestamptz
+	RowLimit int32
+}
+
+type ListAppBootFailuresRow struct {
+	At           pgtype.Timestamptz
+	DeploymentID string
+	NodeID       string
+	Method       string
+}
+
+// The newest failed boots a firing boot_failures rule counted, for the
+// notification (ADR-045 amendment 1).
+func (q *Queries) ListAppBootFailures(ctx context.Context, db DBTX, arg ListAppBootFailuresParams) ([]ListAppBootFailuresRow, error) {
+	rows, err := db.Query(ctx, listAppBootFailures,
+		arg.AppID,
+		arg.Since,
+		arg.Until,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAppBootFailuresRow{}
+	for rows.Next() {
+		var i ListAppBootFailuresRow
+		if err := rows.Scan(
+			&i.At,
+			&i.DeploymentID,
+			&i.NodeID,
+			&i.Method,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFailedInvocations = `-- name: ListFailedInvocations :many
+SELECT id, source, path, cron_id, attempts, coalesce(last_error, '')::text AS last_error,
+       coalesce(completed_at, created_at)::timestamptz AS failed_at
+  FROM invocations
+ WHERE account_id = $1::uuid AND app_id = $2::uuid
+   AND state IN ('failed', 'dead_letter')
+   AND environment_id IS NOT DISTINCT FROM $3::uuid
+   AND ($4::text IS NULL OR source = $4::text)
+   AND ($5::uuid IS NULL OR cron_id = $5::uuid)
+   AND coalesce(completed_at, created_at) >= $6::timestamptz
+ ORDER BY coalesce(completed_at, created_at) DESC, id
+ LIMIT $7::integer
+`
+
+type ListFailedInvocationsParams struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+	Source        pgtype.Text
+	CronID        pgtype.UUID
+	Since         pgtype.Timestamptz
+	RowLimit      int32
+}
+
+type ListFailedInvocationsRow struct {
+	ID        pgtype.UUID
+	Source    string
+	Path      string
+	CronID    pgtype.UUID
+	Attempts  int32
+	LastError string
+	FailedAt  pgtype.Timestamptz
+}
+
+// The newest failed invocations a firing failed_invocations rule counted, for
+// the notification (ADR-045 amendment 1). Production only, like the count.
+func (q *Queries) ListFailedInvocations(ctx context.Context, db DBTX, arg ListFailedInvocationsParams) ([]ListFailedInvocationsRow, error) {
+	rows, err := db.Query(ctx, listFailedInvocations,
+		arg.AccountID,
+		arg.AppID,
+		arg.EnvironmentID,
+		arg.Source,
+		arg.CronID,
+		arg.Since,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListFailedInvocationsRow{}
+	for rows.Next() {
+		var i ListFailedInvocationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Source,
+			&i.Path,
+			&i.CronID,
+			&i.Attempts,
+			&i.LastError,
+			&i.FailedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const readDeploymentBootEvidence = `-- name: ReadDeploymentBootEvidence :one

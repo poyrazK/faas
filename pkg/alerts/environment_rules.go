@@ -64,6 +64,9 @@ func (e *Evaluator) stageScope(ctx context.Context, rule state.AlertRule) (strin
 }
 
 func (e *Evaluator) observeEnvironmentFailedInvocations(ctx context.Context, rule state.AlertRule) (float64, bool, string) {
+	if rule.CronID != "" {
+		return e.observeCronFailures(ctx, rule)
+	}
 	store, ok := e.store.(state.AlertRuleEnvironmentStore)
 	if !ok {
 		return 0, false, skipDegraded

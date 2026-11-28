@@ -88,6 +88,10 @@ func customerAlertRule(row sqlc.AlertRule) AlertRule {
 	if row.EnvironmentID.Valid {
 		r.EnvironmentID = uuid.UUID(row.EnvironmentID.Bytes).String()
 	}
+	r.JobName = row.JobName.String
+	if row.CronID.Valid {
+		r.CronID = uuid.UUID(row.CronID.Bytes).String()
+	}
 	return r
 }
 func customerAlertRuleResult(row sqlc.AlertRule, err error) (AlertRule, error) {
@@ -111,7 +115,7 @@ func insertCustomerAlertRule(ctx context.Context, db sqlc.DBTX, in AlertRule) (A
 	if in.RecoveryConfirmationChecks == 0 {
 		in.RecoveryConfirmationChecks = 1
 	}
-	if !validMCPProtocolAlert(in) || !validAlertRollbackWindow(in) || !validAlertObservationMode(in) || !validAlertRecoveryConfirmation(in) || in.CooldownMinutes < api.AlertRuleCooldownMinMinutes || in.CooldownMinutes > api.AlertRuleCooldownMaxMinutes {
+	if !validMCPProtocolAlert(in) || !validAlertRollbackWindow(in) || !validAlertFailureFilter(in) || !validAlertObservationMode(in) || !validAlertRecoveryConfirmation(in) || in.CooldownMinutes < api.AlertRuleCooldownMinMinutes || in.CooldownMinutes > api.AlertRuleCooldownMaxMinutes {
 		return AlertRule{}, ErrInvalidArgument
 	}
 	acct, err := alertPgUUID(in.AccountID)
@@ -164,7 +168,11 @@ func insertCustomerAlertRule(ctx context.Context, db sqlc.DBTX, in AlertRule) (A
 	if err != nil {
 		return AlertRule{}, err
 	}
-	return customerAlertRuleResult(sqlc.New().InsertCustomerAlertRule(ctx, db, sqlc.InsertCustomerAlertRuleParams{CustomMetricLabels: customMetricLabelsJSON(in.CustomMetricLabels), CreatedByAccountID: createdBy, McpReadinessScope: in.MCPReadinessScope, McpMinCalls: int32(in.MCPMinCalls), McpForMinutes: int32(in.MCPForMinutes), EventSubscriptionID: sub, EdgeRuleID: edgeRule, AccountID: acct, AppID: app, Name: in.Name, Enabled: in.Enabled && !in.ObserveOnly, ObserveOnly: in.ObserveOnly, ObservationEnabled: in.Enabled && in.ObserveOnly, EnvironmentScope: in.EnvironmentScope, RecoveryConfirmationChecks: int32(in.RecoveryConfirmationChecks), Metric: string(in.Metric), Comparison: string(in.Comparison), Threshold: in.Threshold, WindowSpec: string(in.WindowSpec), FailureSource: source, Action: string(in.Action), WebhookUrl: in.WebhookURL, WebhookSecretSealed: in.WebhookSecretSealed, CooldownMinutes: alertOptionalInt(&in.CooldownMinutes).Int32, State: string(in.State), PostDeployRollbackWindowSeconds: alertOptionalInt(&in.PostDeployRollbackWindowSeconds).Int32, CustomMetricName: customMetric, SloID: sloID, SyntheticCheckID: checkID, LogQuery: logQuery, NotifyResolved: in.NotifyResolved, EnvironmentID: environment}))
+	cronID, err := alertPgUUID(in.CronID)
+	if err != nil {
+		return AlertRule{}, err
+	}
+	return customerAlertRuleResult(sqlc.New().InsertCustomerAlertRule(ctx, db, sqlc.InsertCustomerAlertRuleParams{CustomMetricLabels: customMetricLabelsJSON(in.CustomMetricLabels), CreatedByAccountID: createdBy, McpReadinessScope: in.MCPReadinessScope, McpMinCalls: int32(in.MCPMinCalls), McpForMinutes: int32(in.MCPForMinutes), EventSubscriptionID: sub, EdgeRuleID: edgeRule, AccountID: acct, AppID: app, Name: in.Name, Enabled: in.Enabled && !in.ObserveOnly, ObserveOnly: in.ObserveOnly, ObservationEnabled: in.Enabled && in.ObserveOnly, EnvironmentScope: in.EnvironmentScope, RecoveryConfirmationChecks: int32(in.RecoveryConfirmationChecks), Metric: string(in.Metric), Comparison: string(in.Comparison), Threshold: in.Threshold, WindowSpec: string(in.WindowSpec), FailureSource: source, Action: string(in.Action), WebhookUrl: in.WebhookURL, WebhookSecretSealed: in.WebhookSecretSealed, CooldownMinutes: alertOptionalInt(&in.CooldownMinutes).Int32, State: string(in.State), PostDeployRollbackWindowSeconds: alertOptionalInt(&in.PostDeployRollbackWindowSeconds).Int32, CustomMetricName: customMetric, SloID: sloID, SyntheticCheckID: checkID, LogQuery: logQuery, NotifyResolved: in.NotifyResolved, EnvironmentID: environment, JobName: pgtype.Text{String: in.JobName, Valid: in.JobName != ""}, CronID: cronID}))
 }
 func (s *PgStore) UpdateAlertRule(ctx context.Context, id string, p UpdateAlertRuleParams) (AlertRule, error) {
 	if p.RecoveryConfirmationChecks != nil && *p.RecoveryConfirmationChecks != 1 && *p.RecoveryConfirmationChecks != api.AnomalyReplayRecoveryChecks {
@@ -176,6 +184,11 @@ func (s *PgStore) UpdateAlertRule(ctx context.Context, id string, p UpdateAlertR
 	rule, err := alertPgUUID(id)
 	if err != nil {
 		return AlertRule{}, err
+	}
+	if p.CronID != nil && *p.CronID != "" {
+		if _, err := uuid.Parse(*p.CronID); err != nil {
+			return AlertRule{}, ErrInvalidArgument
+		}
 	}
 	if p.PostDeployRollbackWindowSeconds != nil && (*p.PostDeployRollbackWindowSeconds < 0 || *p.PostDeployRollbackWindowSeconds > api.AlertRollbackMaxWindowSeconds) {
 		return AlertRule{}, ErrInvalidArgument
@@ -237,6 +250,7 @@ func (s *PgStore) UpdateAlertRule(ctx context.Context, id string, p UpdateAlertR
 		Threshold: alertOptionalFloat(p.Threshold), WindowSpec: alertOptionalText(p.WindowSpec), Action: alertOptionalText(p.Action),
 		WebhookUrl: alertOptionalText(p.WebhookURL), WebhookSecretSealed: secret, CooldownMinutes: alertOptionalInt(p.CooldownMinutes),
 		PostDeployRollbackWindowSeconds: alertOptionalInt(p.PostDeployRollbackWindowSeconds), NotifyResolved: alertOptionalBool(p.NotifyResolved),
+		JobName: alertOptionalText(p.JobName), CronID: alertOptionalText(p.CronID),
 	})
 	if err != nil {
 		return AlertRule{}, mapErr(err)

@@ -442,7 +442,7 @@ gregale alert create --app shop --name "Out of memory" \
 
 The rule needs an app and accepts every alert window and action.
 
-## Boot and job failures
+## Boot, job and cron failures
 
 `boot_failures` counts the times the app's instances failed to start within
 the window. An app that crashes on start (a missing secret, a bad config, a
@@ -453,7 +453,38 @@ app.
 
 `job_failures` counts the [job](jobs.md) runs in your account that finished
 `failed` or `dead_letter` within the window. Jobs belong to the account, not
-an app, so the rule counts every job whichever app you create it on.
+an app, so the rule counts every job whichever app you create it on. Add
+`--job <name>` (`job_name` in the API) to count only one job's runs, so a
+noisy job does not hide the others.
+
+Failed [cron](crons.md) runs are counted by `failed_invocations` with
+`--failure-source cron`. Add `--cron <id>` (`cron_id`) to count only one
+cron of the app; `gregale cron list` shows the ids.
+
+```bash
+gregale alert create --app shop --name "Nightly export failed" \
+  --metric job_failures --job nightly-export \
+  --comparison gt --threshold 0 --window-spec 24h --channel OPS_SLACK_ID
+
+gregale alert create --app shop --name "Billing cron failing" \
+  --metric failed_invocations --failure-source cron --cron 3f2c9d1e-0b7a-4c55-9f1e-2d6a8b4c7e10 \
+  --comparison gte --threshold 2 --window-spec 1h --channel OPS_SLACK_ID
+```
+
+`gregale alert update <id> --job other-job` changes the filter and
+`--job=` (or `--cron=`) removes it.
+
+When one of these rules fires, the notification lists the newest failures
+it counted, up to 5:
+
+- `boot_failures`: when each boot failed, the deployment and the node.
+- `job_failures`: the job, the run id, how many tasks failed and the first
+  failed task's error.
+- `failed_invocations`: the source and path, the cron, the number of
+  attempts and the last error.
+
+Errors are cut to one line of 200 characters. They reach every channel the
+rule delivers to, so keep secrets out of your error messages.
 
 `job_failures` supports the webhook action only. `boot_failures` also takes
 `--action rollback` together with `--post-deploy-rollback-window`: it rolls

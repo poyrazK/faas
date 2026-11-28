@@ -901,7 +901,9 @@ type Querier interface {
 	CopyRetryDeploymentWorkloadSpec(ctx context.Context, db DBTX, arg CopyRetryDeploymentWorkloadSpecParams) error
 	CountAPISandboxLibraryScenarios(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	// The job_failures alert metric: the account's job runs that finished failed
-	// or dead-lettered in a window, through job_runs_failed_finished_idx.
+	// or dead-lettered in a window, through job_runs_failed_finished_idx. A
+	// job_name narrows it to the account's jobs of that name (ADR-045
+	// amendment 1).
 	CountAccountFailedJobRuns(ctx context.Context, db DBTX, arg CountAccountFailedJobRunsParams) (int64, error)
 	CountActiveAppForks(ctx context.Context, db DBTX, arg CountActiveAppForksParams) (CountActiveAppForksRow, error)
 	CountActiveBindingVerificationRuns(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
@@ -948,6 +950,10 @@ type Querier interface {
 	CountEnabledEventSubscriptionsForQuota(ctx context.Context, db DBTX, appID pgtype.UUID) (CountEnabledEventSubscriptionsForQuotaRow, error)
 	CountEnvironmentQueueProducerDepth(ctx context.Context, db DBTX, arg CountEnvironmentQueueProducerDepthParams) (int64, error)
 	CountExclusiveWorkPending(ctx context.Context, db DBTX, accountID string) (int64, error)
+	// A failed_invocations rule narrowed to one cron (ADR-045 amendment 1):
+	// that cron's failed and dead-lettered invocations in production, or in the
+	// rule's stage when environment_id is set.
+	CountFailedCronInvocations(ctx context.Context, db DBTX, arg CountFailedCronInvocationsParams) (int64, error)
 	// One stage's failed invocations of one app, for the stage's alert rules.
 	CountFailedInvocationsInEnvironmentSince(ctx context.Context, db DBTX, arg CountFailedInvocationsInEnvironmentSinceParams) (int64, error)
 	// CountFailedInvocationsSince over production's invocations only: a stage's
@@ -4028,6 +4034,10 @@ type Querier interface {
 	// tenants. Only explicit public summary fields cross this operator boundary.
 	ListAccountCustomerOperationsBySubject(ctx context.Context, db DBTX, arg ListAccountCustomerOperationsBySubjectParams) ([][]byte, error)
 	ListAccountDeletedApps(ctx context.Context, db DBTX, arg ListAccountDeletedAppsParams) ([]ListAccountDeletedAppsRow, error)
+	// The newest failed runs a firing job_failures rule counted, for the
+	// notification (ADR-045 amendment 1): job name, run, failed task count and
+	// the first failed task's error.
+	ListAccountFailedJobRuns(ctx context.Context, db DBTX, arg ListAccountFailedJobRunsParams) ([]ListAccountFailedJobRunsRow, error)
 	ListAccountOAuthLinks(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListAccountOAuthLinksRow, error)
 	// Dashboard + GET /v1/apps/{slug}/debug/regressions read pattern.
 	// `since` is an interval (e.g. '1 hour') clamped handler-side to the
@@ -4076,6 +4086,9 @@ type Querier interface {
 	// subject filter" without a NULL literal.
 	ListAllEventsPaged(ctx context.Context, db DBTX, arg ListAllEventsPagedParams) ([]ListAllEventsPagedRow, error)
 	ListAnalyticsCohorts(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]AnalyticsCohort, error)
+	// The newest failed boots a firing boot_failures rule counted, for the
+	// notification (ADR-045 amendment 1).
+	ListAppBootFailures(ctx context.Context, db DBTX, arg ListAppBootFailuresParams) ([]ListAppBootFailuresRow, error)
 	ListAppConfigGuardSecrets(ctx context.Context, db DBTX, guardID pgtype.UUID) ([]AppConfigGuardSecret, error)
 	ListAppConfigRevisions(ctx context.Context, db DBTX, arg ListAppConfigRevisionsParams) ([]ListAppConfigRevisionsRow, error)
 	// ADR-751 change timeline: one app's deployment_audit rows in [since, until).
@@ -4456,6 +4469,9 @@ type Querier interface {
 	// active, no app ever created and no billing customer. The grace clock
 	// starts at signup or at enforced_from, whichever is later.
 	ListExpiredUnverifiedAccounts(ctx context.Context, db DBTX, arg ListExpiredUnverifiedAccountsParams) ([]pgtype.UUID, error)
+	// The newest failed invocations a firing failed_invocations rule counted, for
+	// the notification (ADR-045 amendment 1). Production only, like the count.
+	ListFailedInvocations(ctx context.Context, db DBTX, arg ListFailedInvocationsParams) ([]ListFailedInvocationsRow, error)
 	ListFairTenantWorkflowScheduleCandidates(ctx context.Context, db DBTX, arg ListFairTenantWorkflowScheduleCandidatesParams) ([]ListFairTenantWorkflowScheduleCandidatesRow, error)
 	ListFeatureFlagAutoRolloutCandidates(ctx context.Context, db DBTX, arg ListFeatureFlagAutoRolloutCandidatesParams) ([]ListFeatureFlagAutoRolloutCandidatesRow, error)
 	ListFeatureFlagRequestEvidence(ctx context.Context, db DBTX, arg ListFeatureFlagRequestEvidenceParams) ([]ListFeatureFlagRequestEvidenceRow, error)

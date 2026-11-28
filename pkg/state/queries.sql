@@ -22430,10 +22430,10 @@ INSERT INTO alert_historical_rollback_claims(deployment_id,fire_id)
 
 -- name: InsertCustomerAlertRule :one
 INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,event_subscription_id,
- edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope,log_query,created_by_account_id,notify_resolved,custom_metric_labels,observe_only,observation_enabled,environment_scope,recovery_confirmation_checks,environment_id)
+ edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope,log_query,created_by_account_id,notify_resolved,custom_metric_labels,observe_only,observation_enabled,environment_scope,recovery_confirmation_checks,environment_id,job_name,cron_id)
 VALUES(sqlc.arg(account_id),sqlc.narg(app_id),sqlc.arg(name),sqlc.arg(enabled),sqlc.arg(metric),sqlc.arg(comparison),
  sqlc.arg(threshold),sqlc.arg(window_spec),sqlc.narg(failure_source),sqlc.narg(event_subscription_id),sqlc.narg(edge_rule_id),sqlc.arg(action),sqlc.arg(webhook_url),
- sqlc.arg(webhook_secret_sealed),sqlc.arg(cooldown_minutes),sqlc.arg(state),sqlc.arg(post_deploy_rollback_window_seconds),sqlc.narg(custom_metric_name),sqlc.narg(slo_id),sqlc.narg(synthetic_check_id),sqlc.arg(mcp_min_calls),sqlc.arg(mcp_for_minutes),sqlc.arg(mcp_readiness_scope),sqlc.narg(log_query),sqlc.narg(created_by_account_id),sqlc.arg(notify_resolved),sqlc.narg(custom_metric_labels)::jsonb,sqlc.arg(observe_only),sqlc.arg(observation_enabled),sqlc.arg(environment_scope),sqlc.arg(recovery_confirmation_checks),sqlc.narg(environment_id)::uuid)
+ sqlc.arg(webhook_secret_sealed),sqlc.arg(cooldown_minutes),sqlc.arg(state),sqlc.arg(post_deploy_rollback_window_seconds),sqlc.narg(custom_metric_name),sqlc.narg(slo_id),sqlc.narg(synthetic_check_id),sqlc.arg(mcp_min_calls),sqlc.arg(mcp_for_minutes),sqlc.arg(mcp_readiness_scope),sqlc.narg(log_query),sqlc.narg(created_by_account_id),sqlc.arg(notify_resolved),sqlc.narg(custom_metric_labels)::jsonb,sqlc.arg(observe_only),sqlc.arg(observation_enabled),sqlc.arg(environment_scope),sqlc.arg(recovery_confirmation_checks),sqlc.narg(environment_id)::uuid,sqlc.narg(job_name)::text,sqlc.narg(cron_id)::uuid)
 RETURNING *;
 
 -- name: LockCustomerAlertRule :one
@@ -22450,6 +22450,8 @@ UPDATE alert_rules SET mcp_min_calls=coalesce(sqlc.narg(mcp_min_calls)::integer,
  recovery_confirmation_checks=coalesce(sqlc.narg(recovery_confirmation_checks)::integer,recovery_confirmation_checks),
  post_deploy_rollback_window_seconds=coalesce(sqlc.narg(post_deploy_rollback_window_seconds)::integer,post_deploy_rollback_window_seconds),
  notify_resolved=coalesce(sqlc.narg(notify_resolved)::boolean,notify_resolved),
+ job_name=CASE WHEN sqlc.narg(job_name)::text IS NULL THEN job_name ELSE nullif(sqlc.narg(job_name)::text,'') END,
+ cron_id=CASE WHEN sqlc.narg(cron_id)::text IS NULL THEN cron_id ELSE nullif(sqlc.narg(cron_id)::text,'')::uuid END,
  state=CASE WHEN observe_only <> sqlc.arg(observe_only)::boolean THEN 'ok' ELSE state END,
  observe_only=sqlc.arg(observe_only),observation_enabled=sqlc.arg(observation_enabled),
  environment_scope=coalesce(sqlc.narg(environment_scope)::text,environment_scope),

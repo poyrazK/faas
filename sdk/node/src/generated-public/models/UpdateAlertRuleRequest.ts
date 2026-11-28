@@ -38,6 +38,14 @@ export type UpdateAlertRuleRequest = {
    * Turn the webhook's alert.resolved events on or off. Turning them on requires the rule to have a webhook_url.
    */
   notify_resolved?: boolean;
+  /**
+   * Change a job_failures rule's job filter. Omission preserves it and an empty string clears it.
+   */
+  job_name?: string;
+  /**
+   * Change the cron filter of a failed_invocations rule with failure_source cron (a cron id). Omission preserves it and an empty string clears it.
+   */
+  cron_id?: string;
   name?: string;
   enabled?: boolean;
   /**

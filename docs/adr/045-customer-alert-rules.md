@@ -150,6 +150,28 @@ PR 4 as the operator-visible artifact.
   the meterd retry loop always re-dials against the freshest DNS
   answer.
 
+## Amendment 1 (2026-11-28): failure filters and failure details
+
+- **Filters.** A `job_failures` rule can name one job (`job_name`): it then
+  counts only the failed runs of the account's job with that name. A
+  `failed_invocations` rule with `failure_source = cron` can name one cron of
+  its app (`cron_id`). Jobs are named because the name is unique in the
+  account and is how the CLI addresses a job; crons have no name, and their id
+  survives deploys because deployment crons are upserted by id. Neither is a
+  foreign key: a rule on a deleted job or cron counts zero rather than
+  disappearing. apid checks that the job exists and the cron belongs to the
+  app; `alert_rules_job_name_chk` and `alert_rules_cron_id_chk` keep the shape.
+  A cron-filtered rule needs the store's `FailureAlertDetailer`; on
+  a store without it the rule degrades instead of counting every cron.
+- **Details.** A firing `boot_failures`, `job_failures` or `failed_invocations`
+  notification to a channel lists up to 5 of the newest failures it counted:
+  boot time, deployment and node; job, run, failed tasks and the first failed
+  task's error; invocation source, path, cron, attempts and last error. Error
+  text is collapsed to one line and cut to 200 bytes, and each note to 500
+  bytes like route notes. The details go to the customer's own channels only,
+  the same as the log lines alerts already carry. A read failure sends the
+  notification without them.
+
 ## Follow-ups (not this ADR)
 
 - #246 — wire real mail transport + retry; then add email as a

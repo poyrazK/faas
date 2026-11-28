@@ -101,6 +101,12 @@ class CreateAlertRuleRequest:
     """Required when metric is log_search_matches; omit otherwise. URL query string of log search filters (source,
     level, status, route, deployment_id, request_id, trace_id, q); the rule counts matching log events in its
     window. Webhook action only, windows up to 24h."""
+    job_name: str | Unset = UNSET
+    """job_failures rules only. Count only the failed runs of the account's job with this name; omitted counts
+    every job. The job must exist."""
+    cron_id: UUID | Unset = UNSET
+    """failed_invocations rules with failure_source cron only. Count only this cron's failed invocations; omitted
+    counts every cron of the app. The cron must belong to the app."""
     slo_id: UUID | Unset = UNSET
     """Required for slo_budget_burn (multi-window burn rate; 14.4 is the paging threshold) and
     slo_budget_remaining_pct (percent of the error budget left); names one of this app's SLOs. The rule window_spec
@@ -170,6 +176,12 @@ class CreateAlertRuleRequest:
 
         log_query = self.log_query
 
+        job_name = self.job_name
+
+        cron_id: str | Unset = UNSET
+        if not isinstance(self.cron_id, Unset):
+            cron_id = str(self.cron_id)
+
         slo_id: str | Unset = UNSET
         if not isinstance(self.slo_id, Unset):
             slo_id = str(self.slo_id)
@@ -236,6 +248,10 @@ class CreateAlertRuleRequest:
             field_dict["custom_metric_labels"] = custom_metric_labels
         if log_query is not UNSET:
             field_dict["log_query"] = log_query
+        if job_name is not UNSET:
+            field_dict["job_name"] = job_name
+        if cron_id is not UNSET:
+            field_dict["cron_id"] = cron_id
         if slo_id is not UNSET:
             field_dict["slo_id"] = slo_id
         if synthetic_check_id is not UNSET:
@@ -318,6 +334,15 @@ class CreateAlertRuleRequest:
 
         log_query = d.pop("log_query", UNSET)
 
+        job_name = d.pop("job_name", UNSET)
+
+        _cron_id = d.pop("cron_id", UNSET)
+        cron_id: UUID | Unset
+        if isinstance(_cron_id, Unset):
+            cron_id = UNSET
+        else:
+            cron_id = UUID(_cron_id)
+
         _slo_id = d.pop("slo_id", UNSET)
         slo_id: UUID | Unset
         if isinstance(_slo_id, Unset):
@@ -375,6 +400,8 @@ class CreateAlertRuleRequest:
             custom_metric_name=custom_metric_name,
             custom_metric_labels=custom_metric_labels,
             log_query=log_query,
+            job_name=job_name,
+            cron_id=cron_id,
             slo_id=slo_id,
             synthetic_check_id=synthetic_check_id,
             webhook_url=webhook_url,

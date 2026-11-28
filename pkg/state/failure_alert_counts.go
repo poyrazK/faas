@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -28,8 +30,9 @@ type FailureAlertCounter interface {
 	// until], leaving out mirror-mode boots of a candidate deployment.
 	CountAppBootFailures(ctx context.Context, appID string, since, until time.Time) (int64, error)
 	// CountAccountFailedJobRuns counts the account's job runs that finished
-	// failed or dead-lettered in [since, until].
-	CountAccountFailedJobRuns(ctx context.Context, accountID string, since, until time.Time) (int64, error)
+	// failed or dead-lettered in [since, until]; a non-empty jobName counts
+	// only the account's jobs of that name (ADR-045 amendment 1).
+	CountAccountFailedJobRuns(ctx context.Context, accountID, jobName string, since, until time.Time) (int64, error)
 }
 
 // CountAppBootFailures runs the sqlc CountAppBootFailures query.
@@ -46,13 +49,14 @@ func (s *PgStore) CountAppBootFailures(ctx context.Context, appID string, since,
 }
 
 // CountAccountFailedJobRuns runs the sqlc CountAccountFailedJobRuns query.
-func (s *PgStore) CountAccountFailedJobRuns(ctx context.Context, accountID string, since, until time.Time) (int64, error) {
+func (s *PgStore) CountAccountFailedJobRuns(ctx context.Context, accountID, jobName string, since, until time.Time) (int64, error) {
 	var account pgtype.UUID
 	if err := account.Scan(accountID); err != nil {
 		return 0, fmt.Errorf("state: count account failed job runs: account id: %w", err)
 	}
 	n, err := sqlc.New().CountAccountFailedJobRuns(ctx, s.pool, sqlc.CountAccountFailedJobRunsParams{
 		AccountID: account,
+		JobName:   pgtype.Text{String: jobName, Valid: jobName != ""},
 		Since:     pgtype.Timestamptz{Time: since, Valid: true},
 		Until:     pgtype.Timestamptz{Time: until, Valid: true},
 	})
@@ -84,7 +88,7 @@ func (m *MemStore) CountAppBootFailures(_ context.Context, appID string, since, 
 }
 
 // CountAccountFailedJobRuns is the in-memory equivalent of the PgStore query.
-func (m *MemStore) CountAccountFailedJobRuns(_ context.Context, accountID string, since, until time.Time) (int64, error) {
+func (m *MemStore) CountAccountFailedJobRuns(_ context.Context, accountID, jobName string, since, until time.Time) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var n int64
@@ -92,9 +96,29 @@ func (m *MemStore) CountAccountFailedJobRuns(_ context.Context, accountID string
 		if r.AccountID != accountID || r.FinishedAt == nil || r.FinishedAt.Before(since) || r.FinishedAt.After(until) {
 			continue
 		}
+		if jobName != "" && m.jobs[r.JobID].Name != jobName {
+			continue
+		}
 		if r.AggregateStatus == "failed" || r.AggregateStatus == "dead_letter" {
 			n++
 		}
 	}
 	return n, nil
+}
+
+// validAlertFailureFilter mirrors alert_rules_job_name_chk and
+// alert_rules_cron_id_chk (ADR-045 amendment 1): a job filter belongs only
+// to job_failures, a cron filter only to an app's failed_invocations rule
+// with failure source cron.
+func validAlertFailureFilter(r AlertRule) bool {
+	if r.JobName != "" && (r.Metric != AlertMetricJobFailures || len(r.JobName) > api.AlertJobNameMaxBytes) {
+		return false
+	}
+	if r.CronID != "" {
+		if _, err := uuid.Parse(r.CronID); err != nil {
+			return false
+		}
+		return r.Metric == AlertMetricFailedInvocs && r.FailureSource == AlertFailureCron && r.AppID != ""
+	}
+	return true
 }

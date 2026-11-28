@@ -48935,6 +48935,13 @@ components:
           type: string
           description: 'The canonical log search filters a log_search_matches rule counts. Present only when metric is log_search_matches.'
           example: level=error&q=timeout&source=runtime
+        job_name:
+          type: string
+          description: 'The job a job_failures rule counts; absent when it counts every job of the account.'
+        cron_id:
+          type: string
+          format: uuid
+          description: 'The cron a failed_invocations rule with failure_source cron counts; absent when it counts every cron of the app.'
         slo_id:
           type: string
           format: uuid
@@ -49046,6 +49053,15 @@ components:
           maxLength: 2048
           description: 'Required when metric is log_search_matches; omit otherwise. URL query string of log search filters (source, level, status, route, deployment_id, request_id, trace_id, q); the rule counts matching log events in its window. Webhook action only, windows up to 24h.'
           example: level=error&q=timeout&source=runtime
+        job_name:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: 'job_failures rules only. Count only the failed runs of the account''s job with this name; omitted counts every job. The job must exist.'
+        cron_id:
+          type: string
+          format: uuid
+          description: 'failed_invocations rules with failure_source cron only. Count only this cron''s failed invocations; omitted counts every cron of the app. The cron must belong to the app.'
         slo_id:
           type: string
           format: uuid
@@ -49110,6 +49126,13 @@ components:
         notify_resolved:
           type: boolean
           description: "Turn the webhook's alert.resolved events on or off. Turning them on requires the rule to have a webhook_url."
+        job_name:
+          type: string
+          maxLength: 128
+          description: 'Change a job_failures rule''s job filter. Omission preserves it and an empty string clears it.'
+        cron_id:
+          type: string
+          description: 'Change the cron filter of a failed_invocations rule with failure_source cron (a cron id). Omission preserves it and an empty string clears it.'
         name: {type: string}
         enabled: {type: boolean}
         metric:

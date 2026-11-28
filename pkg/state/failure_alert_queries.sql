@@ -15,13 +15,79 @@ SELECT count(*)::bigint AS total
 
 -- name: CountAccountFailedJobRuns :one
 -- The job_failures alert metric: the account's job runs that finished failed
--- or dead-lettered in a window, through job_runs_failed_finished_idx.
+-- or dead-lettered in a window, through job_runs_failed_finished_idx. A
+-- job_name narrows it to the account's jobs of that name (ADR-045
+-- amendment 1).
 SELECT count(*)::bigint AS total
-  FROM job_runs
- WHERE account_id = sqlc.arg(account_id)::uuid
-   AND aggregate_status IN ('failed', 'dead_letter')
-   AND finished_at >= sqlc.arg(since)::timestamptz
-   AND finished_at <= sqlc.arg(until)::timestamptz;
+  FROM job_runs r
+ WHERE r.account_id = sqlc.arg(account_id)::uuid
+   AND r.aggregate_status IN ('failed', 'dead_letter')
+   AND r.finished_at >= sqlc.arg(since)::timestamptz
+   AND r.finished_at <= sqlc.arg(until)::timestamptz
+   AND (sqlc.narg(job_name)::text IS NULL OR r.job_id IN (
+        SELECT j.id FROM jobs j WHERE j.account_id = sqlc.arg(account_id)::uuid AND j.name = sqlc.narg(job_name)::text));
+
+-- name: ListAccountFailedJobRuns :many
+-- The newest failed runs a firing job_failures rule counted, for the
+-- notification (ADR-045 amendment 1): job name, run, failed task count and
+-- the first failed task's error.
+SELECT r.id, j.name AS job_name, r.aggregate_status, r.tasks, r.tasks_failed, r.dead_letter_count,
+       r.finished_at::timestamptz AS finished_at,
+       coalesce((SELECT coalesce(t.error_message, t.error_class, '') FROM job_tasks t
+                  WHERE t.run_id = r.id AND t.status <> 'succeeded' AND (t.error_message IS NOT NULL OR t.error_class IS NOT NULL)
+                  ORDER BY t.task_index LIMIT 1), '')::text AS first_error
+  FROM job_runs r
+  JOIN jobs j ON j.id = r.job_id
+ WHERE r.account_id = sqlc.arg(account_id)::uuid
+   AND r.aggregate_status IN ('failed', 'dead_letter')
+   AND r.finished_at >= sqlc.arg(since)::timestamptz
+   AND r.finished_at <= sqlc.arg(until)::timestamptz
+   AND (sqlc.narg(job_name)::text IS NULL OR j.name = sqlc.narg(job_name)::text)
+ ORDER BY r.finished_at DESC, r.id
+ LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: ListAppBootFailures :many
+-- The newest failed boots a firing boot_failures rule counted, for the
+-- notification (ADR-045 amendment 1).
+SELECT at,
+       coalesce(data->>'deployment_id', '')::text AS deployment_id,
+       coalesce(data->>'node_id', '')::text AS node_id,
+       coalesce(data->>'method', '')::text AS method
+  FROM events
+ WHERE kind = 'wake.boot_failed'
+   AND data->>'app_id' = sqlc.arg(app_id)::text
+   AND data->>'reason' = 'vmm_boot_failed'
+   AND NOT (data ? 'mirror')
+   AND at >= sqlc.arg(since)::timestamptz
+   AND at <= sqlc.arg(until)::timestamptz
+ ORDER BY at DESC, id DESC
+ LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: CountFailedCronInvocations :one
+-- A failed_invocations rule narrowed to one cron (ADR-045 amendment 1):
+-- that cron's failed and dead-lettered invocations in production, or in the
+-- rule's stage when environment_id is set.
+SELECT count(*)::bigint FROM invocations
+ WHERE account_id = sqlc.arg(account_id)::uuid AND app_id = sqlc.arg(app_id)::uuid
+   AND cron_id = sqlc.arg(cron_id)::uuid AND source = 'cron'
+   AND state IN ('failed', 'dead_letter')
+   AND environment_id IS NOT DISTINCT FROM sqlc.narg(environment_id)::uuid
+   AND coalesce(completed_at, created_at) >= sqlc.arg(since)::timestamptz;
+
+-- name: ListFailedInvocations :many
+-- The newest failed invocations a firing failed_invocations rule counted, for
+-- the notification (ADR-045 amendment 1). Production only, like the count.
+SELECT id, source, path, cron_id, attempts, coalesce(last_error, '')::text AS last_error,
+       coalesce(completed_at, created_at)::timestamptz AS failed_at
+  FROM invocations
+ WHERE account_id = sqlc.arg(account_id)::uuid AND app_id = sqlc.arg(app_id)::uuid
+   AND state IN ('failed', 'dead_letter')
+   AND environment_id IS NOT DISTINCT FROM sqlc.narg(environment_id)::uuid
+   AND (sqlc.narg(source)::text IS NULL OR source = sqlc.narg(source)::text)
+   AND (sqlc.narg(cron_id)::uuid IS NULL OR cron_id = sqlc.narg(cron_id)::uuid)
+   AND coalesce(completed_at, created_at) >= sqlc.arg(since)::timestamptz
+ ORDER BY coalesce(completed_at, created_at) DESC, id
+ LIMIT sqlc.arg(row_limit)::integer;
 
 -- name: ReadDeploymentBootEvidence :one
 -- ADR-605 amendment 2: a boot_failures rollback judges a completed release on

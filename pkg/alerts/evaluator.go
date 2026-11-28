@@ -1177,6 +1177,9 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 	case state.AlertMetricAIBudgetAlerts:
 		return e.observeAIBudgetAlerts(ctx, rule)
 	case state.AlertMetricFailedInvocs:
+		if rule.CronID != "" {
+			return e.observeCronFailures(ctx, rule)
+		}
 		// Postgres-backed. No Prometheus dependency; the
 		// per-rule source filter expands "any" to every alertable
 		// InvocationSource values that ship today.
@@ -1493,7 +1496,7 @@ func (e *Evaluator) observeFailureCount(ctx context.Context, rule state.AlertRul
 		}
 		n, err = counter.CountAppBootFailures(ctx, rule.AppID, since, now)
 	case state.AlertMetricJobFailures:
-		n, err = counter.CountAccountFailedJobRuns(ctx, rule.AccountID, since, now)
+		n, err = counter.CountAccountFailedJobRuns(ctx, rule.AccountID, rule.JobName, since, now)
 	default:
 		return 0, false, skipDegraded
 	}
