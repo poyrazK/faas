@@ -2154,6 +2154,14 @@ const (
 	MCPContractReasonMax               = 512
 	MCPContractChecksMax               = 20
 	MCPContractChangelogMax            = 20
+	// Tool safety scan (ADR-20261128135329): a scan keeps at most
+	// MCPToolScanFindingsMax findings, each quoting at most
+	// MCPToolScanExcerptMaxRunes of the text it matched. A description or
+	// schema text longer than MCPToolScanDescriptionMaxBytes is itself a
+	// finding (room to hide instructions in).
+	MCPToolScanFindingsMax         = 100
+	MCPToolScanExcerptMaxRunes     = 120
+	MCPToolScanDescriptionMaxBytes = 4096
 )
 
 // Consumer and platform tenant controls (ADR-1314, ADR-1315, ADR-1322,
