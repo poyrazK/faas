@@ -14,7 +14,7 @@ import (
 
 // adr: 20261104120000 — a stage's alert rule belongs to one of its app's
 // project environments, keeps it, runs only on the stage's own signals, may
-// share a production rule's name only after the contract release, and
+// share a production rule's name, and
 // counts only the stage's failed invocations.
 func TestPgAlertRuleEnvironments(t *testing.T) {
 	store, pool, ctx := pgStoreWithPool(t)
@@ -80,11 +80,15 @@ func TestPgAlertRuleEnvironments(t *testing.T) {
 		t.Fatalf("paused copy of a production-only rule: %v", err)
 	}
 
-	// Until the contract release the app-wide name index still holds.
+	// Names are unique per app and environment: production may use the
+	// stage rule's name, but not twice.
 	sameName := pgSampleAlertRule(account.ID, app.ID)
 	sameName.Name = created.Name
+	if _, err := store.CreateAlertRule(ctx, sameName); err != nil {
+		t.Fatalf("production rule with the stage rule's name: %v", err)
+	}
 	if _, err := store.CreateAlertRule(ctx, sameName); !errors.Is(err, state.ErrConflict) {
-		t.Fatalf("production rule with the stage rule's name: err = %v, want conflict", err)
+		t.Fatalf("second production rule with that name: err = %v, want conflict", err)
 	}
 
 	// Failed invocations: one production, two of the stage's.

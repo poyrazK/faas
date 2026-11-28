@@ -62,21 +62,19 @@ func exerciseAPIConsumerEnvironments(t *testing.T, store apiConsumerEnvironmentT
 		t.Fatalf("stage without consumers = %+v, %v; want production's key", k, err)
 	}
 
-	// The app-wide identity indexes stay until the contract release.
-	if _, err := store.CreateAPIConsumerInEnvironment(ctx, account.ID, app.ID, "staging", "customer-1", "Acme staging"); !errors.Is(err, state.ErrConflict) {
-		t.Fatalf("stage reusing production's external_ref = %v, want ErrConflict until the contract release", err)
-	}
-	staged, err := store.CreateAPIConsumerInEnvironment(ctx, account.ID, app.ID, "staging", "customer-stage", "Acme staging")
+	// Identities are unique per app and environment: a stage reuses
+	// production's external reference and key name.
+	staged, err := store.CreateAPIConsumerInEnvironment(ctx, account.ID, app.ID, "staging", "customer-1", "Acme staging")
 	if err != nil || staged.EnvironmentID != stage.ID {
-		t.Fatalf("stage consumer = %+v, %v; want environment %s", staged, err, stage.ID)
+		t.Fatalf("stage consumer reusing production's external_ref = %+v, %v; want environment %s", staged, err, stage.ID)
 	}
-	if _, err := store.CreateAPIConsumerInEnvironment(ctx, account.ID, app.ID, "staging", "customer-stage", "again"); !errors.Is(err, state.ErrConflict) {
+	if _, err := store.CreateAPIConsumerInEnvironment(ctx, account.ID, app.ID, "staging", "customer-1", "again"); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate stage external_ref = %v, want ErrConflict", err)
 	}
 	if _, err := store.CreateAPIConsumerInEnvironment(ctx, account.ID, app.ID, "missing", "customer-2", "x"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("unknown environment = %v, want ErrNotFound", err)
 	}
-	stageKey := newKey(staged.ID, "stage")
+	stageKey := newKey(staged.ID, "primary")
 	if stageKey.EnvironmentID != stage.ID {
 		t.Fatalf("stage key environment = %q, want %s", stageKey.EnvironmentID, stage.ID)
 	}

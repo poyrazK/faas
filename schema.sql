@@ -82766,13 +82766,6 @@ CREATE UNIQUE INDEX alert_rules_app_environment_name_uniq ON public.alert_rules 
 
 
 --
--- Name: alert_rules_app_name_uniq; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX alert_rules_app_name_uniq ON public.alert_rules USING btree (app_id, name) WHERE (app_id IS NOT NULL);
-
-
---
 -- Name: alert_rules_edge_rule_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -83043,13 +83036,6 @@ CREATE INDEX api_consumers_account_app_idx ON public.api_consumers USING btree (
 --
 
 CREATE UNIQUE INDEX api_consumers_app_environment_external_ref_uniq ON public.api_consumers USING btree (app_id, COALESCE(environment_id, '00000000-0000-0000-0000-000000000000'::uuid), external_ref);
-
-
---
--- Name: api_consumers_app_external_ref_uniq; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX api_consumers_app_external_ref_uniq ON public.api_consumers USING btree (app_id, external_ref);
 
 
 --
@@ -84758,24 +84744,10 @@ CREATE INDEX consumer_keys_app_idx ON public.consumer_keys USING btree (app_id);
 
 
 --
--- Name: consumer_keys_app_prefix_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX consumer_keys_app_prefix_idx ON public.consumer_keys USING btree (app_id, prefix);
-
-
---
 -- Name: consumer_keys_consumer_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX consumer_keys_consumer_id_idx ON public.consumer_keys USING btree (consumer_id);
-
-
---
--- Name: consumer_keys_unique_name; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX consumer_keys_unique_name ON public.consumer_keys USING btree (account_id, app_id, name);
 
 
 --

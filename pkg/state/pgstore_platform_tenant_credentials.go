@@ -86,14 +86,14 @@ func planPlatformTenantCredentials(ctx context.Context, tx pgx.Tx, in ApplyPlatf
 		}
 		seenNames[nameKey] = true
 		key, err := scanConsumerKeyRow(tx.QueryRow(ctx, `select `+consumerKeySelectCols+` from consumer_keys
-			where account_id = $1::uuid and app_id = $2::uuid and name = $3 for update`,
+			where account_id = $1::uuid and app_id = $2::uuid and name = $3 and environment_id is null for update`,
 			in.AccountID, consumer.AppID, wanted.Name))
 		if errors.Is(err, pgx.ErrNoRows) {
 			if wanted.ExpiresAt != nil && !wanted.ExpiresAt.After(time.Now()) {
 				return result, ErrInvalidArgument
 			}
 			var prefixUsed bool
-			if err := tx.QueryRow(ctx, `select exists(select 1 from consumer_keys where app_id = $1::uuid and prefix = $2)`,
+			if err := tx.QueryRow(ctx, `select exists(select 1 from consumer_keys where app_id = $1::uuid and prefix = $2 and environment_id is null)`,
 				consumer.AppID, wanted.Prefix).Scan(&prefixUsed); err != nil {
 				return result, err
 			}

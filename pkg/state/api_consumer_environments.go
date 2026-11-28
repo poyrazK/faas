@@ -70,10 +70,10 @@ func (m *MemStore) CreateAPIConsumerInEnvironment(ctx context.Context, accountID
 	if err != nil {
 		return APIConsumer{}, err
 	}
-	// The app-wide identity indexes stay until the contract release, so a
-	// stage cannot reuse production's identities yet (ADR-20261104120000 Release).
+	// External references are unique per app and environment
+	// (ADR-20261104120000).
 	for _, c := range m.apiConsumers {
-		if c.AppID == appID && c.ExternalRef == externalRef {
+		if c.AppID == appID && c.EnvironmentID == environmentID && c.ExternalRef == externalRef {
 			return APIConsumer{}, ErrConflict
 		}
 	}

@@ -37,10 +37,10 @@ func (m *MemStore) CreateAPIConsumer(_ context.Context, accountID, appID, extern
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// The app-wide identity indexes stay until the contract release, so a
-	// stage cannot reuse production's identities yet (ADR-20261104120000 Release).
+	// External references are unique per app and environment
+	// (ADR-20261104120000): production's rows have no environment.
 	for _, c := range m.apiConsumers {
-		if c.AppID == appID && c.ExternalRef == externalRef {
+		if c.AppID == appID && c.EnvironmentID == "" && c.ExternalRef == externalRef {
 			return APIConsumer{}, ErrConflict
 		}
 	}
@@ -172,13 +172,16 @@ func (m *MemStore) createConsumerKeyForConsumerLocked(accountID, consumerID, nam
 			return ConsumerKey{}, ErrConflict
 		}
 	}
-	// The app-wide identity indexes stay until the contract release, so a
-	// stage cannot reuse production's identities yet (ADR-20261104120000 Release).
+	// Key names and prefixes are unique per app and environment; a key
+	// belongs to its consumer's environment (ADR-20261104120000).
 	for _, k := range m.consumerKeys {
-		if k.AccountID == c.AccountID && k.AppID == c.AppID && k.Name == name {
+		if k.AppID != c.AppID || k.EnvironmentID != c.EnvironmentID {
+			continue
+		}
+		if k.AccountID == c.AccountID && k.Name == name {
 			return ConsumerKey{}, ErrConflict
 		}
-		if k.AppID == c.AppID && k.Prefix == prefix {
+		if k.Prefix == prefix {
 			return ConsumerKey{}, ErrConflict
 		}
 	}

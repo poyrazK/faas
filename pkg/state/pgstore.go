@@ -15851,7 +15851,7 @@ func (s *PgStore) AlertRuleByID(ctx context.Context, id string) (AlertRule, erro
 // display-name prefix "<DisplayName> (<app_slug>)". The query joins
 // alert_presets on name to translate the catalog key into the prefix,
 // then matches rules via LIKE '<prefix>%'. The
-// alert_rules_app_name_uniq index covers the LIKE as a prefix range
+// alert_rules_app_environment_name_uniq index covers the LIKE as a prefix range
 // scan on (app_id, name) (ADR-20261029203000).
 //
 // Returns:
