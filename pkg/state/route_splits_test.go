@@ -178,6 +178,58 @@ func routeSplits(t *testing.T, s contractTestStore) {
 	}
 }
 
+// Amendment 6: the mark stays within one account, and a restored route app
+// comes back as an ordinary app, since its split is gone.
+func TestMemRouteAppMark(t *testing.T) {
+	routeAppMark(t, state.NewMemStore())
+}
+
+func TestPgRouteAppMark(t *testing.T) {
+	s, _, _ := pgWithPool(t)
+	routeAppMark(t, s)
+}
+
+func routeAppMark(t *testing.T, s contractTestStore) {
+	t.Helper()
+	ctx := context.Background()
+	newApp := func(acct state.Account, slug string) state.App {
+		t.Helper()
+		app, err := s.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: slug + "-" + uuid.NewString()[:6], Status: state.AppActive, Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return app
+	}
+	acct, err := s.CreateAccount(ctx, "route-mark-"+uuid.NewString()[:8]+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := s.CreateAccount(ctx, "route-mark-"+uuid.NewString()[:8]+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, route, foreign := newApp(acct, "shop"), newApp(acct, "shop-exports"), newApp(other, "elsewhere")
+	if err := s.MarkRouteApp(ctx, foreign.ID, source.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("marked another account's app: %v, want ErrNotFound", err)
+	}
+	if err := s.MarkRouteApp(ctx, route.ID, source.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.AppByID(ctx, route.ID); err != nil || got.RouteOfAppID != source.ID {
+		t.Fatalf("route app = %+v, %v", got, err)
+	}
+	if err := s.DeleteApp(ctx, route.ID); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := s.RestoreApp(ctx, route.ID, api.MustLimitsFor(api.PlanPro))
+	if err != nil || restored.RouteOfAppID != "" {
+		t.Fatalf("restored route app = %+v, %v; want the mark cleared", restored, err)
+	}
+	if got, err := s.AppByID(ctx, route.ID); err != nil || got.RouteOfAppID != "" {
+		t.Fatalf("restored route app read = %+v, %v", got, err)
+	}
+}
+
 func containsSplit(splits []state.RouteSplit, id string) bool {
 	for _, s := range splits {
 		if s.ID == id {

@@ -5577,6 +5577,9 @@ type Querier interface {
 	MarkManagedPostgresCreationCleanup(ctx context.Context, db DBTX, arg MarkManagedPostgresCreationCleanupParams) (ManagedPostgresCreationReceipt, error)
 	MarkProjectEnvironmentCloneObjectManifestEntryCopied(ctx context.Context, db DBTX, arg MarkProjectEnvironmentCloneObjectManifestEntryCopiedParams) (int64, error)
 	MarkPromotionMigrationDestroyed(ctx context.Context, db DBTX, promotionID string) error
+	// ADR-20261121170000 amendment 6: the route's app serves only through its
+	// source's route rule. Both apps must belong to the same account.
+	MarkRouteApp(ctx context.Context, db DBTX, arg MarkRouteAppParams) (int64, error)
 	// Resolve a route's active insights of the given kinds with the fix that
 	// resolved them (ADR-20261020161310). The webhook trigger reports each as
 	// resolved.
