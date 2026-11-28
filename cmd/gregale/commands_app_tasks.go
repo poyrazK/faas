@@ -32,9 +32,9 @@ func cmdAppTasks(slug string, args []string) int {
 		verb, args = args[0], args[1:]
 	}
 	switch verb {
-	case "list", "ls":
+	case "list":
 		return cmdAppTasksList(slug, args)
-	case "show", "get":
+	case "show":
 		return cmdAppTaskShow(slug, args)
 	case "cancel":
 		return cmdAppTaskCancel(slug, args)
@@ -87,7 +87,7 @@ func cmdAppTasksList(slug string, args []string) int {
 }
 
 func cmdAppTaskShow(slug string, args []string) int {
-	id, ok := appTaskIDArg(slug, args, "show")
+	slug, id, ok := appTaskIDArg(slug, args, "show")
 	if !ok {
 		return 1
 	}
@@ -107,7 +107,7 @@ func cmdAppTaskShow(slug string, args []string) int {
 }
 
 func cmdAppTaskCancel(slug string, args []string) int {
-	id, ok := appTaskIDArg(slug, args, "cancel")
+	slug, id, ok := appTaskIDArg(slug, args, "cancel")
 	if !ok {
 		return 1
 	}
@@ -134,17 +134,34 @@ func cmdAppTaskCancel(slug string, args []string) int {
 	return 0
 }
 
-func appTaskIDArg(slug string, args []string, verb string) (string, bool) {
+// appTaskIDArg returns the app and task ID for show and cancel. In a linked
+// checkout `app tasks show <task-id>` reaches here with the task ID in the
+// app position (a UUID is a valid slug), so a lone UUID names the task and
+// the linked app is used.
+func appTaskIDArg(slug string, args []string, verb string) (string, string, bool) {
+	if len(args) == 0 && validTaskID(slug) {
+		app, err := resolveAppFlagOrContext("")
+		if err != nil || app == "" {
+			printErr("Missing app", fmt.Errorf("name the app: gregale app tasks %s <app> %s", verb, slug))
+			return "", "", false
+		}
+		slug, args = app, []string{slug}
+	}
 	if slug == "" || len(args) != 1 || strings.HasPrefix(args[0], "-") {
 		PrintUsage(osStderr, appTasksUsage, "apps")
-		return "", false
+		return "", "", false
 	}
 	id := strings.TrimSpace(args[0])
-	if parsed, err := uuid.Parse(id); err != nil || parsed == uuid.Nil {
+	if !validTaskID(id) {
 		printErr("Invalid task ID", fmt.Errorf("%q is not a task ID; list them with gregale app tasks %s, then run gregale app tasks %s %s <task-id>", id, quoteCLIArg(slug), verb, quoteCLIArg(slug)))
-		return "", false
+		return "", "", false
 	}
-	return id, true
+	return slug, id, true
+}
+
+func validTaskID(value string) bool {
+	parsed, err := uuid.Parse(strings.TrimSpace(value))
+	return err == nil && parsed != uuid.Nil
 }
 
 // renderAppTaskDetails prints the receipt on stdout, including the captured
@@ -220,16 +237,7 @@ func appTaskDuration(task api.AppTaskResponse) string {
 
 // appTaskCommandLine renders argv for display; max > 0 shortens it.
 func appTaskCommandLine(task api.AppTaskResponse, max int) string {
-	var line string
-	if task.CommandShell && len(task.Command) == 1 {
-		line = task.Command[0]
-	} else {
-		quoted := make([]string, len(task.Command))
-		for i, arg := range task.Command {
-			quoted[i] = quoteCLIArg(arg)
-		}
-		line = strings.Join(quoted, " ")
-	}
+	line := task.CommandLine()
 	if max > 0 && len([]rune(line)) > max {
 		line = string([]rune(line)[:max-1]) + "…"
 	}

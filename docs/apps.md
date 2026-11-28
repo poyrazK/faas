@@ -325,10 +325,11 @@ Gregale stores who started the session, the command and the exit code, never
 the terminal output.
 
 Interactive sessions are in preview and may not be enabled for your account.
-They are listed separately from app tasks as `interactive-app-sessions`, so
-`gregale feature list` shows whether `-it`, `app cp`, `app port-forward` and
-`postgres connect` are available; plain `app exec -- <command>` only needs
-`app-tasks`.
+They are listed separately from app tasks as `interactive-app-sessions`, and
+`gregale feature list` shows whether they are available. `app exec -i`/`-t`,
+`app cp`, `app port-forward` and `postgres connect` need them; plain
+`app exec -- <command>` needs only `app-tasks`, so while sessions are
+unavailable `app exec -it` is refused with a pointer to the plain form.
 A deployment whose guest predates interactive sessions reports
 `interactive_unsupported`;
 redeploy it and retry. Attaching to an already-running serving instance is not

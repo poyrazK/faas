@@ -3,6 +3,8 @@ package main_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -101,5 +103,31 @@ func TestCmdAppTasksRejectsBadIDBeforeCallingTheAPI(t *testing.T) {
 	}
 	if !strings.Contains(errOut(), "gregale app tasks my-app") {
 		t.Fatalf("stderr should say how to find task IDs: %q", errOut())
+	}
+}
+
+// In a linked checkout the task ID alone is enough, verb first.
+func TestCmdAppTasksShowInLinkedCheckoutTakesTheTaskID(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := main.SaveProjectContext(root, main.LocalProjectContext{Version: main.ProjectContextVersion, Project: "shop", App: "demo"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	var paths []string
+	appTasksTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		_, _ = w.Write([]byte(appTaskFinishedReceipt))
+	})
+	_, errOut, restore := main.SwapIO(t)
+	defer restore()
+
+	if code := main.Run([]string{"app", "tasks", "show", "2bdd4251-f567-4a48-9f66-a155bbfa7751"}); code != 0 {
+		t.Fatalf("exit = %d, stderr = %s", code, errOut())
+	}
+	if len(paths) != 1 || paths[0] != "/v1/apps/demo/tasks/2bdd4251-f567-4a48-9f66-a155bbfa7751" {
+		t.Fatalf("requests = %v, want the linked app's task", paths)
 	}
 }

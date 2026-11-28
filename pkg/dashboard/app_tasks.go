@@ -2,7 +2,6 @@ package dashboard
 
 import (
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -41,11 +40,7 @@ func NewAppTaskRow(task api.AppTaskResponse) AppTaskRow {
 	if created, err := time.Parse(time.RFC3339Nano, task.CreatedAt); err == nil {
 		row.CreatedAt = created.UTC().Format("2006-01-02 15:04:05 UTC")
 	}
-	if task.CommandShell && len(task.Command) == 1 {
-		row.Command = task.Command[0]
-	} else {
-		row.Command = strings.Join(task.Command, " ")
-	}
+	row.Command = task.CommandLine()
 	if task.ExitCode != nil {
 		row.ExitCode = strconv.Itoa(*task.ExitCode)
 	}

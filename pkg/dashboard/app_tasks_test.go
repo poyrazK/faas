@@ -26,7 +26,7 @@ func TestAppTasksPageRendersHistoryAndSelectedTask(t *testing.T) {
 	}
 	row := NewAppTaskRow(task)
 	list := render(AppTasksData{Slug: "orders", Enabled: true, Tasks: []AppTaskRow{row}, HasNext: true, NextOffset: 25})
-	for _, want := range []string{"?task=2bdd4251-f567-4a48-9f66-a155bbfa7751", "release", "2s", "bin/migrate &lt;up&gt;", "?offset=25", "2026-09-23 00:00:00 UTC"} {
+	for _, want := range []string{"?task=2bdd4251-f567-4a48-9f66-a155bbfa7751", "release", "2s", "bin/migrate &#39;&lt;up&gt;&#39;", "?offset=25", "2026-09-23 00:00:00 UTC"} {
 		if !strings.Contains(list, want) {
 			t.Errorf("history page missing %q", want)
 		}
