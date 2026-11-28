@@ -14,6 +14,8 @@ import (
 	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/ociarchive/ociarchivetest"
+	"google.golang.org/grpc/health"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
 
 // bootDeployDocker is a fake Docker that boots the image and saves a real
@@ -139,27 +141,28 @@ func TestDeployLocalImageBootChecksWorkersWithoutHTTP(t *testing.T) {
 	})
 }
 
-func TestDeployLocalImageBootRefusesGRPCHealth(t *testing.T) {
-	for name, extra := range map[string][]string{
-		"grpc": {"--healthcheck-grpc"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			localImageRepo(t)
-			stub := newLocalImageStub(t)
-			docker := bootDeployDocker(t)
-			args := append([]string{"--name", "demo", "--app", "--no-wait", "--local-image", "acme/web:dev", "--boot"}, extra...)
-			code, stderr := deployCapturingStderr(t, args...)
-			if code == 0 || !strings.Contains(stderr, "deploy without --boot") {
-				t.Fatalf("code=%d stderr=%s: want a refusal naming --boot", code, stderr)
-			}
-			if b, err := os.ReadFile(filepath.Join(docker.dir, "log")); err == nil && strings.Contains(string(b), "run ") {
-				t.Fatalf("booted anyway: %s", b)
-			}
-			if stub.opts != nil {
-				t.Fatal("uploaded")
-			}
-		})
-	}
+func TestDeployLocalImageBootGRPCHealth(t *testing.T) {
+	t.Run("serving", func(t *testing.T) {
+		localImageRepo(t)
+		stub := newLocalImageStub(t)
+		docker := bootDeployDocker(t)
+		serveGRPC(t, docker, true, func(hs *health.Server) { hs.SetServingStatus("shop.Orders", healthpb.HealthCheckResponse_SERVING) })
+		code, stderr := deployCapturingStderr(t, "--name", "demo", "--app", "--no-wait", "--local-image", "acme/web:dev", "--boot", "--healthcheck-grpc", "--healthcheck-grpc-service", "shop.Orders")
+		if code != 0 {
+			t.Fatalf("code=%d: %s", code, stderr)
+		}
+		stub.checkUploaded(t, "acme/web:dev")
+	})
+	t.Run("no health service", func(t *testing.T) {
+		localImageRepo(t)
+		stub := newLocalImageStub(t)
+		docker := bootDeployDocker(t)
+		serveGRPC(t, docker, false, nil)
+		code, stderr := deployCapturingStderr(t, "--name", "demo", "--app", "--no-wait", "--local-image", "acme/web:dev", "--boot", "--healthcheck-grpc")
+		if code == 0 || stub.opts != nil || !strings.Contains(stderr, "does not implement grpc.health.v1.Health") {
+			t.Fatalf("code=%d uploaded=%v stderr=%s", code, stub.opts != nil, stderr)
+		}
+	})
 }
 
 func TestDeployBootCheckInterruptedFails(t *testing.T) {

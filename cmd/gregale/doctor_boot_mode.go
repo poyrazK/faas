@@ -26,12 +26,13 @@ func doctorBootNoListener(mode string) bool {
 
 // doctorBootMode is the mode the boot judges: --execution-mode (or the
 // deploy's gregale.yaml), else an existing worker or job app's observed
-// class. An explicit health path asks for an HTTP check and keeps it.
-func doctorBootMode(explicit, healthPath string, app doctorBootApp) string {
+// class. An explicit readiness probe (health path or gRPC) keeps the server
+// check.
+func doctorBootMode(explicit string, explicitProbe bool, app doctorBootApp) string {
 	if mode := strings.TrimSpace(explicit); mode != "" {
 		return mode
 	}
-	if healthPath == "" && doctorBootNoListener(app.workloadClass) {
+	if !explicitProbe && doctorBootNoListener(app.workloadClass) {
 		_, _ = fmt.Fprintf(osStderr, "App %s runs as a %s; checking the image as one (pass --execution-mode to override).\n", app.slug, app.workloadClass)
 		return app.workloadClass
 	}
