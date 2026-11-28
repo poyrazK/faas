@@ -33,20 +33,20 @@ class ProjectSafeRelease:
     ttl_seconds: int
     deadline: datetime.datetime
     add_services: bool | Unset = UNSET
-    """ Explicit opt-in to reserve new HTTP source services. """
+    """Explicit opt-in to reserve new HTTP source services."""
     additions: list[ProjectReleaseAddition] | Unset = UNSET
     release_id: str | Unset = UNSET
     message: str | Unset = UNSET
     verification: ProjectReleaseVerification | Unset = UNSET
-    """ Snapshotted critical probes and durable post-cutover verification evidence. """
+    """Snapshotted critical probes and durable post-cutover verification evidence."""
     configuration: ProjectReleaseConfiguration | Unset = UNSET
-    """ Paired release configuration fingerprints and committed version identities; values remain private to server
-    storage. """
+    """Paired release configuration fingerprints and committed version identities; values remain private to server
+    storage."""
     release_command: ProjectReleaseCommand | Unset = UNSET
-    """ Planned backward-compatible migration identity and durable task outcome. Task logs remain on the app-task
-    resource. """
+    """Planned backward-compatible migration identity and durable task outcome. Task logs remain on the app-task
+    resource."""
     worker: ProjectReleaseWorker | Unset = UNSET
-    """ One graph-owned production push worker, its immutable binding intent and runtime admission evidence. """
+    """One graph-owned production push worker, its immutable binding intent and runtime admission evidence."""
     restored_release_id: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

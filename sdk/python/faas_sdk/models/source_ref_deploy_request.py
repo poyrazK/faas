@@ -37,22 +37,22 @@ class SourceRefDeployRequest:
     """
 
     repo: str
-    """ GitHub owner/name slug, e.g. `onebox-faas/hello`. """
+    """GitHub owner/name slug, e.g. `onebox-faas/hello`."""
     ref: str
-    """ Commit ref — 40-char SHA, branch, or tag. api.github.com
+    """Commit ref — 40-char SHA, branch, or tag. api.github.com
     /repos/<repo>/commits/<ref> resolves branch / tag inputs
     to a pinned SHA before the tarball fetch starts. The wire
     shape pins to the resolved 40-char SHA (server override;
     caller's `ref` is preserved on the `deploy.source_ref`
     audit row for traceability).
-     """
+    """
     native_rollout: SourceRefDeployRequestNativeRollout | Unset = UNSET
-    """ Reviewed native service handoff or worker generation activation. Requires expected_source, omitted traffic,
-    an unprotected target and matching workload mode. """
+    """Reviewed native service handoff or worker generation activation. Requires expected_source, omitted traffic,
+    an unprotected target and matching workload mode."""
     expected_source: SourceReviewResponse | Unset = UNSET
-    """ Resolved repository identity and immutable commit bound to a release review. """
+    """Resolved repository identity and immutable commit bound to a release review."""
     healthcheck: DeploymentHealthcheck | Unset = UNSET
-    """ Startup healthcheck shape on the deploy-time override object. Exactly one of `path` (HTTP) or `grpc`
+    """Startup healthcheck shape on the deploy-time override object. Exactly one of `path` (HTTP) or `grpc`
     (standard gRPC health
     Check) selects the startup admission action. The gRPC probe uses the
     app's published port; an empty service checks overall server health.
@@ -67,54 +67,53 @@ class SourceRefDeployRequest:
 
     OCI `test` argv and `start_period_s` remain deploy metadata; the host
     readiness gate uses only the selected HTTP path or gRPC health RPC.
-     """
+    """
     source_branch: str | Unset = UNSET
-    """ Optional branch provenance for a request whose `ref` is a full
+    """Optional branch provenance for a request whose `ref` is a full
     commit SHA. The server verifies this branch still points at the
     fetched commit, then rechecks it immediately before promotion.
     GitHub Actions push deployments use this to keep their immutable
     event SHA from becoming stale during a long build. Omit for an
     explicit pinned deployment or a tag.
-     """
-    format_: SourceRefDeployRequestFormat | Unset = "tarball"
-    """ Forward-compat field. only supports `tarball`. """
-    environment: str | Unset = UNSET
-    """ Registered project environment to target for this source-ref deployment. """
-    no_triggers: bool | Unset = False
-    """ Skip applying trigger declarations from the fetched gregale.yaml; workflow definitions are still deployed.
     """
+    format_: SourceRefDeployRequestFormat | Unset = "tarball"
+    """Forward-compat field. only supports `tarball`."""
+    environment: str | Unset = UNSET
+    """Registered project environment to target for this source-ref deployment."""
+    no_triggers: bool | Unset = False
+    """Skip applying trigger declarations from the fetched gregale.yaml; workflow definitions are still deployed."""
     reason: str | Unset = UNSET
-    """ Free-form operator note (≤280 chars). Example: 'Emergency rollback after payment provider incident'. """
+    """Free-form operator note (≤280 chars). Example: 'Emergency rollback after payment provider incident'."""
     tag: SourceRefDeployRequestTag | Unset = UNSET
-    """ Closed-set annotation tag for grouping/filtering. """
+    """Closed-set annotation tag for grouping/filtering."""
     deployed_by: str | Unset = UNSET
-    """ Human-readable actor label. CLI auto-captures from `git config user.name`; the GitHub integration stamps
-    pusher.name; the GitHub Action defaults to ${{ github.actor }}. """
+    """Human-readable actor label. CLI auto-captures from `git config user.name`; the GitHub integration stamps
+    pusher.name; the GitHub Action defaults to ${{ github.actor }}."""
     pr_number: int | Unset = UNSET
-    """ Pull-request number when the wire offers it (the GitHub integration pull_request.number; Action ${{
-    github.event.pull_request.number }}). NULL for push-to-main with no inferred PR. """
+    """Pull-request number when the wire offers it (the GitHub integration pull_request.number; Action ${{
+    github.event.pull_request.number }}). NULL for push-to-main with no inferred PR."""
     traffic_percent: int | None | Unset = UNSET
-    """ Explicit initial traffic weight for this source-ref deployment. Omitted uses the normal stable rollout; zero
-    stages a dark live revision. """
+    """Explicit initial traffic weight for this source-ref deployment. Omitted uses the normal stable rollout; zero
+    stages a dark live revision."""
     canary: CanaryPresetSpec | None | Unset = UNSET
-    """ Canary rollout policy for this source-ref deployment. Mutually exclusive with traffic_percent. """
+    """Canary rollout policy for this source-ref deployment. Mutually exclusive with traffic_percent."""
     rollback_on_5xx: bool | None | Unset = UNSET
-    """ Source-ref deployment opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null
-    defaulting to false. """
+    """Source-ref deployment opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null
+    defaulting to false."""
     mcp_task_migration_override: bool | Unset = UNSET
-    """ Source-ref deployment grant consumed once to permit cutover despite outstanding tasks requiring omitted
-    handler versions. """
+    """Source-ref deployment grant consumed once to permit cutover despite outstanding tasks requiring omitted
+    handler versions."""
     override_freeze: str | Unset = UNSET
-    """ Release this source ref to production while a deploy freeze is active; the reason is audited. """
+    """Release this source ref to production while a deploy freeze is active; the reason is audited."""
     release_at: datetime.datetime | Unset = UNSET
-    """ Build this source ref now, keep it live without traffic, and start its production rollout at this time;
-    deploy freezes are checked at that time. """
+    """Build this source ref now, keep it live without traffic, and start its production rollout at this time;
+    deploy freezes are checked at that time."""
     release_notify: list[str] | Unset = UNSET
-    """ Slack or email notification channels told when this source ref, scheduled with release_at, starts or cannot
-    start. """
+    """Slack or email notification channels told when this source ref, scheduled with release_at, starts or cannot
+    start."""
     disable_startup_cpu_boost: bool | None | Unset = UNSET
-    """ Opt this source-ref deployment out of temporary startup CPU headroom. Omitted or null preserves the default
-    boost. """
+    """Opt this source-ref deployment out of temporary startup CPU headroom. Omitted or null preserves the default
+    boost."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -34,7 +34,7 @@ class DataAPIInspectionResponse:
     task_status: DataAPIInspectionResponseTaskStatus
     binding_identity: DataAPIInspectionResponseBindingIdentity
     observation: DataAPIInspectionResponseObservation | Unset = UNSET
-    """ Bounded catalog metadata, present only when execution and TLS trust were verified. """
+    """Bounded catalog metadata, present only when execution and TLS trust were verified."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

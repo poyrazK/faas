@@ -23,12 +23,11 @@ class RetryPolicyDTO:
     """
 
     max_attempts: int | Unset = UNSET
-    """ Total delivery attempts including the original. 0 inherits the current plan cap; it never means unlimited.
-    """
+    """Total delivery attempts including the original. 0 inherits the current plan cap; it never means unlimited."""
     base_seconds: float | Unset = UNSET
     max_seconds: float | Unset = UNSET
     jitter_seconds: float | Unset = UNSET
-    """ Fraction (0..1) added to the backoff delay. 0.2 means ±20% jitter on top of the exponential curve. """
+    """Fraction (0..1) added to the backoff delay. 0.2 means ±20% jitter on top of the exponential curve."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

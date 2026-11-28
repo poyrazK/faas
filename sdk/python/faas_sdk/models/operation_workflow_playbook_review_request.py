@@ -23,20 +23,20 @@ class OperationWorkflowPlaybookReviewRequest:
     """
 
     revision: int
-    """ OperationWorkflowPlaybookReviewRequest.revision. Expected current source revision for requests, committed
-    new shared revision for retained decisions. """
+    """OperationWorkflowPlaybookReviewRequest.revision. Expected current source revision for requests, committed
+    new shared revision for retained decisions."""
     decision: OperationWorkflowPlaybookReviewRequestDecision
-    """ OperationWorkflowPlaybookReviewRequest.decision. Human coordination choice; retire and replace permanently
-    close this source checklist. """
+    """OperationWorkflowPlaybookReviewRequest.decision. Human coordination choice; retire and replace permanently
+    close this source checklist."""
     reason: str
-    """ OperationWorkflowPlaybookReviewRequest.reason. Required nonempty UTF-8 review reason, at most 1024 bytes and
-    without control characters. """
+    """OperationWorkflowPlaybookReviewRequest.reason. Required nonempty UTF-8 review reason, at most 1024 bytes and
+    without control characters."""
     replacement_progress_id: UUID | Unset = UNSET
-    """ OperationWorkflowPlaybookReviewRequest.replacement_progress_id. Only for replace: distinct already-started
-    active applicable checklist in the exact same case. """
+    """OperationWorkflowPlaybookReviewRequest.replacement_progress_id. Only for replace: distinct already-started
+    active applicable checklist in the exact same case."""
     replacement_revision: int | Unset = UNSET
-    """ OperationWorkflowPlaybookReviewRequest.replacement_revision. Only for replace: expected target revision,
-    rechecked with its active disposition under the writer lock. """
+    """OperationWorkflowPlaybookReviewRequest.replacement_revision. Only for replace: expected target revision,
+    rechecked with its active disposition under the writer lock."""
 
     def to_dict(self) -> dict[str, Any]:
         revision = self.revision

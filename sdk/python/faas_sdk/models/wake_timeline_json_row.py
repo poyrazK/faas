@@ -39,44 +39,42 @@ class WakeTimelineJSONRow:
     """
 
     kind: WakeTimelineJSONRowKind
-    """ Event kind. Today always wake.boot_started; the field is open for future wake.boot_completed/_failed rows.
-    """
+    """Event kind. Today always wake.boot_started; the field is open for future wake.boot_completed/_failed rows."""
     state: str
-    """ Mirror of the instance.state column on the per-app-detail recent-wakes table. """
+    """Mirror of the instance.state column on the per-app-detail recent-wakes table."""
     at_capacity: bool
-    """ True when admitted at the plan's per-app MaxConcurrency ceiling. Only meaningful when at_capacity_present is
-    true. """
+    """True when admitted at the plan's per-app MaxConcurrency ceiling. Only meaningful when at_capacity_present is
+    true."""
     at_capacity_present: bool
-    """ True when the at_capacity key was in jsonb; false = absent (older rows). The dashboard renders em-dash when
-    false. """
+    """True when the at_capacity key was in jsonb; false = absent (older rows). The dashboard renders em-dash when
+    false."""
     at: datetime.datetime | Unset = UNSET
-    """ RFC3339 UTC timestamp of the wake. """
+    """RFC3339 UTC timestamp of the wake."""
     wake_id: str | Unset = UNSET
-    """ Wake-attempt correlation ID. """
+    """Wake-attempt correlation ID."""
     trigger: str | Unset = UNSET
-    """ Closed-enum trigger that admitted the wake (manual.cron / manual.api / scheduled.idle / …). Empty/absent on
-    older rows. """
+    """Closed-enum trigger that admitted the wake (manual.cron / manual.api / scheduled.idle / …). Empty/absent on
+    older rows."""
     trigger_class: WakeTimelineJSONRowTriggerClass | Unset = UNSET
-    """ Bounded User-Agent classification for the request that caused the wake. Empty/absent on pre-M3 fleet rows.
-    """
+    """Bounded User-Agent classification for the request that caused the wake. Empty/absent on pre-M3 fleet rows."""
     method: str | Unset = UNSET
-    """ Wake method the VM manager ran (restore or cold_boot), when telemetry is available. A planned restore that
-    fell back to a cold boot reads cold_boot. """
+    """Wake method the VM manager ran (restore or cold_boot), when telemetry is available. A planned restore that
+    fell back to a cold boot reads cold_boot."""
     tier: WakeTimelineJSONRowTier | Unset = UNSET
-    """ Snapshot tier selected for the wake; cold_boot_fallback when a planned restore fell back to a cold boot. """
+    """Snapshot tier selected for the wake; cold_boot_fallback when a planned restore fell back to a cold boot."""
     queued_count: int | Unset = UNSET
-    """ ledger.Concurrency at admit. 0 when absent. """
+    """ledger.Concurrency at admit. 0 when absent."""
     concurrency_at_admit: int | Unset = UNSET
-    """ Same reading; 0 is the cold-start case. """
+    """Same reading; 0 is the cold-start case."""
     ready_in_ms: int | Unset = UNSET
-    """ Wall-clock boot_started → boot_completed delta in ms. -1 when still booting or rejected. 0 is impossible (a
-    0ms wake would round to a positive integer). """
+    """Wall-clock boot_started → boot_completed delta in ms. -1 when still booting or rejected. 0 is impossible (a
+    0ms wake would round to a positive integer)."""
     planned_method: str | Unset = UNSET
-    """ The method scheduler planned when the VM manager ran another one, for example restore on a wake that fell
-    back to a cold boot. Absent otherwise. """
+    """The method scheduler planned when the VM manager ran another one, for example restore on a wake that fell
+    back to a cold boot. Absent otherwise."""
     restore_fallback_reason: WakeTimelineJSONRowRestoreFallbackReason | Unset = UNSET
-    """ Closed reason for a restore that fell back to a cold boot, when one is reported. Absent for other fallbacks,
-    such as a snapshot made from an older base. """
+    """Closed reason for a restore that fell back to a cold boot, when one is reported. Absent for other fallbacks,
+    such as a snapshot made from an older base."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

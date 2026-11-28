@@ -20,51 +20,51 @@ class AppEffectiveLimits:
     """
 
     memory_limit_mb: int
-    """ Memory limit configured for this app instance, in MB. """
+    """Memory limit configured for this app instance, in MB."""
     plan_memory_max_mb: int
-    """ Largest memory limit the current plan permits for an app instance, in MB. """
+    """Largest memory limit the current plan permits for an app instance, in MB."""
     ephemeral_disk_max_mb: int
-    """ Total logical capacity of this app's writable ephemeral filesystem, in MB, including application content and
+    """Total logical capacity of this app's writable ephemeral filesystem, in MB, including application content and
     filesystem metadata. Free scratch space is this value minus deployed content and overhead. This is the same
-    physical drive1 cap historically named app_layer_max_mb. """
+    physical drive1 cap historically named app_layer_max_mb."""
     guest_vcpus: int
-    """ Number of processors visible inside the guest. This is distinct from the sustained CPU cgroup limit. """
+    """Number of processors visible inside the guest. This is distinct from the sustained CPU cgroup limit."""
     cpu_limit_millicores: int
-    """ Sustained per-instance CPU allowance derived from cpu.max, expressed in millicores. """
+    """Sustained per-instance CPU allowance derived from cpu.max, expressed in millicores."""
     plan_cpu_max_millicores: int
-    """ Largest sustained CPU allowance the current plan permits, in millicores. """
+    """Largest sustained CPU allowance the current plan permits, in millicores."""
     cpu_weight: int
-    """ Relative cgroup CPU scheduling weight applied when the host is contended. """
+    """Relative cgroup CPU scheduling weight applied when the host is contended."""
     max_instances: int
-    """ Effective per-app live-instance ceiling after applying the scaling policy. """
+    """Effective per-app live-instance ceiling after applying the scaling policy."""
     concurrency_per_instance: int
-    """ Maximum in-flight requests accepted by one instance: the app's scaling_policy.per_instance_concurrency when
-    set, otherwise the plan's concurrency_per_vm. """
+    """Maximum in-flight requests accepted by one instance: the app's scaling_policy.per_instance_concurrency when
+    set, otherwise the plan's concurrency_per_vm."""
     concurrency_queue_depth: int
-    """ Effective maximum number of requests allowed to wait for warm instance capacity. """
+    """Effective maximum number of requests allowed to wait for warm instance capacity."""
     concurrency_queue_wait_ms: int
-    """ Effective maximum warm saturation wait in milliseconds. """
+    """Effective maximum warm saturation wait in milliseconds."""
     app_request_rate_rps: int
-    """ Effective per-app edge token-bucket refill rate, in requests per second, after any app-level runtime
-    override. """
+    """Effective per-app edge token-bucket refill rate, in requests per second, after any app-level runtime
+    override."""
     app_request_burst: int
-    """ Effective per-app edge token-bucket burst capacity after any app-level runtime override. """
+    """Effective per-app edge token-bucket burst capacity after any app-level runtime override."""
     account_request_rate_rpm: int
-    """ Account-wide edge token-bucket refill rate across all apps, in requests per minute. """
+    """Account-wide edge token-bucket refill rate across all apps, in requests per minute."""
     request_budget_ms: int
-    """ Default execution budget after upload, wake and admission, before a route override, in milliseconds. """
+    """Default execution budget after upload, wake and admission, before a route override, in milliseconds."""
     request_budget_max_ms: int
-    """ Maximum end-to-end request budget allowed through route overrides, in milliseconds. """
+    """Maximum end-to-end request budget allowed through route overrides, in milliseconds."""
     response_write_timeout_s: int
-    """ Maximum response write window for the plan, in seconds. """
+    """Maximum response write window for the plan, in seconds."""
     request_body_max_bytes: int
-    """ Maximum inbound request body accepted for this app's plan, in bytes. """
+    """Maximum inbound request body accepted for this app's plan, in bytes."""
     idle_timeout_s: int | Unset = UNSET
-    """ Idle timeout the platform applies: the app's own setting or its type's default, within the plan bounds
-    (seconds). """
+    """Idle timeout the platform applies: the app's own setting or its type's default, within the plan bounds
+    (seconds)."""
     pause: AppEffectiveLimitsPause | Unset = UNSET
-    """ When the platform may pause the VM: the declared value or the default for the app's type. Apps on a private
-    network are never paused. """
+    """When the platform may pause the VM: the declared value or the default for the app's type. Apps on a private
+    network are never paused."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

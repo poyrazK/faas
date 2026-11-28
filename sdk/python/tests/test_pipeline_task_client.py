@@ -5,6 +5,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+
 from faas_sdk.job_runtime import job_value_hash
 from faas_sdk.preview import (
     JobContract,
@@ -228,32 +229,22 @@ async def test_lost_mutation_response_is_not_retried():
 async def test_handoff_uses_compiled_reply_schema_and_view_from_same_grant():
     current = F["form"]["inputRequests"][F["form_key"]]
     schema = current["params"]["requestedSchema"]
-    form = current | {
-        "params": current["params"]
-        | {
-            "requestedSchema": schema | {"properties": {"email_column": {"type": "string", "enum": ["contact"]}}},
-        }
-    }
+    form = current | {"params": current["params"] | {
+        "requestedSchema": schema | {"properties": {"email_column": {"type": "string", "enum": ["contact"]}}},
+    }}
     calls = []
 
     class Transport:
         async def request(self, _method, params, *, timeout):
             calls.append(params["arguments"])
             if params["name"] == "pipeline_task_handoff_read":
-                return {
-                    "isError": False,
-                    "structuredContent": {
-                        "handoff_id": F["task_id"],
-                        "expires_at": "2026-11-19T12:00:00.000Z",
-                        "request_key": F["form_key"],
-                        "form": form,
-                    },
-                }
+                return {"isError": False, "structuredContent": {
+                    "handoff_id": F["task_id"], "expires_at": "2026-11-19T12:00:00.000Z",
+                    "request_key": F["form_key"], "form": form,
+                }}
             return {"isError": False, "structuredContent": {"handoff_id": F["task_id"], "submitted": True}}
 
-    reviewer = PipelineTaskHandoffClient(
-        F["task_id"], reply_contract=JobContract(F["reply_contract"]), transport=Transport()
-    )
+    reviewer = PipelineTaskHandoffClient(F["task_id"], reply_contract=JobContract(F["reply_contract"]), transport=Transport())
     with pytest.raises(PipelineTaskClientError, match="invalid_response"):
         await reviewer.get(timeout=1)
     form = current
@@ -300,14 +291,9 @@ async def test_reviewer_inbox_pages_and_refreshes_on_reconnect():
 
     inbox = PipelineTaskReviewerInbox(Transport())
     assert await inbox.page(page_size=1, timeout=1) == frames["first"]
-    async with aclosing(
-        inbox.watch(
-            timeout=3,
-            page_size=1,
-            refresh_interval=2,
-            notifications=(resource_id, notifications),
-        )
-    ) as watch:
+    async with aclosing(inbox.watch(
+        timeout=3, page_size=1, refresh_interval=2, notifications=(resource_id, notifications),
+    )) as watch:
         expected = {"items": frames["first"]["items"] + frames["next"]["items"], "truncated": False}
         assert await anext(watch) == expected
         mode = "empty"
@@ -373,13 +359,8 @@ async def test_reviewer_inbox_polling_recovers_lost_mcp_read():
 async def test_approval_client_binds_review_and_returns_durable_decision():
     review = CONTRACT.input(F["input"])
     view = {
-        "handoff_id": F["task_id"],
-        "expires_at": "2026-11-19T12:00:00.000Z",
-        "title": "Import validated rows",
-        "review": review,
-        "review_sha256": job_value_hash(review),
-        "contract_sha256": CONTRACT.sha256,
-        "decision_key": "a" * 64,
+        "handoff_id": F["task_id"], "expires_at": "2026-11-19T12:00:00.000Z", "title": "Import validated rows",
+        "review": review, "review_sha256": job_value_hash(review), "contract_sha256": CONTRACT.sha256, "decision_key": "a" * 64,
     }
     receipt = {"handoff_id": F["task_id"], "state": "approved", "decided_at": "2026-11-19T11:50:00.000Z"}
     calls = []
@@ -398,8 +379,5 @@ async def test_approval_client_binds_review_and_returns_durable_decision():
     assert len(calls) == 1
     assert await client.decide(preview, "approved", {"rows": 2}, timeout=1) == receipt
     assert calls[-1] == {
-        "handoff_id": F["task_id"],
-        "decision_key": view["decision_key"],
-        "state": "approved",
-        "input": {"rows": 2},
+        "handoff_id": F["task_id"], "decision_key": view["decision_key"], "state": "approved", "input": {"rows": 2},
     }

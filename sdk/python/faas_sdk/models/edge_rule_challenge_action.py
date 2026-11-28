@@ -26,14 +26,14 @@ class EdgeRuleChallengeAction:
     """
 
     difficulty: int | Unset = 16
-    """ Leading zero bits the browser must find in a SHA-256 hash. Each extra bit doubles the work; the default
-    takes tens to a few hundred milliseconds. """
+    """Leading zero bits the browser must find in a SHA-256 hash. Each extra bit doubles the work; the default
+    takes tens to a few hundred milliseconds."""
     pass_ttl_seconds: int | Unset = 3600
-    """ How long a solved challenge lets the browser through. """
+    """How long a solved challenge lets the browser through."""
     max_difficulty: int | Unset = UNSET
-    """ When above difficulty, the gateway raises the difficulty up to this while the rule serves far more challenge
+    """When above difficulty, the gateway raises the difficulty up to this while the rule serves far more challenge
     pages than usual, two bits (4x the work) per minute, and lowers it again as the load eases. Must be at least
-    difficulty. Omitted or equal to difficulty keeps the difficulty fixed. """
+    difficulty. Omitted or equal to difficulty keeps the difficulty fixed."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

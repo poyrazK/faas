@@ -20,7 +20,7 @@ class RotateAppSecretRequest:
     """
 
     value: str
-    """ New plaintext. Sealed server-side; never persisted in plaintext. """
+    """New plaintext. Sealed server-side; never persisted in plaintext."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

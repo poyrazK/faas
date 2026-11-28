@@ -12,7 +12,7 @@ T = TypeVar("T", bound="EdgeProtectionResponseWafTopRulesItem")
 @_attrs_define
 class EdgeProtectionResponseWafTopRulesItem:
     name: str
-    """ CRS rule ID. """
+    """CRS rule ID."""
     count: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

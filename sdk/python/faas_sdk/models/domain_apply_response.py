@@ -22,12 +22,12 @@ class DomainApplyResponse:
     """The committed snapshot and optional previous bindings for a separately reviewed rollback."""
 
     plan: DomainPlan | Unset = UNSET
-    """ Deterministic review artifact. The SHA-256 binds the diff to private claim identity, intervening moves,
-    destination release and traffic allocations. It contains no ownership proof token. """
+    """Deterministic review artifact. The SHA-256 binds the diff to private claim identity, intervening moves,
+    destination release and traffic allocations. It contains no ownership proof token."""
     domains: list[CustomDomainResponse] | Unset = UNSET
     rollback: DomainManifest | Unset = UNSET
-    """ Versioned desired bindings. Only listed domains change; omission never removes a binding. At most 20
-    bindings in a 128 KiB request. Use a separate file from the application deployment manifest. """
+    """Versioned desired bindings. Only listed domains change; omission never removes a binding. At most 20
+    bindings in a 128 KiB request. Use a separate file from the application deployment manifest."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

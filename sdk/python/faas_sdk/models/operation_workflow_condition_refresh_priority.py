@@ -23,23 +23,23 @@ class OperationWorkflowConditionRefreshPriority:
     """
 
     oldest_evidence: OperationWorkflowDecisionOutcomeEvidence
-    """ Retained report classifying this contributor. Completed outcome groups use the earliest qualifying fact;
+    """Retained report classifying this contributor. Completed outcome groups use the earliest qualifying fact;
     active condition groups use the latest matching fact among current decision contexts. The optional business
     decision snapshot references its fact within operation_id. A path without a decision is evidenced by the report
-    itself. These are application-reported facts and do not establish causation. """
+    itself. These are application-reported facts and do not establish causation."""
     oldest_evidence_age_seconds: int
-    """ Age of the oldest selected overdue report at evaluated_at. This is report age rather than seconds past its
-    refresh deadline. """
+    """Age of the oldest selected overdue report at evaluated_at. This is report age rather than seconds past its
+    refresh deadline."""
     blocked_seconds: int
-    """ Full observed workflow blocked duration through evaluated_at; not time attributed to these conditions. """
+    """Full observed workflow blocked duration through evaluated_at; not time attributed to these conditions."""
     refresh_owners: list[str]
-    """ All distinct assigned refresh owners across qualifying overdue conditions, sorted lexically. Independent of
-    owner-group display and evidence preview limits. """
+    """All distinct assigned refresh owners across qualifying overdue conditions, sorted lexically. Independent of
+    owner-group display and evidence preview limits."""
     unassigned_condition_count: int
-    """ Number of qualifying overdue conditions without a pinned refresh owner; independent of preview limits. """
+    """Number of qualifying overdue conditions without a pinned refresh owner; independent of preview limits."""
     explanation: str
-    """ Explains the selected age or blocked-duration ranking using observed evidence without assigning causation or
-    severity. """
+    """Explains the selected age or blocked-duration ranking using observed evidence without assigning causation or
+    severity."""
 
     def to_dict(self) -> dict[str, Any]:
         oldest_evidence = self.oldest_evidence.to_dict()

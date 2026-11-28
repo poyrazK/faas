@@ -21,21 +21,21 @@ class DeploymentPreviewURL:
     """
 
     deployment_id: UUID
-    """ Echoed from the path so a batch caller can correlate. """
+    """Echoed from the path so a batch caller can correlate."""
     app_id: UUID
-    """ Resolved parent app id. """
+    """Resolved parent app id."""
     alive: bool
-    """ True iff the deployment exists, belongs to the caller, and has a status in {pending, building, imaging,
+    """True iff the deployment exists, belongs to the caller, and has a status in {pending, building, imaging,
     snapshotting, live} (the same predicate as state.Deployment.DeploymentPreviewActive the cert allowlist
-    consults). """
+    consults)."""
     host: str | Unset = UNSET
-    """ Per-deployment preview hostname (`deploy-{N}-{slug}.gregale.dev`). Empty when alive=false OR when
-    wire.DeployWildcardSuffix is "" (zone disabled). """
+    """Per-deployment preview hostname (`deploy-{N}-{slug}.gregale.dev`). Empty when alive=false OR when
+    wire.DeployWildcardSuffix is "" (zone disabled)."""
     url: str | Unset = UNSET
-    """ Full request URL (`https://<host>`). Empty when host is empty. """
+    """Full request URL (`https://<host>`). Empty when host is empty."""
     last_checked_at: datetime.datetime | None | Unset = UNSET
-    """ When certmagic last validated the cert under host. Null for never-touched hostnames. NOT a latency probe —
-    the cert NotAfter is the load-bearing expiry. """
+    """When certmagic last validated the cert under host. Null for never-touched hostnames. NOT a latency probe —
+    the cert NotAfter is the load-bearing expiry."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

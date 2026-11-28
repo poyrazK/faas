@@ -34,28 +34,27 @@ class WorkflowRecoveryInitialPolicyChangePreview:
     inspected_failures: int
     truncated: bool
     eligible: int
-    """ Sampled failures passing policy filters and fresh safety diagnostics; preparation or execution pressure can
-    still block them. """
+    """Sampled failures passing policy filters and fresh safety diagnostics; preparation or execution pressure can
+    still block them."""
     excluded: int
-    """ Sampled failures excluded by policy settings, including disabled proposals. """
+    """Sampled failures excluded by policy settings, including disabled proposals."""
     safety_blocked: int
-    """ Sampled policy-matching failures blocked by live safety or changed evidence. """
+    """Sampled policy-matching failures blocked by live safety or changed evidence."""
     would_prepare: int
     would_submit: int
     retained_reviews: int
-    """ Initial reviews that count after normal history pruning, plus unresolved automatic submissions retained
-    indefinitely. Preview does not perform that pruning. """
+    """Initial reviews that count after normal history pruning, plus unresolved automatic submissions retained
+    indefinitely. Preview does not perform that pruning."""
     remaining_review_capacity: int
     active_recovery_jobs: int
-    """ Active native or routing recovery jobs across the account, including paused jobs. """
+    """Active native or routing recovery jobs across the account, including paused jobs."""
     remaining_recovery_job_capacity: int
     unresolved_recovery: bool
-    """ Current app has unresolved automatic or native recovery work that blocks a new automatic first submission.
-    """
+    """Current app has unresolved automatic or native recovery work that blocks a new automatic first submission."""
     candidates: list[WorkflowRecoveryInitialPolicyChangeCandidate]
     runtime_available: bool | Unset = UNSET
-    """ HTTP server runtime availability. When false, automatic submission decisions report
-    workflow_runtime_disabled. """
+    """HTTP server runtime availability. When false, automatic submission decisions report
+    workflow_runtime_disabled."""
 
     def to_dict(self) -> dict[str, Any]:
         coverage: str = self.coverage

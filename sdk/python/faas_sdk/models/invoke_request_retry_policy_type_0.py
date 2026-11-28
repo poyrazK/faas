@@ -22,7 +22,7 @@ class InvokeRequestRetryPolicyType0:
     base_seconds: float | Unset = UNSET
     max_seconds: float | Unset = UNSET
     jitter_seconds: float | Unset = UNSET
-    """ Fraction (0..1). 0.2 means ±20%. """
+    """Fraction (0..1). 0.2 means ±20%."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -34,29 +34,29 @@ class DeploymentStageState:
 
     current: DeploymentStageStateCurrent
     history: list[DeploymentStageHistoryEntry]
-    """ Closed stages, oldest first. Writers keep the most recent 64 (MaxStageHistory). """
+    """Closed stages, oldest first. Writers keep the most recent 64 (MaxStageHistory)."""
     current_started_at: datetime.datetime | None | Unset = UNSET
-    """ Start of the open stage. Null or absent when no stage is open, and on legacy rows created before stage
-    timing. """
+    """Start of the open stage. Null or absent when no stage is open, and on legacy rows created before stage
+    timing."""
     retry_requested_stage: DeploymentStageStateRetryRequestedStage | Unset = UNSET
-    """ Stage a retry asked to resume from. Present only on retry deployments, which always restart at
-    source_download. """
+    """Stage a retry asked to resume from. Present only on retry deployments, which always restart at
+    source_download."""
     retry_restart_reason: str | Unset = UNSET
-    """ Why a retry restarted from source_download rather than retry_requested_stage. """
+    """Why a retry restarted from source_download rather than retry_requested_stage."""
     retry_intent: DeploymentRetryIntent | Unset = UNSET
-    """ Admission-time release intent retained across routing, failure and stage changes. Absent on legacy
-    deployments. """
+    """Admission-time release intent retained across routing, failure and stage changes. Absent on legacy
+    deployments."""
     dependency_gate: DeploymentDependencyGate | Unset = UNSET
-    """ Compose dependency readiness gate pinned at admission. The deadline starts when the candidate first presents
-    its own readiness proof. """
+    """Compose dependency readiness gate pinned at admission. The deadline starts when the candidate first presents
+    its own readiness proof."""
     build_dependency_gate: DeploymentBuildDependencyGate | Unset = UNSET
-    """ Build-time wait on the API deployments a guided service migration selected. It is checked before cache
-    lookup and slot allocation and never holds a build slot while waiting. """
+    """Build-time wait on the API deployments a guided service migration selected. It is checked before cache
+    lookup and slot allocation and never holds a build slot while waiting."""
     hosting_verification: DeploymentHostingVerification | Unset = UNSET
-    """ Candidate hosting verification recovery progress. last_error_code distinguishes publication, gateway,
+    """Candidate hosting verification recovery progress. last_error_code distinguishes publication, gateway,
     transport and candidate-evidence failures; a transport failure does not attribute blame to the app or platform.
     retry_not_before is an eligibility floor, not a promised delivery time; completed_at means the attempt finished,
-    while the hosting receipt records its verdict. """
+    while the hosting receipt records its verdict."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

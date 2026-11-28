@@ -14,7 +14,7 @@ class CSRFTokenResponse:
     """Action-bound CSRF token for browser clients."""
 
     csrf_token: str
-    """ Opaque token to echo in the mutation's JSON body. """
+    """Opaque token to echo in the mutation's JSON body."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

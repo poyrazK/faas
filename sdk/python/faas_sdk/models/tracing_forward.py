@@ -19,11 +19,10 @@ class TracingForward:
     """
 
     endpoint: str | Unset = UNSET
-    """ Base OTLP/HTTP URL (http or https, no credentials, query or fragment); /v1/traces and /v1/logs are appended.
-    """
+    """Base OTLP/HTTP URL (http or https, no credentials, query or fragment); /v1/traces and /v1/logs are appended."""
     headers_secret: str | Unset = UNSET
-    """ Name of an app secret holding request headers as comma-separated key=value pairs, in the
-    OTEL_EXPORTER_OTLP_HEADERS format. """
+    """Name of an app secret holding request headers as comma-separated key=value pairs, in the
+    OTEL_EXPORTER_OTLP_HEADERS format."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

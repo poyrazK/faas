@@ -18,51 +18,51 @@ class OperationWorkflowCoordinationTimelineEvent:
     """OperationWorkflowCoordinationTimelineEvent. Retained inbox and durable pinned playbook coordination metadata."""
 
     id: str
-    """ OperationWorkflowCoordinationTimelineEvent.id. Stable identity within its subscription and notification. """
+    """OperationWorkflowCoordinationTimelineEvent.id. Stable identity within its subscription and notification."""
     at: datetime.datetime
-    """ OperationWorkflowCoordinationTimelineEvent.at. Retained server observation or action clock; never inferred
-    application occurrence time. """
+    """OperationWorkflowCoordinationTimelineEvent.at. Retained server observation or action clock; never inferred
+    application occurrence time."""
     kind: str
-    """ OperationWorkflowCoordinationTimelineEvent.kind. Notification, retained action, outcome observation or
-    latest coordination snapshot. """
+    """OperationWorkflowCoordinationTimelineEvent.kind. Notification, retained action, outcome observation or
+    latest coordination snapshot."""
     summary: str
-    """ OperationWorkflowCoordinationTimelineEvent.summary. Explanation of the retained event and any evidence
-    limitation. """
+    """OperationWorkflowCoordinationTimelineEvent.summary. Explanation of the retained event and any evidence
+    limitation."""
     reporting_operation_ids: list[UUID]
-    """ OperationWorkflowCoordinationTimelineEvent.reporting_operation_ids. Available operation evidence links;
-    absence does not imply success or failure. """
+    """OperationWorkflowCoordinationTimelineEvent.reporting_operation_ids. Available operation evidence links;
+    absence does not imply success or failure."""
     playbook_progress_id: UUID | Unset = UNSET
-    """ OperationWorkflowCoordinationTimelineEvent.playbook_progress_id. Durable checklist identity for playbook
-    start or review events; inbox fields are absent for these events. """
+    """OperationWorkflowCoordinationTimelineEvent.playbook_progress_id. Durable checklist identity for playbook
+    start or review events; inbox fields are absent for these events."""
     subscription_id: UUID | Unset = UNSET
-    """ OperationWorkflowCoordinationTimelineEvent.subscription_id. Source readiness subscription UUID. """
+    """OperationWorkflowCoordinationTimelineEvent.subscription_id. Source readiness subscription UUID."""
     subscription_name: str | Unset = UNSET
-    """ OperationWorkflowCoordinationTimelineEvent.subscription_name. Current source subscription name. """
+    """OperationWorkflowCoordinationTimelineEvent.subscription_name. Current source subscription name."""
     subscription_tenant_id: UUID | Unset = UNSET
-    """ OperationWorkflowCoordinationTimelineEvent.subscription_tenant_id. Operator-only original subscription
-    tenant used to navigate the source inbox; omitted for broad subscriptions. """
+    """OperationWorkflowCoordinationTimelineEvent.subscription_tenant_id. Operator-only original subscription
+    tenant used to navigate the source inbox; omitted for broad subscriptions."""
     notification_id: UUID | Unset = UNSET
-    """ OperationWorkflowCoordinationTimelineEvent.notification_id. Source inbox notification UUID. """
+    """OperationWorkflowCoordinationTimelineEvent.notification_id. Source inbox notification UUID."""
     sequence: int | Unset = UNSET
-    """ OperationWorkflowCoordinationTimelineEvent.sequence. Source inbox sequence. """
+    """OperationWorkflowCoordinationTimelineEvent.sequence. Source inbox sequence."""
     actor: str | Unset = UNSET
-    """ OperationWorkflowCoordinationTimelineEvent.actor. Retained coordination actor, when available. """
+    """OperationWorkflowCoordinationTimelineEvent.actor. Retained coordination actor, when available."""
     owner: str | Unset = UNSET
-    """ OperationWorkflowCoordinationTimelineEvent.owner. Retained coordination owner label. """
+    """OperationWorkflowCoordinationTimelineEvent.owner. Retained coordination owner label."""
     status: str | Unset = UNSET
-    """ OperationWorkflowCoordinationTimelineEvent.status. Status in the event kind context. """
+    """OperationWorkflowCoordinationTimelineEvent.status. Status in the event kind context."""
     note: str | Unset = UNSET
-    """ OperationWorkflowCoordinationTimelineEvent.note. Retained human coordination note. """
+    """OperationWorkflowCoordinationTimelineEvent.note. Retained human coordination note."""
     follow_up_at: datetime.datetime | Unset = UNSET
-    """ OperationWorkflowCoordinationTimelineEvent.follow_up_at. Associated follow-up or reminder due clock. """
+    """OperationWorkflowCoordinationTimelineEvent.follow_up_at. Associated follow-up or reminder due clock."""
     expected_outcome_code: str | Unset = UNSET
-    """ OperationWorkflowCoordinationTimelineEvent.expected_outcome_code. Application-declared expected business
-    outcome. """
+    """OperationWorkflowCoordinationTimelineEvent.expected_outcome_code. Application-declared expected business
+    outcome."""
     reported_outcome_code: str | Unset = UNSET
-    """ OperationWorkflowCoordinationTimelineEvent.reported_outcome_code. Observed application-reported business
-    outcome. """
+    """OperationWorkflowCoordinationTimelineEvent.reported_outcome_code. Observed application-reported business
+    outcome."""
     state_revision: int | Unset = UNSET
-    """ OperationWorkflowCoordinationTimelineEvent.state_revision. Observed workflow report revision. """
+    """OperationWorkflowCoordinationTimelineEvent.state_revision. Observed workflow report revision."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

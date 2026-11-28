@@ -20,27 +20,27 @@ class AgentUndoItem:
     """One agent change in an undo plan or result."""
 
     activity_id: str
-    """ The activity entry of the change. """
+    """The activity entry of the change."""
     method: str
-    """ The HTTP method of the agent's request. """
+    """The HTTP method of the agent's request."""
     path: str
-    """ The path of the agent's request. """
+    """The path of the agent's request."""
     kind: AgentUndoItemKind
-    """ What kind of change it was. """
+    """What kind of change it was."""
     summary: str
-    """ What the agent changed. """
+    """What the agent changed."""
     created_at: datetime.datetime
-    """ When the agent made the change. """
+    """When the agent made the change."""
     status: AgentUndoItemStatus
-    """ What undoing it will do, or did. """
+    """What undoing it will do, or did."""
     reason: str | Unset = UNSET
-    """ Why it cannot be undone, or why it was left. """
+    """Why it cannot be undone, or why it was left."""
     result: AgentUndoItemResult | Unset = UNSET
-    """ On apply, what happened to it. """
+    """On apply, what happened to it."""
     error_code: str | Unset = UNSET
-    """ On a failed apply, the code of the refusal. """
+    """On a failed apply, the code of the refusal."""
     error: str | Unset = UNSET
-    """ On a failed apply, why it was refused. """
+    """On a failed apply, why it was refused."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

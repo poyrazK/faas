@@ -19,9 +19,9 @@ class ObjectTaggingResult:
     """Acknowledged object tags and optional owned public version identity."""
 
     tags: ObjectTaggingResultTags
-    """ Acknowledged complete tag set; native provider IDs and private completion metadata are never exposed. """
+    """Acknowledged complete tag set; native provider IDs and private completion metadata are never exposed."""
     version_id: str | Unset = UNSET
-    """ Public version UUID or null. Omitted for unversioned or legacy current-object providers. """
+    """Public version UUID or null. Omitted for unversioned or legacy current-object providers."""
 
     def to_dict(self) -> dict[str, Any]:
         tags = self.tags.to_dict()

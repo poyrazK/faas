@@ -19,13 +19,13 @@ class BindingInventoryIssue:
     """Stable and sanitized reason why a binding inventory section could not be read."""
 
     type_: str
-    """ Binding family or runtime_freshness or binding_refresh whose read was incomplete. """
+    """Binding family or runtime_freshness or binding_refresh whose read was incomplete."""
     code: str
-    """ Stable reason such as forbidden, unavailable, query_failed, consumer_status_unavailable or
-    managed_postgres_unavailable. """
+    """Stable reason such as forbidden, unavailable, query_failed, consumer_status_unavailable or
+    managed_postgres_unavailable."""
     severity: BindingInventoryIssueSeverity
     message: str
-    """ Sanitized explanation without raw provider errors. """
+    """Sanitized explanation without raw provider errors."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

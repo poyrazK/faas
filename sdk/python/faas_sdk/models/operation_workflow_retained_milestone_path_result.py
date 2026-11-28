@@ -26,8 +26,8 @@ class OperationWorkflowRetainedMilestonePathResult:
     satisfied: bool
     requirements: list[OperationWorkflowRetainedMilestone]
     decision: OperationWorkflowPathDecisionResult | Unset = UNSET
-    """ Comparison of a pinned path decision requirement with planned application evidence. This is an observation
-    and grants no execution authority. """
+    """Comparison of a pinned path decision requirement with planned application evidence. This is an observation
+    and grants no execution authority."""
 
     def to_dict(self) -> dict[str, Any]:
         id = self.id

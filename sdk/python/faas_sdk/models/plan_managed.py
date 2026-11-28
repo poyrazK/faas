@@ -34,14 +34,14 @@ class PlanManaged:
     source: str
     image: str
     provision: PlanManagedProvision | Unset = UNSET
-    """ The managed PostgreSQL database a project apply creates or reuses for a Compose postgres service, and the
-    service keys it binds. """
+    """The managed PostgreSQL database a project apply creates or reuses for a Compose postgres service, and the
+    service keys it binds."""
     not_provisioned_reason: PlanManagedNotProvisionedReason | Unset = UNSET
-    """ Why apply does not provide a Compose postgres service. Omitted for other datastores and when provision is
-    set. """
+    """Why apply does not provide a Compose postgres service. Omitted for other datastores and when provision is
+    set."""
     unbound: list[str] | Unset = UNSET
-    """ Selected services' keys that point at this datastore and will have no value, as service.KEY. Omitted when
-    none. """
+    """Selected services' keys that point at this datastore and will have no value, as service.KEY. Omitted when
+    none."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

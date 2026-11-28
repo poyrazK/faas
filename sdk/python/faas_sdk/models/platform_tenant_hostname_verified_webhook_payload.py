@@ -19,7 +19,7 @@ class PlatformTenantHostnameVerifiedWebhookPayload:
 
     platform_tenant_id: UUID
     external_ref: str
-    """ Stable customer reference selected by the platform owner. """
+    """Stable customer reference selected by the platform owner."""
     surface_id: UUID
     surface_name: str
     app_id: UUID

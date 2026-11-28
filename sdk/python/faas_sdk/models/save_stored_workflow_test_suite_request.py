@@ -18,8 +18,8 @@ class SaveStoredWorkflowTestSuiteRequest:
 
     expected_version: int
     suite: None | StoredWorkflowTestSuite
-    """ Null clears saved tests and the retained report. Saving advances the stored workflow version and invalidates
-    earlier publishing receipts. """
+    """Null clears saved tests and the retained report. Saving advances the stored workflow version and invalidates
+    earlier publishing receipts."""
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.stored_workflow_test_suite import StoredWorkflowTestSuite

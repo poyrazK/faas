@@ -25,14 +25,14 @@ class EnvBatchRequest:
     request_id: UUID
     expected_revision: int
     expected_app_id: UUID | Unset = UNSET
-    """ Optional immutable app identity; required when expected_environment_id is supplied. """
+    """Optional immutable app identity; required when expected_environment_id is supplied."""
     expected_environment_id: UUID | Unset = UNSET
-    """ Immutable named-environment identity for an identity-pinned batch; omit for the default scope. """
+    """Immutable named-environment identity for an identity-pinned batch; omit for the default scope."""
     receipt_proof: str | Unset = UNSET
-    """ Optional private random proof required to read this batch receipt; never returned in a receipt. Requires
-    expected_app_id. """
+    """Optional private random proof required to read this batch receipt; never returned in a receipt. Requires
+    expected_app_id."""
     values: EnvBatchRequestValues | Unset = UNSET
-    """ Non-secret variable values to set, omitted from receipts. """
+    """Non-secret variable values to set, omitted from receipts."""
     delete: list[str] | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:

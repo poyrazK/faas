@@ -19,23 +19,22 @@ class OperationWorkflowReviewResponseHandoffDecline:
     """
 
     decision_at: datetime.datetime
-    """ OperationWorkflowReviewResponseHandoffDecline.decision_at. Reviewed decision timestamp. """
+    """OperationWorkflowReviewResponseHandoffDecline.decision_at. Reviewed decision timestamp."""
     required_at: datetime.datetime
-    """ OperationWorkflowReviewResponseHandoffDecline.required_at. Original review requirement timestamp. """
+    """OperationWorkflowReviewResponseHandoffDecline.required_at. Original review requirement timestamp."""
     at: datetime.datetime
-    """ OperationWorkflowReviewResponseHandoffDecline.at. Server decline time. """
+    """OperationWorkflowReviewResponseHandoffDecline.at. Server decline time."""
     owner: str
-    """ OperationWorkflowReviewResponseHandoffDecline.owner. Declining responsible team. """
+    """OperationWorkflowReviewResponseHandoffDecline.owner. Declining responsible team."""
     previous_owner: str
-    """ OperationWorkflowReviewResponseHandoffDecline.previous_owner. Previous owner to notify for manual routing.
-    """
+    """OperationWorkflowReviewResponseHandoffDecline.previous_owner. Previous owner to notify for manual routing."""
     actor: str
-    """ OperationWorkflowReviewResponseHandoffDecline.actor. Authenticated operator recording decline. """
+    """OperationWorkflowReviewResponseHandoffDecline.actor. Authenticated operator recording decline."""
     reason: str
-    """ OperationWorkflowReviewResponseHandoffDecline.reason. Operator reason; immutable after recording. """
+    """OperationWorkflowReviewResponseHandoffDecline.reason. Operator reason; immutable after recording."""
     notified_at: datetime.datetime | Unset = UNSET
-    """ OperationWorkflowReviewResponseHandoffDecline.notified_at. One-time notification publication marker; bounded
-    history or inbox retention can limit delivery. """
+    """OperationWorkflowReviewResponseHandoffDecline.notified_at. One-time notification publication marker; bounded
+    history or inbox retention can limit delivery."""
 
     def to_dict(self) -> dict[str, Any]:
         decision_at = self.decision_at.isoformat()

@@ -27,27 +27,27 @@ class OperationWorkflowReviewResponseHealth:
     """
 
     status: OperationWorkflowReviewResponseHealthStatus
-    """ OperationWorkflowReviewResponseHealth.status. Unavailable takes precedence over blocked, pending review and
-    clear. """
+    """OperationWorkflowReviewResponseHealth.status. Unavailable takes precedence over blocked, pending review and
+    clear."""
     checked_at: datetime.datetime
-    """ OperationWorkflowReviewResponseHealth.checked_at. Latest attempted sampling time; consult individual sources
-    for freshness. """
+    """OperationWorkflowReviewResponseHealth.checked_at. Latest attempted sampling time; consult individual sources
+    for freshness."""
     remaining_blockers: list[str]
-    """ OperationWorkflowReviewResponseHealth.remaining_blockers. Observed blockers plus unverified disappearances
-    retained until positive clearance. """
+    """OperationWorkflowReviewResponseHealth.remaining_blockers. Observed blockers plus unverified disappearances
+    retained until positive clearance."""
     recovered_blockers: list[str]
-    """ OperationWorkflowReviewResponseHealth.recovered_blockers. Most recent positively verified recoveries,
-    excluding blockers subsequently observed again. """
+    """OperationWorkflowReviewResponseHealth.recovered_blockers. Most recent positively verified recoveries,
+    excluding blockers subsequently observed again."""
     sources: list[OperationWorkflowReviewResponseSourceHealth]
-    """ OperationWorkflowReviewResponseHealth.sources. Condition and freshness for each fixed linked review. """
+    """OperationWorkflowReviewResponseHealth.sources. Condition and freshness for each fixed linked review."""
     fingerprint: str | Unset = UNSET
-    """ OperationWorkflowReviewResponseHealth.fingerprint. Stable digest of source revisions and current observed
-    condition; polling timestamps and recovery history are excluded. """
+    """OperationWorkflowReviewResponseHealth.fingerprint. Stable digest of source revisions and current observed
+    condition; polling timestamps and recovery history are excluded."""
     last_complete_check_at: datetime.datetime | Unset = UNSET
-    """ OperationWorkflowReviewResponseHealth.last_complete_check_at. Latest sample whose scoped reads all
-    completed, including observations of missing or retired progress. """
+    """OperationWorkflowReviewResponseHealth.last_complete_check_at. Latest sample whose scoped reads all
+    completed, including observations of missing or retired progress."""
     recovered_at: datetime.datetime | Unset = UNSET
-    """ OperationWorkflowReviewResponseHealth.recovered_at. Time of the latest positive recovery sample. """
+    """OperationWorkflowReviewResponseHealth.recovered_at. Time of the latest positive recovery sample."""
 
     def to_dict(self) -> dict[str, Any]:
         status: str = self.status

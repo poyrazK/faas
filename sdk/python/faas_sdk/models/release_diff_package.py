@@ -16,7 +16,7 @@ class ReleaseDiffPackage:
     """A package whose presence or version differs between the builds."""
 
     name: str
-    """ The package's purl without its version, or its group and name. """
+    """The package's purl without its version, or its group and name."""
     from_: str | Unset = UNSET
     to: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

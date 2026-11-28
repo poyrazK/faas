@@ -49,8 +49,8 @@ class CreateEdgeRuleRequest:
     """Body shape for POST /v1/apps/{slug}/edge-rules."""
 
     match_host: str
-    """ Exact host, glob (`*`, `*.example.com`), or `@app` for every hostname the app serves. Other values starting
-    with `@` are reserved. """
+    """Exact host, glob (`*`, `*.example.com`), or `@app` for every hostname the app serves. Other values starting
+    with `@` are reserved."""
     kind: CreateEdgeRuleRequestKind
     action: (
         EdgeRuleAsyncAction
@@ -74,26 +74,26 @@ class CreateEdgeRuleRequest:
         | EdgeRuleValidateAction
         | EdgeRuleWAFAction
     )
-    """ Kind-tagged action body — shape depends on `kind`. """
+    """Kind-tagged action body — shape depends on `kind`."""
     match_path: str | Unset = "/"
     match_methods: list[str] | Unset = UNSET
     match_headers: CreateEdgeRuleRequestMatchHeaders | Unset = UNSET
-    """ Optional exact-value request-header selectors. Header names compare case-insensitively; every configured
-    name must match, with any repeated request-header value eligible to satisfy it. """
+    """Optional exact-value request-header selectors. Header names compare case-insensitively; every configured
+    name must match, with any repeated request-header value eligible to satisfy it."""
     priority: int | Unset = 100
     enabled: bool | Unset = True
     validate_mode: CreateEdgeRuleRequestValidateMode | Unset = "block"
-    """ Top-level source of truth for kind=validate.
+    """Top-level source of truth for kind=validate.
     Omitted == 'block' (the SQL-side default).
-     """
+    """
     name: str | Unset = UNSET
-    """ Optional operator-facing name for the new rule. """
+    """Optional operator-facing name for the new rule."""
     description: str | Unset = UNSET
-    """ Optional operator-facing notes for the new rule. """
+    """Optional operator-facing notes for the new rule."""
     expires_at: datetime.datetime | Unset = UNSET
-    """ Optional time after which the gateway stops applying the new rule. """
+    """Optional time after which the gateway stops applying the new rule."""
     match: EdgeRuleMatchExpr | Unset = UNSET
-    """ Match condition, ANDed with the rule's fixed selectors. A node
+    """Match condition, ANDed with the rule's fixed selectors. A node
     is exactly one of all, any, not, or a field/op leaf. Fields: method,
     path, host, client_ip, country, asn (the client IP's
     autonomous system, e.g. 13335 or AS13335), ua_family (the
@@ -113,11 +113,11 @@ class CreateEdgeRuleRequest:
     field). Depth at most 4,
     at most 32 nodes, 64 values per leaf, values and regexes at most 256
     bytes. An untrusted client IP, or its unknown country or ASN, is absent.
-     """
+    """
     mode: CreateEdgeRuleRequestMode | Unset = UNSET
-    """ Start the rule enforced (default) or in log mode, where it is only matched and counted. """
+    """Start the rule enforced (default) or in log mode, where it is only matched and counted."""
     penalty: EdgeRulePenalty | Unset = UNSET
-    """ A rule's penalty box. Once the rule has refused
+    """A rule's penalty box. Once the rule has refused
     the same client `after` times within `within_seconds`, every request
     from that client to the app is refused with 403 `penalty_box` and
     Retry-After for `seconds`, whichever rule or path it targets. The
@@ -125,7 +125,7 @@ class CreateEdgeRuleRequest:
     in each gateway node's memory. Allowed on ip, geo, throttle and waf
     (block mode) rules; editing the rule's penalty away, disabling it or
     putting it in log mode releases its clients.
-     """
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -43,11 +43,11 @@ class ManagedPostgresCapabilities:
     pooled_connections: bool
     point_in_time_restore: bool
     scale_to_zero_update: bool
-    """ Changing scale-to-zero on existing databases is supported. Disabling suspension additionally requires
-    always_on plan entitlement; reservations require the pinned backend and admission. """
+    """Changing scale-to-zero on existing databases is supported. Disabling suspension additionally requires
+    always_on plan entitlement; reservations require the pinned backend and admission."""
     class_resize: bool
-    """ Compute-class resizing supported by the configured regional backend. Reservations still require admission
-    and the database pinned backend. """
+    """Compute-class resizing supported by the configured regional backend. Reservations still require admission
+    and the database pinned backend."""
     storage_limit_bytes: int
     restore_window_seconds: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

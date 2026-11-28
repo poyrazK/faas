@@ -33,14 +33,13 @@ class OperationWorkflowMissingConditionProgressInstance:
     """
 
     subject: OperationSubject
-    """ Immutable public business correlation metadata. Captured at admission and preserved through recovery and
-    redeploy. Never an ownership or authorization claim. """
+    """Immutable public business correlation metadata. Captured at admission and preserved through recovery and
+    redeploy. Never an ownership or authorization claim."""
     baseline_report: OperationWorkflowStateHistoryEntry
-    """ One retained app-reported state update. Pages are ordered by revision, then stable publication and report
-    identifiers. """
+    """One retained app-reported state update. Pages are ordered by revision, then stable publication and report
+    identifiers."""
     state: OperationWorkflowState
-    """ Latest app-reported state for one declared workflow instance, including terminal and staleness indicators.
-    """
+    """Latest app-reported state for one declared workflow instance, including terminal and staleness indicators."""
     state_changed: bool
     baseline_missing_condition_count: int
     statuses: list[OperationWorkflowMissingConditionProgressCount]

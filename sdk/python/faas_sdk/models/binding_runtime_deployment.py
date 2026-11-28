@@ -30,16 +30,16 @@ class BindingRuntimeDeployment:
     scope: str
     deployment_status: str
     status: BindingRuntimeDeploymentStatus
-    """ Stale residents take precedence, then unknown residents, then starting instances. Current does not imply
-    connectivity or readiness. """
+    """Stale residents take precedence, then unknown residents, then starting instances. Current does not imply
+    connectivity or readiness."""
     serving: BindingRuntimeInstanceCounts
-    """ Disjoint counts compared with the app-wide change stamp. Current means admitted after the stamp; stale means
-    admitted at or before it; unknown means missing stamp or start timestamp. """
+    """Disjoint counts compared with the app-wide change stamp. Current means admitted after the stamp; stale means
+    admitted at or before it; unknown means missing stamp or start timestamp."""
     resident: BindingRuntimeInstanceCounts
-    """ Disjoint counts compared with the app-wide change stamp. Current means admitted after the stamp; stale means
-    admitted at or before it; unknown means missing stamp or start timestamp. """
+    """Disjoint counts compared with the app-wide change stamp. Current means admitted after the stamp; stale means
+    admitted at or before it; unknown means missing stamp or start timestamp."""
     starting: int
-    """ Waking or cold-booting instances, also included in resident counts. """
+    """Waking or cold-booting instances, also included in resident counts."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

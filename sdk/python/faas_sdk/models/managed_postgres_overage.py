@@ -15,10 +15,9 @@ class ManagedPostgresOverage:
 
     enabled: bool
     compute_allowance_unit_seconds: int
-    """ The plan's monthly compute allowance in compute-unit seconds. """
+    """The plan's monthly compute allowance in compute-unit seconds."""
     compute_ceiling_unit_seconds: int
-    """ Where running databases are suspended before the operator's usage cap; twice the allowance with overage on.
-    """
+    """Where running databases are suspended before the operator's usage cap; twice the allowance with overage on."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

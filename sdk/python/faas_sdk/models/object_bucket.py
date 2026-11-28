@@ -31,8 +31,8 @@ class ObjectBucket:
     created_at: datetime.datetime
     serve_at: str | Unset = UNSET
     retry: ObjectBucketRetry | Unset = UNSET
-    """ Set while a bucket create or delete has failed and Gregale is retrying it. Reason is a bounded code, never a
-    provider message. """
+    """Set while a bucket create or delete has failed and Gregale is retrying it. Reason is a bounded code, never a
+    provider message."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

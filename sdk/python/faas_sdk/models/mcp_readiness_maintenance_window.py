@@ -23,7 +23,7 @@ class MCPReadinessMaintenanceWindow:
     ends_at: datetime.datetime
     reason: str
     created_by: UUID
-    """ Account that scheduled the window. """
+    """Account that scheduled the window."""
     created_at: datetime.datetime
     cancelled_at: datetime.datetime | Unset = UNSET
     cancelled_by: UUID | Unset = UNSET

@@ -21,14 +21,14 @@ class OperationWorkflowPlaybookGuidance:
     """
 
     playbook: OperationWorkflowPlaybook
-    """ OperationWorkflowPlaybook. Application-owned advisory guidance; evidence requirements are human checklists
-    and links are never executed by Gregale. """
+    """OperationWorkflowPlaybook. Application-owned advisory guidance; evidence requirements are human checklists
+    and links are never executed by Gregale."""
     contract_version: int
-    """ OperationWorkflowPlaybookGuidance.contract_version. Workflow contract version of the retained current
-    report. """
+    """OperationWorkflowPlaybookGuidance.contract_version. Workflow contract version of the retained current
+    report."""
     reporting_operation_id: UUID
-    """ OperationWorkflowPlaybookGuidance.reporting_operation_id. Operation whose immutable definition supplied this
-    playbook. """
+    """OperationWorkflowPlaybookGuidance.reporting_operation_id. Operation whose immutable definition supplied this
+    playbook."""
 
     def to_dict(self) -> dict[str, Any]:
         playbook = self.playbook.to_dict()

@@ -15,7 +15,7 @@ class SetFinancialBudgetChannelsRequest:
     """The full replacement set of notification channels for a budget's alerts."""
 
     channel_ids: list[UUID]
-    """ Account-owned notification channel ids; empty leaves only the account email. """
+    """Account-owned notification channel ids; empty leaves only the account email."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

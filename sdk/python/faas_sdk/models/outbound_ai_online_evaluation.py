@@ -23,7 +23,7 @@ class OutboundAIOnlineEvaluation:
     judge_integration_id: UUID
     judge_model: str
     rubric: str | Unset = UNSET
-    """ What a good answer does for this app """
+    """What a good answer does for this app"""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

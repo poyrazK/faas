@@ -15,7 +15,7 @@ class ProfileGateOverride:
 
     expected_policy_revision: int
     reason: str
-    """ Nonblank customer reason recorded atomically with the traffic change. Workers cannot override. """
+    """Nonblank customer reason recorded atomically with the traffic change. Workers cannot override."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

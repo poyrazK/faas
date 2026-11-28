@@ -33,69 +33,69 @@ class OperationWorkflowReviewResponse:
     """
 
     owner: str
-    """ OperationWorkflowReviewResponse.owner. Responsible team label; trimmed control-free UTF-8 limited to 256
-    bytes. """
+    """OperationWorkflowReviewResponse.owner. Responsible team label; trimmed control-free UTF-8 limited to 256
+    bytes."""
     plan: str
-    """ OperationWorkflowReviewResponse.plan. Human response plan; nonblank UTF-8 limited to 1024 bytes. Line breaks
-    and tabs are allowed. """
+    """OperationWorkflowReviewResponse.plan. Human response plan; nonblank UTF-8 limited to 1024 bytes. Line breaks
+    and tabs are allowed."""
     status: OperationWorkflowReviewResponseStatus
-    """ OperationWorkflowReviewResponse.status. Active ownership or human resolution after a fresh scoped check of
-    linked source reviews. """
+    """OperationWorkflowReviewResponse.status. Active ownership or human resolution after a fresh scoped check of
+    linked source reviews."""
     reviews: list[OperationWorkflowReviewResponseLink]
-    """ OperationWorkflowReviewResponse.reviews. Fixed captured review links. """
+    """OperationWorkflowReviewResponse.reviews. Fixed captured review links."""
     created_at: datetime.datetime
-    """ OperationWorkflowReviewResponse.created_at. Server creation time. """
+    """OperationWorkflowReviewResponse.created_at. Server creation time."""
     created_by: str
-    """ OperationWorkflowReviewResponse.created_by. Authenticated initial owner-record actor. """
+    """OperationWorkflowReviewResponse.created_by. Authenticated initial owner-record actor."""
     updated_at: datetime.datetime
-    """ OperationWorkflowReviewResponse.updated_at. Server latest response update time. """
+    """OperationWorkflowReviewResponse.updated_at. Server latest response update time."""
     updated_by: str
-    """ OperationWorkflowReviewResponse.updated_by. Authenticated latest response actor. """
+    """OperationWorkflowReviewResponse.updated_by. Authenticated latest response actor."""
     history: list[OperationWorkflowReviewResponseChange]
-    """ OperationWorkflowReviewResponse.history. Bounded owner, plan, status and check-in change history. """
+    """OperationWorkflowReviewResponse.history. Bounded owner, plan, status and check-in change history."""
     history_truncated: bool
-    """ OperationWorkflowReviewResponse.history_truncated. Whether earlier response changes were pruned. """
+    """OperationWorkflowReviewResponse.history_truncated. Whether earlier response changes were pruned."""
     handoff_acceptance_escalation_owner: str | Unset = UNSET
-    """ OperationWorkflowReviewResponse.handoff_acceptance_escalation_owner. Optional control-free UTF-8 team label
+    """OperationWorkflowReviewResponse.handoff_acceptance_escalation_owner. Optional control-free UTF-8 team label
     for future missed acceptance deadlines. Omission preserves policy, empty string clears it; the destination is
-    pinned at each actual handoff. Must differ from the parent request owner when explicitly configured. """
+    pinned at each actual handoff. Must differ from the parent request owner when explicitly configured."""
     handoff_accept_after_seconds: int | Unset = UNSET
-    """ OperationWorkflowReviewResponse.handoff_accept_after_seconds. Future handoff acceptance window, defaulting
-    to 3600 seconds. Request omission preserves current policy; active acceptance deadlines stay pinned. """
+    """OperationWorkflowReviewResponse.handoff_accept_after_seconds. Future handoff acceptance window, defaulting
+    to 3600 seconds. Request omission preserves current policy; active acceptance deadlines stay pinned."""
     decision_review_fallback_owner: str | Unset = UNSET
-    """ OperationWorkflowReviewResponse.decision_review_fallback_owner. Optional distinct fallback team for future
+    """OperationWorkflowReviewResponse.decision_review_fallback_owner. Optional distinct fallback team for future
     overdue decision reviews. Request omission preserves policy and empty string clears it; active episodes retain
-    their pinned fallback. """
+    their pinned fallback."""
     decision_review_after_seconds: int | Unset = UNSET
-    """ OperationWorkflowReviewResponse.decision_review_after_seconds. Future decision revalidation window; defaults
-    to 86400 seconds. Existing deadlines remain pinned; request omission preserves current policy. """
+    """OperationWorkflowReviewResponse.decision_review_after_seconds. Future decision revalidation window; defaults
+    to 86400 seconds. Existing deadlines remain pinned; request omission preserves current policy."""
     decision_review: OperationWorkflowReviewResponseDecisionReview | Unset = UNSET
-    """ First changed observation for one explicit response decision. Remains latched until a new explicit decision;
-    ordinary edits, acknowledgment and subsequent recovery do not clear it. """
+    """First changed observation for one explicit response decision. Remains latched until a new explicit decision;
+    ordinary edits, acknowledgment and subsequent recovery do not clear it."""
     decision: OperationWorkflowReviewResponseDecision | Unset = UNSET
-    """ Immutable human decision with accountable actor and the reviewed health snapshot. Application execution
-    remains application-owned. """
+    """Immutable human decision with accountable actor and the reviewed health snapshot. Application execution
+    remains application-owned."""
     health: OperationWorkflowReviewResponseHealth | Unset = UNSET
-    """ Sampled advisory response-plan condition. Clear means no observed blockers or review obligations, not
-    business completion. Sampling stops on response resolution. """
+    """Sampled advisory response-plan condition. Clear means no observed blockers or review obligations, not
+    business completion. Sampling stops on response resolution."""
     fallback_owner: str | Unset = UNSET
-    """ OperationWorkflowReviewResponse.fallback_owner. Declared fallback team for overdue response check-ins. """
+    """OperationWorkflowReviewResponse.fallback_owner. Declared fallback team for overdue response check-ins."""
     check_in_initial_owner: str | Unset = UNSET
-    """ OperationWorkflowReviewResponse.check_in_initial_owner. Team assigned when this check-in was explicitly
-    scheduled; unknown for legacy windows. """
+    """OperationWorkflowReviewResponse.check_in_initial_owner. Team assigned when this check-in was explicitly
+    scheduled; unknown for legacy windows."""
     check_in_owner_changed: bool | Unset = UNSET
-    """ OperationWorkflowReviewResponse.check_in_owner_changed. Ownership changed during this check-in period;
-    prevents automatic takeover even if the owner later reverts. """
+    """OperationWorkflowReviewResponse.check_in_owner_changed. Ownership changed during this check-in period;
+    prevents automatic takeover even if the owner later reverts."""
     check_in_notified_at: datetime.datetime | Unset = UNSET
-    """ OperationWorkflowReviewResponse.check_in_notified_at. One-time overdue notice marker for the current check-
-    in; cleared only by a newly scheduled active check-in. """
+    """OperationWorkflowReviewResponse.check_in_notified_at. One-time overdue notice marker for the current check-
+    in; cleared only by a newly scheduled active check-in."""
     check_in_at: datetime.datetime | Unset = UNSET
-    """ OperationWorkflowReviewResponse.check_in_at. Required future check-in for active responses; absent when
-    resolved. Replaces inbox attention time without changing the original alert response deadline. """
+    """OperationWorkflowReviewResponse.check_in_at. Required future check-in for active responses; absent when
+    resolved. Replaces inbox attention time without changing the original alert response deadline."""
     resolution_checked_at: datetime.datetime | Unset = UNSET
-    """ OperationWorkflowReviewResponse.resolution_checked_at. Advisory pre-write source check time for a human
+    """OperationWorkflowReviewResponse.resolution_checked_at. Advisory pre-write source check time for a human
     resolved disposition. Missing or unresolved progress rejects resolution; later regressions do not rewrite
-    historical closure. """
+    historical closure."""
 
     def to_dict(self) -> dict[str, Any]:
         owner = self.owner

@@ -30,8 +30,8 @@ class OperationWorkflowDecision:
     reason: OperationWorkflowDecisionReason
     explanation: str
     needs_attention: bool
-    """ True when state is unknown, stale, overdue, has application-reported blockers, or has unresolved direct
-    dependencies. """
+    """True when state is unknown, stale, overdue, has application-reported blockers, or has unresolved direct
+    dependencies."""
     next_actions: list[OperationWorkflowInstanceTransition]
     blockers: list[OperationWorkflowBlocker] | Unset = UNSET
     state_revision: int | Unset = UNSET

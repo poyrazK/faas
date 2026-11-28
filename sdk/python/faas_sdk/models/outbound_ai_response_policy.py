@@ -51,7 +51,7 @@ class OutboundAIResponsePolicy:
     secret: OutboundAIResponsePolicySecret | Unset = UNSET
     blocked_terms: OutboundAIResponsePolicyBlockedTerms | Unset = UNSET
     moderation: OutboundAIResponsePolicyModeration | Unset = UNSET
-    """ Uses the policy's moderation check settings, which must be complete even while moderation.action is off. """
+    """Uses the policy's moderation check settings, which must be complete even while moderation.action is off."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

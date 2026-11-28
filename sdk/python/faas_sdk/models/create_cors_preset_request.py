@@ -31,9 +31,9 @@ class CreateCorsPresetRequest:
     max_age_seconds: int
     allow_credentials: bool = False
     app_id: None | Unset | UUID = UNSET
-    """ Optional app scoping. Null = account-wide. Set to a
+    """Optional app scoping. Null = account-wide. Set to a
     UUID = app-scoped.
-     """
+    """
     description: str | Unset = UNSET
     allow_headers: list[str] | Unset = UNSET
     expose_headers: list[str] | Unset = UNSET

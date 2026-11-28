@@ -27,29 +27,29 @@ class RequestAnalyticsDependency:
     """
 
     type_: str
-    """ Allowlisted dependency category. """
+    """Allowlisted dependency category."""
     name: str
-    """ Redacted span name. """
+    """Redacted span name."""
     samples: int
-    """ Number of retained span observations. """
+    """Number of retained span observations."""
     calls: int
-    """ Observed span sample count weighted by the collapsed request-row count; not a full call count. """
+    """Observed span sample count weighted by the collapsed request-row count; not a full call count."""
     error_calls: int
     error_rate_pct: float
-    """ Error calls divided by observed weighted calls. """
+    """Error calls divided by observed weighted calls."""
     p50_ms: int
-    """ Weighted p50 inclusive span duration. """
+    """Weighted p50 inclusive span duration."""
     p95_ms: int
-    """ Weighted p95 inclusive span duration. """
+    """Weighted p95 inclusive span duration."""
     p99_ms: int
-    """ Weighted p99 inclusive span duration. """
+    """Weighted p99 inclusive span duration."""
     exclusive_p95_ms: int
-    """ Weighted p95 span duration excluding overlapping direct child spans. """
+    """Weighted p95 span duration excluding overlapping direct child spans."""
     kind: str | Unset = UNSET
-    """ Allowlisted dependency kind when available. """
+    """Allowlisted dependency kind when available."""
     deployment_observations: list[RequestAnalyticsDependencyDeploymentObservation] | Unset = UNSET
-    """ At most the five newest deployment observations for this route/dependency pair; comparisons are advisory and
-    require at least 20 retained span observations on each deployment. """
+    """At most the five newest deployment observations for this route/dependency pair; comparisons are advisory and
+    require at least 20 retained span observations on each deployment."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

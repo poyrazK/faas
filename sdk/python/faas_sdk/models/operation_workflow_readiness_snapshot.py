@@ -26,14 +26,14 @@ class OperationWorkflowReadinessSnapshot:
     """
 
     version: OperationWorkflowReadinessSnapshotVersion
-    """ ReadinessSnapshot. Snapshot format version; currently 1. """
+    """ReadinessSnapshot. Snapshot format version; currently 1."""
     query: str
-    """ ReadinessSnapshot. Account app environment customer-selector and role fingerprint; preserve unchanged when
-    saving. """
+    """ReadinessSnapshot. Account app environment customer-selector and role fingerprint; preserve unchanged when
+    saving."""
     captured_at: datetime.datetime
-    """ ReadinessSnapshot. Time the live snapshot capture completed. """
+    """ReadinessSnapshot. Time the live snapshot capture completed."""
     items: list[OperationWorkflowReadinessSnapshotEntry]
-    """ ReadinessSnapshot. Saved transition observations. """
+    """ReadinessSnapshot. Saved transition observations."""
 
     def to_dict(self) -> dict[str, Any]:
         version: int = self.version

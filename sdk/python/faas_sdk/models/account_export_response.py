@@ -45,16 +45,16 @@ class AccountExportResponse:
     """
 
     schema_version: AccountExportResponseSchemaVersion
-    """ Export schema version used by restore and portability tooling. """
+    """Export schema version used by restore and portability tooling."""
     exported_at: datetime.datetime
     account: AccountResponse
-    """ Account profile: id, email verification state, plan, status, limits snapshot, current-month usage, deployed-
-    app count, and developer-environment count. """
+    """Account profile: id, email verification state, plan, status, limits snapshot, current-month usage, deployed-
+    app count, and developer-environment count."""
     organizations: list[OrgResponse]
     org_memberships: list[OrgMembershipExportResponse]
     org_invitations: list[OrgInvitationResponse]
     org_api_keys: list[APIKeyResponse]
-    """ Org-bound API key metadata; plaintext and hashes are never exported. """
+    """Org-bound API key metadata; plaintext and hashes are never exported."""
     apps: list[AppResponse]
     deployments: list[DeploymentResponse]
     builds: list[BuildExportResponse]
@@ -65,12 +65,12 @@ class AccountExportResponse:
     api_keys: list[APIKeyExportResponse]
     app_secrets: list[AppSecretExportResponse]
     edge_rules: list[EdgeRuleResponse] | Unset = UNSET
-    """ Edge rules on the exported apps. """
+    """Edge rules on the exported apps."""
     edge_rule_lists: list[EdgeRuleListResponse] | Unset = UNSET
-    """ The account's personal edge rule lists, with their items. An organization's lists are not part of a member's
-    export. """
+    """The account's personal edge rule lists, with their items. An organization's lists are not part of a member's
+    export."""
     cors_presets: list[CorsPresetResponse] | Unset = UNSET
-    """ The account's CORS presets: account-wide ones and those scoped to the exported apps. """
+    """The account's CORS presets: account-wide ones and those scoped to the exported apps."""
     audit_trail: list[GdprAuditExportResponse] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

@@ -26,25 +26,25 @@ class ManagedRealtimeDrainResponse:
     """Bounded or all-matching, auditable result of a realtime connection drain."""
 
     operation_id: UUID
-    """ Durable identifier for this drain operation. """
+    """Durable identifier for this drain operation."""
     status: ManagedRealtimeDrainResponseStatus
-    """ Durable operation state. A partial operation had at least one gone or failed connection. """
+    """Durable operation state. A partial operation had at least one gone or failed connection."""
     created_at: datetime.datetime
     results: list[ManagedRealtimeDrainResult]
     matched: int
-    """ Number selected after applying the limit or all-mode safety cap. """
+    """Number selected after applying the limit or all-mode safety cap."""
     closed: int
     gone: int
-    """ Selected connections that disappeared before close. """
+    """Selected connections that disappeared before close."""
     failed: int
     limit: int
     all_: bool
-    """ True when the operation explicitly selected all matching connections. """
+    """True when the operation explicitly selected all matching connections."""
     truncated: bool
-    """ True when more eligible connections existed than the limit. """
+    """True when more eligible connections existed than the limit."""
     dry_run: bool
     partial: bool
-    """ Indicates that the inventory did not cover every active realtime node. """
+    """Indicates that the inventory did not cover every active realtime node."""
     nodes_queried: int
     nodes_unavailable: int
     completed_at: datetime.datetime | None | Unset = UNSET

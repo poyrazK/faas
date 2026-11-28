@@ -26,14 +26,14 @@ class WorkflowRecoveryInitialPolicyChangeCandidate:
     """
 
     failure: WorkflowInitialFailure
-    """ One captured generation-zero workflow failure. """
+    """One captured generation-zero workflow failure."""
     eligibility: str
     preparation: str
     execution: str
     blockers: list[str]
     target: WorkflowRunRecoveryTarget | Unset = UNSET
-    """ One reviewed workflow run and resume count. Retry children identify the saved parent item. Initial failure
-    targets may identify retained generation-zero evidence, which is checked again at creation and admission. """
+    """One reviewed workflow run and resume count. Retry children identify the saved parent item. Initial failure
+    targets may identify retained generation-zero evidence, which is checked again at creation and admission."""
 
     def to_dict(self) -> dict[str, Any]:
         failure = self.failure.to_dict()

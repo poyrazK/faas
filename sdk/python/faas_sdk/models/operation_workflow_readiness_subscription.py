@@ -34,61 +34,60 @@ class OperationWorkflowReadinessSubscription:
     """
 
     app_id: UUID
-    """ OperationWorkflowReadinessSubscription.app_id. Application UUID; required in customer requests and omitted
-    in account requests. """
+    """OperationWorkflowReadinessSubscription.app_id. Application UUID; required in customer requests and omitted
+    in account requests."""
     scope: str
-    """ OperationWorkflowReadinessSubscription.scope. Application environment scope. """
+    """OperationWorkflowReadinessSubscription.scope. Application environment scope."""
     name: str
-    """ OperationWorkflowReadinessSubscription.name. Subscription name. """
+    """OperationWorkflowReadinessSubscription.name. Subscription name."""
     events: list[OperationWorkflowReadinessSubscriptionEventsItem]
-    """ OperationWorkflowReadinessSubscription.events. Readiness inbox event selectors; defaults to all four when
-    omitted. """
+    """OperationWorkflowReadinessSubscription.events. Readiness inbox event selectors; defaults to all four when
+    omitted."""
     id: UUID
-    """ OperationWorkflowReadinessSubscription.id. Subscription UUID. """
+    """OperationWorkflowReadinessSubscription.id. Subscription UUID."""
     created_at: datetime.datetime
-    """ OperationWorkflowReadinessSubscription.created_at. Subscription creation time. """
+    """OperationWorkflowReadinessSubscription.created_at. Subscription creation time."""
     evaluated_at: datetime.datetime
-    """ OperationWorkflowReadinessSubscription.evaluated_at. Most recent successful evaluation time. """
+    """OperationWorkflowReadinessSubscription.evaluated_at. Most recent successful evaluation time."""
     status: OperationWorkflowReadinessSubscriptionStatus
-    """ OperationWorkflowReadinessSubscription.status. Evaluation health; retrying preserves the last successful
-    baseline. """
+    """OperationWorkflowReadinessSubscription.status. Evaluation health; retrying preserves the last successful
+    baseline."""
     watched_transition_count: int
-    """ OperationWorkflowReadinessSubscription.watched_transition_count. Current saved edges within the 100-edge
-    watch budget. """
+    """OperationWorkflowReadinessSubscription.watched_transition_count. Current saved edges within the 100-edge
+    watch budget."""
     coverage_incomplete: bool
-    """ OperationWorkflowReadinessSubscription.coverage_incomplete. Discovery, evidence previews or saved-edge
-    capacity are incomplete; no exhaustive delivery guarantee is inferred. """
+    """OperationWorkflowReadinessSubscription.coverage_incomplete. Discovery, evidence previews or saved-edge
+    capacity are incomplete; no exhaustive delivery guarantee is inferred."""
     latest_sequence: int
-    """ OperationWorkflowReadinessSubscription.latest_sequence. Latest committed inbox sequence. """
+    """OperationWorkflowReadinessSubscription.latest_sequence. Latest committed inbox sequence."""
     digest_next_at: datetime.datetime | Unset = UNSET
-    """ Next digest evaluation time. Evaluation occurs on a worker pass at or after this time; failures retry
-    without consuming the cadence. """
+    """Next digest evaluation time. Evaluation occurs on a worker pass at or after this time; failures retry
+    without consuming the cadence."""
     digest_evaluated_at: datetime.datetime | Unset = UNSET
-    """ Most recent successful digest evaluation, including silent evaluations with no changed items. """
+    """Most recent successful digest evaluation, including silent evaluations with no changed items."""
     digest_delivered_at: datetime.datetime | Unset = UNSET
-    """ Most recent changed-item digest delivery. This does not acknowledge or fulfill source work. """
+    """Most recent changed-item digest delivery. This does not acknowledge or fulfill source work."""
     next_action_digest: OperationWorkflowNextActionDigestPolicy | Unset = UNSET
-    """ Fixed team digest selection and cadence. Owner is both the exact action-owner filter and inbox recipient
+    """Fixed team digest selection and cadence. Owner is both the exact action-owner filter and inbox recipient
     label, not proof of team membership. Overdue actions, deadlines within the configured approaching window and
-    unaccepted handoffs qualify. Unchanged delivered items are suppressed. """
+    unaccepted handoffs qualify. Unchanged delivered items are suppressed."""
     business_impact_watches: list[OperationWorkflowReadinessImpactWatch] | Unset = UNSET
-    """ OperationWorkflowReadinessSubscription.business_impact_watches. Retained impact observations and coverage
-    status for configured protected results. """
+    """OperationWorkflowReadinessSubscription.business_impact_watches. Retained impact observations and coverage
+    status for configured protected results."""
     playbook_evidence_watches: list[OperationWorkflowPlaybookEvidenceWatch] | Unset = UNSET
-    """ OperationWorkflowReadinessSubscription.playbook_evidence_watches. Durable opt-in checklist evidence
-    monitoring, independent of readiness discovery filters. """
+    """OperationWorkflowReadinessSubscription.playbook_evidence_watches. Durable opt-in checklist evidence
+    monitoring, independent of readiness discovery filters."""
     tenant_id: UUID | Unset = UNSET
-    """ OperationWorkflowReadinessSubscription.tenant_id. Optional account-only customer selector; customer identity
-    derives from authentication. """
+    """OperationWorkflowReadinessSubscription.tenant_id. Optional account-only customer selector; customer identity
+    derives from authentication."""
     workflow: str | Unset = UNSET
-    """ OperationWorkflowReadinessSubscription.workflow. Optional declared workflow selector. """
+    """OperationWorkflowReadinessSubscription.workflow. Optional declared workflow selector."""
     target_operation: str | Unset = UNSET
-    """ OperationWorkflowReadinessSubscription.target_operation. Optional transition operation selector. """
+    """OperationWorkflowReadinessSubscription.target_operation. Optional transition operation selector."""
     owner: str | Unset = UNSET
-    """ OperationWorkflowReadinessSubscription.owner. Optional blocker or pending verification owner selector. """
+    """OperationWorkflowReadinessSubscription.owner. Optional blocker or pending verification owner selector."""
     unassigned: bool | Unset = UNSET
-    """ OperationWorkflowReadinessSubscription.unassigned. Select ownerless blockers or verification obligations.
-    """
+    """OperationWorkflowReadinessSubscription.unassigned. Select ownerless blockers or verification obligations."""
 
     def to_dict(self) -> dict[str, Any]:
         app_id = str(self.app_id)

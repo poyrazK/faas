@@ -5,6 +5,8 @@ from pathlib import Path
 
 import httpx
 import pytest
+
+from faas_sdk import JobCheckpoint, JobContract, JobInput, JobItemOutcome, JobProgress
 from faas_sdk.job_runtime import JobContext, job_hash, prepare_job_input
 from faas_sdk.preview import (
     FileOptions,
@@ -18,8 +20,6 @@ from faas_sdk.preview import (
     read_pipeline_artifact,
 )
 from faas_sdk.workflows import WORKFLOW_CODE_PROTOCOL, run_workflow_invocation
-
-from faas_sdk import JobCheckpoint, JobContract, JobInput, JobItemOutcome, JobProgress
 
 ROOT = Path(__file__).resolve().parents[1] / "request-contracts"
 if not ROOT.exists():
@@ -467,12 +467,8 @@ async def test_python_workflow_receives_the_pinned_source_in_context():
 
     pipeline = JobPipeline(ROOT_CONTRACT, scope=SCOPE, store=Store(), jobs=native.definitions, run=run)
     invocation = dict(
-        protocol=WORKFLOW_CODE_PROTOCOL,
-        run_id=F["workflow_run_id"],
-        workflow=ROOT_CONTRACT.spec["name"],
-        input=ENVELOPE | {"pinned_source": source},
-        invocation=1,
-        journal=[],
+        protocol=WORKFLOW_CODE_PROTOCOL, run_id=F["workflow_run_id"], workflow=ROOT_CONTRACT.spec["name"],
+        input=ENVELOPE | {"pinned_source": source}, invocation=1, journal=[],
     )
     accepted = await run_workflow_invocation(pipeline.definition, invocation)
     assert accepted["result"]["status"] == "succeeded"

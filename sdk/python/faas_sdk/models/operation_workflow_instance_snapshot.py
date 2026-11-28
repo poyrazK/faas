@@ -40,35 +40,34 @@ class OperationWorkflowInstanceSnapshot:
     steps: list[OperationWorkflowInstanceStep]
     transitions: list[OperationWorkflowStateHistoryEntry]
     has_more: bool
-    """ True when either milestone or transition-history cursor has more pages. """
+    """True when either milestone or transition-history cursor has more pages."""
     bottlenecks: OperationWorkflowBottlenecks | Unset = UNSET
-    """ Observed durations for one retained workflow instance. State/blocker intervals use application occurrence
+    """Observed durations for one retained workflow instance. State/blocker intervals use application occurrence
     time. Verification waits use platform publication time. Gaps are excluded and incomplete histories are marked.
-    Groups are sorted by observed duration and bounded independently of exact window totals. """
+    Groups are sorted by observed duration and bounded independently of exact window totals."""
     resolution_verifications: list[OperationWorkflowResolutionVerification] | Unset = UNSET
-    """ Selected instance proof preview with pending obligations first; exact counts include all distinct retained
-    claims. """
+    """Selected instance proof preview with pending obligations first; exact counts include all distinct retained
+    claims."""
     awaiting_verification_count: int | Unset = UNSET
     resolution_verification_count: int | Unset = UNSET
     readiness: OperationWorkflowReadinessOverview | Unset = UNSET
-    """ At most 100 current-state declared edges evaluated without planned milestones. Counts cover all declared
-    current-state edges; history cursors do not paginate this overview. """
+    """At most 100 current-state declared edges evaluated without planned milestones. Counts cover all declared
+    current-state edges; history cursors do not paginate this overview."""
     dependency_trace: OperationWorkflowDependencyTrace | Unset = UNSET
-    """ Bounded deterministic depth-first traversal of unmet reported prerequisites within one
+    """Bounded deterministic depth-first traversal of unmet reported prerequisites within one
     customer/application/environment. Unknown retained state and traversal limits are distinct. Terminal sources and
-    satisfied requirements stop traversal. Current reports may change while reading. """
+    satisfied requirements stop traversal. Current reports may change while reading."""
     dependency_impact: OperationWorkflowDependencyImpact | Unset = UNSET
-    """ One-hop reverse dependency impact within the selected customer/application/environment. Counts cover all
+    """One-hop reverse dependency impact within the selected customer/application/environment. Counts cover all
     current retained sources; items are capped at 100 with affected sources first. Omitted when no customer can be
-    identified for an unknown account-side prerequisite. Independent of milestone and history pagination. """
+    identified for an unknown account-side prerequisite. Independent of milestone and history pagination."""
     related_workflows: list[OperationWorkflowRelatedInstance] | Unset = UNSET
     decision: OperationWorkflowDecision | Unset = UNSET
-    """ Observational explanation from the selected contract and latest reported state, independent of fact
+    """Observational explanation from the selected contract and latest reported state, independent of fact
     pagination. These options are not execution authorization. Required milestones must be committed with the next
-    transition; retained historical facts do not satisfy them. """
+    transition; retained historical facts do not satisfy them."""
     state: OperationWorkflowState | Unset = UNSET
-    """ Latest app-reported state for one declared workflow instance, including terminal and staleness indicators.
-    """
+    """Latest app-reported state for one declared workflow instance, including terminal and staleness indicators."""
     allowed_transitions: list[OperationWorkflowInstanceTransition] | Unset = UNSET
     next_milestone_cursor: str | Unset = UNSET
     next_transition_cursor: str | Unset = UNSET

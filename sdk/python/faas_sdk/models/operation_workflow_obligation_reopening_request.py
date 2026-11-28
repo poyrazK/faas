@@ -22,10 +22,10 @@ class OperationWorkflowObligationReopeningRequest:
     """
 
     binding: OperationWorkflowObligationTargetBinding
-    """ One obligation-cycle and exact-case target binding, recorded with an authenticated actor and reason.
-    Unrelated edits preserve it; a new cycle never inherits it. Current readiness is independently reassessed. """
+    """One obligation-cycle and exact-case target binding, recorded with an authenticated actor and reason.
+    Unrelated edits preserve it; a new cycle never inherits it. Current readiness is independently reassessed."""
     fulfilled_at: datetime.datetime
-    """ Completion time of the exact latest fulfillment being reopened. """
+    """Completion time of the exact latest fulfillment being reopened."""
     reason: str
 
     def to_dict(self) -> dict[str, Any]:

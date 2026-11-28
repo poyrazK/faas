@@ -23,11 +23,11 @@ class ComposeResources:
     """
 
     replicas: int | Unset = UNSET
-    """ Caps a request-mode app's instances (max_concurrency) and fixes a worker's or service's replica count. """
+    """Caps a request-mode app's instances (max_concurrency) and fixes a worker's or service's replica count."""
     memory_mb: int | Unset = UNSET
-    """ App RAM in MB, rounded up from the declared size. """
+    """App RAM in MB, rounded up from the declared size."""
     cpu_millicores: ComposeResourcesCpuMillicores | Unset = UNSET
-    """ App CPU share. """
+    """App CPU share."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -34,19 +34,19 @@ class OperationWorkflowReviewResponseEscalationAcknowledgment:
     at: datetime.datetime
     actor: str
     previous_completed_at: datetime.datetime | Unset = UNSET
-    """ Previous coordinator completion that this explicit revised commitment follows. Original completion remains
-    in retained history. """
+    """Previous coordinator completion that this explicit revised commitment follows. Original completion remains
+    in retained history."""
     basis: OperationWorkflowReviewResponseEscalationActionReview | Unset = UNSET
-    """ Most recent explicit scoped observation of immutable completion evidence. Source indices refer to the
+    """Most recent explicit scoped observation of immutable completion evidence. Source indices refer to the
     completion evidence order. A clear observation does not establish causality or business completion; observation
     is not atomic with concurrent application reports. History preserves prior review snapshots within existing
-    retention bounds. """
+    retention bounds."""
     completion: OperationWorkflowReviewResponseEscalationCompletion | Unset = UNSET
-    """ Immutable human completion of escalation coordination work, with linked review references and server actor
-    and time. Existing overdue markers remain historical. """
+    """Immutable human completion of escalation coordination work, with linked review references and server actor
+    and time. Existing overdue markers remain historical."""
     overdue_notified_at: datetime.datetime | Unset = UNSET
-    """ One-time follow-up publication marker. Stored atomically with its inbox notice and mirrored in retained
-    history; human update timestamps remain unchanged. """
+    """One-time follow-up publication marker. Stored atomically with its inbox notice and mirrored in retained
+    history; human update timestamps remain unchanged."""
 
     def to_dict(self) -> dict[str, Any]:
         coordinator = self.coordinator

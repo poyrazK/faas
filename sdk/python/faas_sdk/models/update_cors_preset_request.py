@@ -32,10 +32,10 @@ class UpdateCorsPresetRequest:
     """
 
     app_id: None | Unset | UUID = UNSET
-    """ Optional app scoping. Outer null = do not touch.
+    """Optional app scoping. Outer null = do not touch.
     Inner null = set to NULL (account-wide). Inner
     non-null = set to UUID (app-scoped).
-     """
+    """
     name: str | Unset = UNSET
     description: str | Unset = UNSET
     allow_origins: list[str] | Unset = UNSET

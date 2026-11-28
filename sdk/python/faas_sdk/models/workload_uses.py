@@ -24,7 +24,7 @@ class WorkloadUses:
     queues: list[WorkloadUsesQueuesItem] | Unset = UNSET
     realtime: list[WorkloadUsesRealtimeItem] | Unset = UNSET
     delayed_tasks: list[str] | Unset = UNSET
-    """ Apps the service may schedule delayed tasks on. """
+    """Apps the service may schedule delayed tasks on."""
     buckets: list[WorkloadUsesBucketsItem] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

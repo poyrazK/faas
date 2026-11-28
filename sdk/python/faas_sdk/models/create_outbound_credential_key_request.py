@@ -15,7 +15,7 @@ class CreateOutboundCredentialKeyRequest:
 
     label: str
     authorization: str
-    """ Same format as the integration's primary credential; sealed for the outbound gateway and never returned. """
+    """Same format as the integration's primary credential; sealed for the outbound gateway and never returned."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

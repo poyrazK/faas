@@ -36,22 +36,22 @@ class DeploymentHealthcheck:
     """
 
     path: str | Unset = UNSET
-    """ HTTP readiness path requested from the guest; must start with `/` (e.g. `/healthz`). Set exactly one of path
-    or grpc. """
+    """HTTP readiness path requested from the guest; must start with `/` (e.g. `/healthz`). Set exactly one of path
+    or grpc."""
     grpc: DeploymentGRPCHealthcheck | Unset = UNSET
-    """ Standard gRPC health.v1 readiness probe. An omitted or empty service checks overall server health. """
+    """Standard gRPC health.v1 readiness probe. An omitted or empty service checks overall server health."""
     interval_s: int | Unset = UNSET
-    """ Probe interval in seconds; 0 = use image default. """
+    """Probe interval in seconds; 0 = use image default."""
     timeout_s: int | Unset = UNSET
-    """ Probe timeout in seconds; 0 = use image default. """
+    """Probe timeout in seconds; 0 = use image default."""
     retries: int | Unset = UNSET
-    """ Consecutive failures before the instance is considered unhealthy; 0 = use image default. """
+    """Consecutive failures before the instance is considered unhealthy; 0 = use image default."""
     test: list[str] | Unset = UNSET
-    """ Argv of the OCI HEALTHCHECK command, prefixed by "CMD", "CMD-SHELL", or "NONE". Surfaces onto
-    AppManifest.Healthcheck.Test at apply_overrides time. """
+    """Argv of the OCI HEALTHCHECK command, prefixed by "CMD", "CMD-SHELL", or "NONE". Surfaces onto
+    AppManifest.Healthcheck.Test at apply_overrides time."""
     start_period_s: int | Unset = UNSET
-    """ Startup grace during which probe failures don't count (Docker 17.05+, default 0s). Surfaces onto
-    AppManifest.Healthcheck.StartPeriodS. """
+    """Startup grace during which probe failures don't count (Docker 17.05+, default 0s). Surfaces onto
+    AppManifest.Healthcheck.StartPeriodS."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -34,7 +34,7 @@ class RuntimePolicyStatusResponse:
 
     app_id: str
     desired_revision: int
-    """ Latest desired control-plane revision for app-cache and deployment traffic policy. """
+    """Latest desired control-plane revision for app-cache and deployment traffic policy."""
     state: RuntimePolicyStatusResponseState
     coverage: list[str]
     serving_gateways: int
@@ -42,33 +42,33 @@ class RuntimePolicyStatusResponse:
     pending_gateways: int
     stale_gateways: int
     request_policy: RuntimePolicyComponentStatus
-    """ Fresh serving-gateway status for a policy component with explicit scope. Its desired revision is meaningful
-    within that component's ledger or filtered projection. """
+    """Fresh serving-gateway status for a policy component with explicit scope. Its desired revision is meaningful
+    within that component's ledger or filtered projection."""
     edge_rules: RuntimePolicyComponentStatus
-    """ Fresh serving-gateway status for a policy component with explicit scope. Its desired revision is meaningful
-    within that component's ledger or filtered projection. """
+    """Fresh serving-gateway status for a policy component with explicit scope. Its desired revision is meaningful
+    within that component's ledger or filtered projection."""
     cors_presets: RuntimePolicyComponentStatus
-    """ Fresh serving-gateway status for a policy component with explicit scope. Its desired revision is meaningful
-    within that component's ledger or filtered projection. """
+    """Fresh serving-gateway status for a policy component with explicit scope. Its desired revision is meaningful
+    within that component's ledger or filtered projection."""
     response_cache: RuntimePolicyComponentStatus
-    """ Fresh serving-gateway status for a policy component with explicit scope. Its desired revision is meaningful
-    within that component's ledger or filtered projection. """
+    """Fresh serving-gateway status for a policy component with explicit scope. Its desired revision is meaningful
+    within that component's ledger or filtered projection."""
     egress_allowlist: RuntimePolicyNodeStatus
-    """ Fresh app-level host policy status for compute nodes currently hosting live instances of this app. This
-    shape is used by the egress_allowlist and cpu_limit components. """
+    """Fresh app-level host policy status for compute nodes currently hosting live instances of this app. This
+    shape is used by the egress_allowlist and cpu_limit components."""
     cpu_limit: RuntimePolicyNodeStatus
-    """ Fresh app-level host policy status for compute nodes currently hosting live instances of this app. This
-    shape is used by the egress_allowlist and cpu_limit components. """
+    """Fresh app-level host policy status for compute nodes currently hosting live instances of this app. This
+    shape is used by the egress_allowlist and cpu_limit components."""
     scheduler_scaling: RuntimePolicySchedulerStatus
-    """ Fresh observation of the desired scaling policy by the owning scheduler. Active means the policy was loaded,
-    not that a metric-driven replica target has been reached. """
+    """Fresh observation of the desired scaling policy by the owning scheduler. Active means the policy was loaded,
+    not that a metric-driven replica target has been reached."""
     mcp_convergence: MCPPolicyConvergenceSnapshot | Unset = UNSET
-    """ Account-scoped live gateway replay observation for an active HTTP deployment. Snapshot metadata only; token
-    enforcement is not attested. Correlates retained admission evidence when available. """
+    """Account-scoped live gateway replay observation for an active HTTP deployment. Snapshot metadata only; token
+    enforcement is not attested. Correlates retained admission evidence when available."""
     traffic_runtime: TrafficRuntimeStatus | Unset = UNSET
-    """ Fresh compute gateway wiring observations for the active serving roster. Reports expire after 10 seconds;
+    """Fresh compute gateway wiring observations for the active serving roster. Reports expire after 10 seconds;
     replacement, missing reports and readiness failure remove observations. Wiring does not prove backend health or
-    request enforcement. Node identities and process tokens are not exposed. """
+    request enforcement. Node identities and process tokens are not exposed."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

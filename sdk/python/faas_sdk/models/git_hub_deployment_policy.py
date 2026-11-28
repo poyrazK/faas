@@ -30,32 +30,32 @@ class GitHubDeploymentPolicy:
 
     project_id: UUID
     root_dir: str
-    """ Repository-relative root used when the project has a root workload. """
+    """Repository-relative root used when the project has a root workload."""
     ignored_paths: list[str]
-    """ Exact paths, one-segment globs, or trailing /** directory patterns that do not trigger builds. """
+    """Exact paths, one-segment globs, or trailing /** directory patterns that do not trigger builds."""
     preview_enabled: bool = True
     preview_ttl_hours: int = 168
     preview_service_policy: GitHubDeploymentPolicyPreviewServicePolicy = "deny"
-    """ Controls calls from project previews to production internal
+    """Controls calls from project previews to production internal
     services. `deny` rejects the call before discovery or wake-up;
     `allow_marked` permits it and marks the request as preview-origin
     traffic. Legacy projects are migrated to `deny`; `allow_marked`
     requires an explicit policy update.
-     """
+    """
     production_trigger: GitHubDeploymentPolicyProductionTrigger = "webhook"
-    """ The single production deploy authority; GitHub App PR previews continue in either mode. """
+    """The single production deploy authority; GitHub App PR previews continue in either mode."""
     preview_bot_prs: bool | Unset = False
-    """ Preview pull requests opened by bots such as Dependabot and Renovate. Off by default so they do not use up
-    the preview allowance. """
+    """Preview pull requests opened by bots such as Dependabot and Renovate. Off by default so they do not use up
+    the preview allowance."""
     preview_draft_prs: bool | Unset = True
-    """ Preview draft pull requests. When off, a draft gets its preview once it is marked ready for review. """
+    """Preview draft pull requests. When off, a draft gets its preview once it is marked ready for review."""
     preview_mode: GitHubDeploymentPolicyPreviewMode | Unset = "app"
-    """ How pull requests are previewed. `app` gives each previewed
+    """How pull requests are previewed. `app` gives each previewed
     workload its own preview app. `branch` makes environment branch
     `pr-{N}` of production for each pull request and deploys the PR
     head into it. Choosing `branch` needs the
     platform to enable branch previews.
-     """
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -36,21 +36,21 @@ class WorkflowRecoveryAutomaticAction:
     status: WorkflowRecoveryAutomaticActionStatus
     reason: str
     last_evaluation: WorkflowRecoveryAutomaticEvaluation | Unset = UNSET
-    """ Last committed worker evaluation, never refreshed by reads or notification capture. Waiting_since is the
+    """Last committed worker evaluation, never refreshed by reads or notification capture. Waiting_since is the
     first observation of this consecutive wait reason and resets when the reason changes. Absent for legacy or
-    unevaluated intents. Pausing preserves historical evidence. """
+    unevaluated intents. Pausing preserves historical evidence."""
     suppression: WorkflowRecoveryAutomaticSuppression | Unset = UNSET
-    """ Immutable operator suppression audit retained with the automatic retry intent. """
+    """Immutable operator suppression audit retained with the automatic retry intent."""
     blocked_notification: WorkflowRecoveryAutomaticBlockedNotification | Unset = UNSET
-    """ Latest blocked or recovered evidence capture for a retry or initial-recovery review. Retry sequence
+    """Latest blocked or recovered evidence capture for a retry or initial-recovery review. Retry sequence
     increases only on a changed evidence diagnosis or proven clearance. Receivers are frozen at capture; queued
     identifies ledger admission rather than successful delivery. No receivers prevents historical replay to later
-    subscribers. """
+    subscribers."""
     child_job_id: UUID | Unset = UNSET
     applied_at: datetime.datetime | Unset = UNSET
     result: WorkflowRecoveryReviewActionStatus | Unset = UNSET
-    """ Application freshness and execution outcome for one frozen action. A retry is complete only with saved
-    terminal generation evidence or a terminal admission refusal. """
+    """Application freshness and execution outcome for one frozen action. A retry is complete only with saved
+    terminal generation evidence or a terminal admission refusal."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

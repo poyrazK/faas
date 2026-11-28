@@ -24,7 +24,7 @@ class ConsumerIdentity:
     created_at: datetime.datetime
     updated_at: datetime.datetime
     email: str | Unset = UNSET
-    """ The token's email claim; display only. """
+    """The token's email claim; display only."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

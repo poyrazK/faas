@@ -44,7 +44,7 @@ class RouteHealthTransitionWebhookPayload:
     app_id: UUID
     deployment_id: UUID
     stable_deployment_id: str
-    """ Empty when a unique stable deployment was unavailable. """
+    """Empty when a unique stable deployment was unavailable."""
     decision_id: UUID
     status: RouteHealthTransitionWebhookPayloadStatus
     health_status: RouteHealthTransitionWebhookPayloadHealthStatus
@@ -56,10 +56,9 @@ class RouteHealthTransitionWebhookPayload:
     previous_traffic_percent: int
     requested_traffic_percent: int
     history_path: str
-    """ Authenticated single-entry API path for the exact saved decision. """
+    """Authenticated single-entry API path for the exact saved decision."""
     blocked_decision_id: UUID | Unset = UNSET
-    """ The prior comparable hold decision for resumed or aborted events when a hold exists; may have been pruned.
-    """
+    """The prior comparable hold decision for resumed or aborted events when a hold exists; may have been pruned."""
     observation_anchor: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

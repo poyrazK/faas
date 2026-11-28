@@ -24,7 +24,7 @@ class StoredWorkflowLiveTest:
 
     expectations: list[StoredWorkflowLiveExpectation]
     expected_run_status: StoredWorkflowLiveTestExpectedRunStatus | Unset = UNSET
-    """ Desired terminal run state; omitted means succeeded. Cancellation always fails verification. """
+    """Desired terminal run state; omitted means succeeded. Cancellation always fails verification."""
 
     def to_dict(self) -> dict[str, Any]:
         expectations = []

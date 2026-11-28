@@ -24,7 +24,7 @@ class RequestAnalyticsDeploymentCostBreakdown:
     allocated_millicents: int
     unallocated_millicents: int
     other_millicents: int
-    """ Value allocated to deployments outside the top-N list. """
+    """Value allocated to deployments outside the top-N list."""
     other_requests: int
     other_request_share_pct: float
     request_count: int

@@ -24,15 +24,15 @@ class OperationEffectRecord:
     name: str
     generation: int
     status: OperationEffectRecordStatus
-    """ recorded is an opaque effect with no adapter; captured is retained rehearsal intent with no outbound
+    """recorded is an opaque effect with no adapter; captured is retained rehearsal intent with no outbound
     delivery; unavailable indicates deleted or pruned delivery history. Completion of the operation does not imply
-    delivery succeeded. """
+    delivery succeeded."""
     attempt: int
     webhook_id: UUID | Unset = UNSET
     delivery_id: UUID | Unset = UNSET
-    """ Stable across webhook retries; equals the effect ID. """
+    """Stable across webhook retries; equals the effect ID."""
     rehearsal_run_id: str | Unset = UNSET
-    """ Present only for platform-captured rehearsal effects; no outbound delivery was queued. """
+    """Present only for platform-captured rehearsal effects; no outbound delivery was queued."""
     type_: str | Unset = UNSET
     last_error: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

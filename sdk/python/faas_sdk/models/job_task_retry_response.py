@@ -20,10 +20,10 @@ class JobTaskRetryResponse:
     """POST .../tasks/{idx}/retry response. The task is re-queued with capped backoff."""
 
     task: JobTaskResponse
-    """ Wire projection of state.JobTask. LeaseToken is intentionally omitted (internal dispatch primitive). """
+    """Wire projection of state.JobTask. LeaseToken is intentionally omitted (internal dispatch primitive)."""
     run: JobRunResponse
-    """ Wire projection of state.JobRun. Aggregate counters are recomputed by the scheduler after every terminal
-    task transition. """
+    """Wire projection of state.JobRun. Aggregate counters are recomputed by the scheduler after every terminal
+    task transition."""
     retried_at: datetime.datetime
     next_attempt_at: datetime.datetime
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

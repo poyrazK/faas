@@ -20,22 +20,22 @@ class AlertAnomalyEvaluation:
     reason: AlertAnomalyEvaluationReason
     evaluated_at: datetime.datetime
     count: int
-    """ Eligible requests, qualifying historical windows, or consecutive healthy checks depending on the reason. """
+    """Eligible requests, qualifying historical windows, or consecutive healthy checks depending on the reason."""
     baseline_days: int | Unset = UNSET
-    """ Number of days that qualified for the baseline when history was evaluated. """
+    """Number of days that qualified for the baseline when history was evaluated."""
     required_count: int | Unset = UNSET
-    """ Required requests, historical windows, or healthy checks when the reason includes a count. """
+    """Required requests, historical windows, or healthy checks when the reason includes a count."""
     observed: float | Unset = UNSET
-    """ Observed value in the rule metric's units for a completed check. """
+    """Observed value in the rule metric's units for a completed check."""
     baseline: float | Unset = UNSET
-    """ Historical median in the rule metric's units for a completed check. """
+    """Historical median in the rule metric's units for a completed check."""
     trigger_value: float | Unset = UNSET
-    """ Baseline multiplied by the rule threshold when a positive baseline is available. """
+    """Baseline multiplied by the rule threshold when a positive baseline is available."""
     minimum_value: float | Unset = UNSET
-    """ Minimum required observation for an above-baseline rule, or minimum required baseline for a below-baseline
-    rule. Present when that minimum was not reached. """
+    """Minimum required observation for an above-baseline rule, or minimum required baseline for a below-baseline
+    rule. Present when that minimum was not reached."""
     next_notification_eligible_at: datetime.datetime | Unset = UNSET
-    """ End of the current incident's notification cooldown when the evaluation suppressed a repeat fire. """
+    """End of the current incident's notification cooldown when the evaluation suppressed a repeat fire."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

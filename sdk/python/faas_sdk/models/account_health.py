@@ -28,22 +28,22 @@ class AccountHealth:
     """
 
     generated_at: datetime.datetime
-    """ When the checks ran. """
+    """When the checks ran."""
     attention: int
-    """ Number of restrictions, signals, failed deployments and domain issues; zero means nothing needs action. """
+    """Number of restrictions, signals, failed deployments and domain issues; zero means nothing needs action."""
     restrictions: list[AccountHealthRestriction]
-    """ Restrictions currently applied to the account, one per kind. """
+    """Restrictions currently applied to the account, one per kind."""
     failed_deployments: list[AccountHealthDeployment]
-    """ Failed deployments from the last 7 days, newest first, at most 10. """
+    """Failed deployments from the last 7 days, newest first, at most 10."""
     domain_issues: list[AccountHealthDomain]
-    """ Custom domains that are unverified or whose certificate is not serving. """
+    """Custom domains that are unverified or whose certificate is not serving."""
     refused_requests: AccountHealthRequests
-    """ API requests Gregale refused for the account in the recent window. """
+    """API requests Gregale refused for the account in the recent window."""
     signals: list[AccountHealthSignal] | Unset = UNSET
-    """ Problems that keep recurring on the account, such as repeated failed deployments or out-of-memory stops,
-    with the next step. Absent from older servers. """
+    """Problems that keep recurring on the account, such as repeated failed deployments or out-of-memory stops,
+    with the next step. Absent from older servers."""
     unavailable: list[str] | Unset = UNSET
-    """ Checks that could not be loaded; their lists are empty and mean unknown, not none. """
+    """Checks that could not be loaded; their lists are empty and mean unknown, not none."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

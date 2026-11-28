@@ -23,13 +23,13 @@ class OperationWorkflowReviewResponseEscalationAcknowledgmentRequest:
     handed_off_at: datetime.datetime
     escalated_at: datetime.datetime
     coordinator: str
-    """ Control-free trimmed UTF-8 coordinator or team label, nonblank and limited to 256 bytes. Uses the existing
-    authorized operator model; not proof of team membership. """
+    """Control-free trimmed UTF-8 coordinator or team label, nonblank and limited to 256 bytes. Uses the existing
+    authorized operator model; not proof of team membership."""
     plan: str
-    """ Nonblank UTF-8 next-action plan, limited to 1024 bytes; line breaks and tabs are allowed. """
+    """Nonblank UTF-8 next-action plan, limited to 1024 bytes; line breaks and tabs are allowed."""
     due_at: datetime.datetime
-    """ Future next-action deadline within seven days. This does not extend the handoff acceptance or decision-
-    review deadlines. """
+    """Future next-action deadline within seven days. This does not extend the handoff acceptance or decision-
+    review deadlines."""
 
     def to_dict(self) -> dict[str, Any]:
         decision_at = self.decision_at.isoformat()

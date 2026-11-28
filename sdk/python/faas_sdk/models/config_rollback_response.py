@@ -25,7 +25,7 @@ class ConfigRollbackResponse:
     deleted: list[str]
     secrets_not_restored: list[ConfigSecretDifference]
     change: ConfigChangeReceipt | Unset = UNSET
-    """ The config revision an env or secret write recorded and the guard watching it. """
+    """The config revision an env or secret write recorded and the guard watching it."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

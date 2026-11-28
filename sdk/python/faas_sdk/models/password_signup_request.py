@@ -18,8 +18,8 @@ class PasswordSignupRequest:
     email: str
     password: str
     referral_code: str | Unset = UNSET
-    """ Optional six-character customer or salesperson referral code; case-insensitive. Requires the referral
-    program to be enabled. """
+    """Optional six-character customer or salesperson referral code; case-insensitive. Requires the referral
+    program to be enabled."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

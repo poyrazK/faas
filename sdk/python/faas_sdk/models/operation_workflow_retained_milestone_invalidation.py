@@ -22,10 +22,10 @@ class OperationWorkflowRetainedMilestoneInvalidation:
     """
 
     source: OperationWorkflowRetainedMilestoneRequirement
-    """ Source operation and milestone bound to a declared transaction-backed step of the selected workflow
-    contract. """
+    """Source operation and milestone bound to a declared transaction-backed step of the selected workflow
+    contract."""
     evidence: OperationWorkflowInstanceMilestoneRef
-    """ Identity and occurrence and publication times of a milestone observed for a declared workflow step. """
+    """Identity and occurrence and publication times of a milestone observed for a declared workflow step."""
 
     def to_dict(self) -> dict[str, Any]:
         source = self.source.to_dict()

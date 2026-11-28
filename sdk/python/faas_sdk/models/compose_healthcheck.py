@@ -19,7 +19,7 @@ class ComposeHealthcheck:
     """
 
     test: list[str] | Unset = UNSET
-    """ CMD followed by argv, CMD-SHELL followed by one command, or NONE. """
+    """CMD followed by argv, CMD-SHELL followed by one command, or NONE."""
     interval_ns: int | Unset = UNSET
     timeout_ns: int | Unset = UNSET
     start_period_ns: int | Unset = UNSET

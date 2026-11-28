@@ -19,10 +19,10 @@ class ProjectRollbackSummary:
 
     operation_id: UUID
     status: str
-    """ Current receipt status, either running, blocked, or complete. """
+    """Current receipt status, either running, blocked, or complete."""
     cutovers_completed: int
     cutovers_total: int
-    """ Number of planned service cutovers excluding skipped services. """
+    """Number of planned service cutovers excluding skipped services."""
     phase: str | Unset = UNSET
     undo_of: UUID | Unset = UNSET
     undo_operation_id: UUID | Unset = UNSET

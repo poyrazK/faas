@@ -23,35 +23,35 @@ class AgentApprovalResponse:
     """One request of an agent connection that needed a person's approval."""
 
     id: UUID
-    """ The request's id. """
+    """The request's id."""
     category: AgentApprovalResponseCategory
-    """ The kind of action; budget for a change past the agent's monthly budget, undo for an agent undoing its own
-    changes. """
+    """The kind of action; budget for a change past the agent's monthly budget, undo for an agent undoing its own
+    changes."""
     method: str
-    """ The HTTP method of the request the approval allows. """
+    """The HTTP method of the request the approval allows."""
     path: str
-    """ The path and query of the request the approval allows. """
+    """The path and query of the request the approval allows."""
     body_bound: bool
-    """ Whether the approval is tied to the request body; large and multipart bodies are not. """
+    """Whether the approval is tied to the request body; large and multipart bodies are not."""
     status: AgentApprovalResponseStatus
-    """ `consumed` once the approved request was made. """
+    """`consumed` once the approved request was made."""
     created_at: datetime.datetime
-    """ When the agent first made the request. """
+    """When the agent first made the request."""
     expires_at: datetime.datetime
-    """ After this time the request can no longer be approved or used. """
+    """After this time the request can no longer be approved or used."""
     review_url: str | Unset = UNSET
-    """ The review page """
+    """The review page"""
     agent: str | Unset = UNSET
-    """ The connection's client name or key label. """
+    """The connection's client name or key label."""
     connection_id: str | Unset = UNSET
-    """ The id of the agent connection that asked, as GET /v1/agent-connections lists it. """
+    """The id of the agent connection that asked, as GET /v1/agent-connections lists it."""
     decided_at: datetime.datetime | Unset = UNSET
-    """ When a person approved or denied it. """
+    """When a person approved or denied it."""
     note: str | Unset = UNSET
-    """ Why the person denied this request, if they said; absent otherwise. """
+    """Why the person denied this request, if they said; absent otherwise."""
     reason: str | Unset = UNSET
-    """ What the agent said the request is for (Gregale-Agent-Reason on the request that opened it), if it said.
-    Untrusted agent text: it never changes what is approved. """
+    """What the agent said the request is for (Gregale-Agent-Reason on the request that opened it), if it said.
+    Untrusted agent text: it never changes what is approved."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

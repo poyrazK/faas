@@ -47,17 +47,17 @@ class WorkflowInitialRecoveryReview:
     app_id: UUID
     app: str
     failure: WorkflowInitialFailure
-    """ One captured generation-zero workflow failure. """
+    """One captured generation-zero workflow failure."""
     target: WorkflowRunRecoveryTarget
-    """ One reviewed workflow run and resume count. Retry children identify the saved parent item. Initial failure
-    targets may identify retained generation-zero evidence, which is checked again at creation and admission. """
+    """One reviewed workflow run and resume count. Retry children identify the saved parent item. Initial failure
+    targets may identify retained generation-zero evidence, which is checked again at creation and admission."""
     policy_version: int
     policy: WorkflowRecoveryPolicy
-    """ Explicit app recovery policy. Preview prepares parent-job plans and worker-discovered initial-failure
+    """Explicit app recovery policy. Preview prepares parent-job plans and worker-discovered initial-failure
     reviews. initial_failure requires explicit failure statuses. Opt-in automatic_retry requires saved_failure only;
     automatic_initial requires initial_failure only. Both require explicit workflow and failure-status filters and
     execution limits. Resume count caps the absolute generation; preparation and execution budgets are separate.
-    Cancellation remains manual. """
+    Cancellation remains manual."""
     status: WorkflowInitialRecoveryReviewStatus
     reason: str
     prepared_at: datetime.datetime
@@ -65,40 +65,40 @@ class WorkflowInitialRecoveryReview:
     observed_at: datetime.datetime
     events: list[WorkflowInitialRecoveryReviewEvent]
     polling_notification: WorkflowRecoveryPollingNotification | Unset = UNSET
-    """ Last captured polling alert receipt. queued means durable outbox admission; no_receivers never replays to
+    """Last captured polling alert receipt. queued means durable outbox admission; no_receivers never replays to
     later subscribers. Successful polling retains the recovered receipt separately from the cleared error metadata.
-    """
+   """
     evidence_repair: WorkflowInitialEvidenceRepairReceipt | Unset = UNSET
-    """ Recorded result of an initial recovery evidence repair. """
+    """Recorded result of an initial recovery evidence repair."""
     automatic_block_reason: str | Unset = UNSET
     automatic_block_sequence: int | Unset = UNSET
     automatic_block_notification: WorkflowRecoveryAutomaticBlockedNotification | Unset = UNSET
-    """ Latest blocked or recovered evidence capture for a retry or initial-recovery review. Retry sequence
+    """Latest blocked or recovered evidence capture for a retry or initial-recovery review. Retry sequence
     increases only on a changed evidence diagnosis or proven clearance. Receivers are frozen at capture; queued
     identifies ledger admission rather than successful delivery. No receivers prevents historical replay to later
-    subscribers. """
+    subscribers."""
     observation_failure: WorkflowInitialObservationFailure | Unset = UNSET
-    """ Last deterministic manual observation failure. Retry uses bounded backoff; a successful observation clears
-    this metadata. Codes never include database error messages. """
+    """Last deterministic manual observation failure. Retry uses bounded backoff; a successful observation clears
+    this metadata. Codes never include database error messages."""
     attention: WorkflowInitialRecoveryAttention | Unset = UNSET
-    """ Latest committed observation of a submitted manual initial recovery. Reads do not update it. Notification
-    receipts describe captured historical transitions. """
+    """Latest committed observation of a submitted manual initial recovery. Reads do not update it. Notification
+    receipts describe captured historical transitions."""
     result: WorkflowRecoveryReviewActionStatus | Unset = UNSET
-    """ Application freshness and execution outcome for one frozen action. A retry is complete only with saved
-    terminal generation evidence or a terminal admission refusal. """
+    """Application freshness and execution outcome for one frozen action. A retry is complete only with saved
+    terminal generation evidence or a terminal admission refusal."""
     automatic_result: WorkflowRecoveryReviewActionStatus | Unset = UNSET
-    """ Application freshness and execution outcome for one frozen action. A retry is complete only with saved
-    terminal generation evidence or a terminal admission refusal. """
+    """Application freshness and execution outcome for one frozen action. A retry is complete only with saved
+    terminal generation evidence or a terminal admission refusal."""
     automatic_evaluation: WorkflowRecoveryAutomaticEvaluation | Unset = UNSET
-    """ Last committed worker evaluation, never refreshed by reads or notification capture. Waiting_since is the
+    """Last committed worker evaluation, never refreshed by reads or notification capture. Waiting_since is the
     first observation of this consecutive wait reason and resets when the reason changes. Absent for legacy or
-    unevaluated intents. Pausing preserves historical evidence. """
+    unevaluated intents. Pausing preserves historical evidence."""
     job_id: UUID | Unset = UNSET
     submitted_at: datetime.datetime | Unset = UNSET
     notification: WorkflowRecoveryReviewNotification | Unset = UNSET
-    """ One durable review notification capture. Delivery outcomes are in the webhook delivery ledger; queued
+    """One durable review notification capture. Delivery outcomes are in the webhook delivery ledger; queued
     capture does not prove HTTP acknowledgement. Frozen receiver identifiers prevent replay to newly configured
-    subscriptions. """
+    subscriptions."""
 
     def to_dict(self) -> dict[str, Any]:
         id = str(self.id)

@@ -23,14 +23,13 @@ class AccountUsageResponse:
 
     month: str
     compute: UsageSummaryResponse
-    """ Account-level monthly roll-up: included GB-hours, used, overage math, remaining balance, informational usage
+    """Account-level monthly roll-up: included GB-hours, used, overage math, remaining balance, informational usage
     dimensions, and a trailing 30-day daily trend. The GB-hours fields drive the overage math; the other dimensions
-    are informational. """
+    are informational."""
     object_storage: ObjectStorageUsageResponse | Unset = UNSET
-    """ Current UTC-month accounting, customer charge estimate, billing rollout state, and operator safety policy.
-    """
+    """Current UTC-month accounting, customer charge estimate, billing rollout state, and operator safety policy."""
     managed_postgres: ManagedPostgresUsageResponse | Unset = UNSET
-    """ Customer-safe current UTC-month managed PostgreSQL usage and guardrail state. """
+    """Customer-safe current UTC-month managed PostgreSQL usage and guardrail state."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

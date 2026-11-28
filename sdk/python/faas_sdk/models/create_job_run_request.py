@@ -40,30 +40,28 @@ class CreateJobRunRequest:
 
     tasks: int | Unset = UNSET
     failure_rules: FailureRules | Unset = UNSET
-    """ Versioned explicit classification policy for failed Job partitions, command-Cron executions, and HTTP Cron
-    outcome codes. HTTP status is not a business outcome matcher. """
+    """Versioned explicit classification policy for failed Job partitions, command-Cron executions, and HTTP Cron
+    outcome codes. HTTP status is not a business outcome matcher."""
     inputs: list[JobRunInput] | Unset = UNSET
-    """ Ordered input set. Creates one task per entry; tasks may be omitted or must match the input count.
-    References are opaque and fetched by the customer image. """
+    """Ordered input set. Creates one task per entry; tasks may be omitted or must match the input count.
+    References are opaque and fetched by the customer image."""
     input_manifest_uri: str | Unset = UNSET
-    """ obj://<app-id>/<bucket-id>/<key> for a JSON array of inputs, up to 16 MiB. Mutually exclusive with inputs.
-    """
+    """obj://<app-id>/<bucket-id>/<key> for a JSON array of inputs, up to 16 MiB. Mutually exclusive with inputs."""
     input_manifest_sha256: str | Unset = UNSET
-    """ SHA-256 of the external manifest's exact bytes; required with input_manifest_uri. """
+    """SHA-256 of the external manifest's exact bytes; required with input_manifest_uri."""
     execution_class: CreateJobRunRequestExecutionClass | Unset = "standard"
     failure_policy: CreateJobRunRequestFailurePolicy | Unset = "continue"
     eligible_at: datetime.datetime | Unset = UNSET
-    """ Earliest admission time for flexible tasks; defaults to now. """
+    """Earliest admission time for flexible tasks; defaults to now."""
     latest_start_at: datetime.datetime | Unset = UNSET
-    """ Required for flexible runs. Unstarted tasks expire at this time; completion is not guaranteed by this time.
-    """
+    """Required for flexible runs. Unstarted tasks expire at this time; completion is not guaranteed by this time."""
     parallelism: int | Unset = UNSET
     retry_max: int | Unset = UNSET
     task_timeout_sec: int | Unset = UNSET
     env_overrides: CreateJobRunRequestEnvOverrides | Unset = UNSET
     arguments: list[str] | Unset = UNSET
-    """ Replace the command arguments for this run, retaining its executable. Empty array removes trailing
-    arguments. """
+    """Replace the command arguments for this run, retaining its executable. Empty array removes trailing
+    arguments."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -31,13 +31,13 @@ class CustomMetricResponse:
     value: float
     observed_at: datetime.datetime
     stale: bool
-    """ True when this row is older than the freshness window and is therefore NOT driving scaling. Computed server-
-    side so the API and the scheduler cannot disagree about which rows count. """
+    """True when this row is older than the freshness window and is therefore NOT driving scaling. Computed server-
+    side so the API and the scheduler cannot disagree about which rows count."""
     kind: CustomMetricResponseKind | Unset = UNSET
-    """ gauge for pushed values (a scaling signal); counter for OTLP cumulative sums, which never drive scaling. """
+    """gauge for pushed values (a scaling signal); counter for OTLP cumulative sums, which never drive scaling."""
     series: list[CustomMetricSeriesValue] | Unset = UNSET
-    """ A labelled metric's series. value is then their aggregate: the sum for counters, the maximum of fresh series
-    for gauges. Absent for an unlabelled metric. """
+    """A labelled metric's series. value is then their aggregate: the sum for counters, the maximum of fresh series
+    for gauges. Absent for an unlabelled metric."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -26,44 +26,43 @@ class CronResponse:
     id: str
     app_id: str
     kind: CronResponseKind
-    """ HTTP triggers the app path; command runs argv in a fresh VM using the live deployment selected at fire time.
-    """
+    """HTTP triggers the app path; command runs argv in a fresh VM using the live deployment selected at fire time."""
     schedule: str
     enabled: bool
     timezone: str
-    """ IANA timezone used to evaluate the schedule; defaults to UTC. """
+    """IANA timezone used to evaluate the schedule; defaults to UTC."""
     skip_if_running: bool
-    """ When true, consume a scheduled occurrence while a prior HTTP invocation or app command task is active. """
+    """When true, consume a scheduled occurrence while a prior HTTP invocation or app command task is active."""
     created_at: datetime.datetime
     path: str | Unset = UNSET
-    """ HTTP target path; omitted for command crons. """
+    """HTTP target path; omitted for command crons."""
     command: list[str] | Unset = UNSET
-    """ Direct command argv; present only for command crons. """
+    """Direct command argv; present only for command crons."""
     command_shell: bool | Unset = UNSET
-    """ Interpret a one-element command through the app shell; false executes argv directly. """
+    """Interpret a one-element command through the app shell; false executes argv directly."""
     timeout_seconds: int | Unset = UNSET
-    """ Per-fire command deadline. """
+    """Per-fire command deadline."""
     max_output_bytes: int | Unset = UNSET
-    """ Combined stdout/stderr tail cap for command runs. """
+    """Combined stdout/stderr tail cap for command runs."""
     retry_max: int | Unset = UNSET
-    """ Additional attempts after an execution fails or times out; zero disables retries. """
+    """Additional attempts after an execution fails or times out; zero disables retries."""
     retry_backoff_seconds: int | Unset = UNSET
-    """ Base retry delay. Each subsequent retry doubles the delay, capped at 24 hours. """
+    """Base retry delay. Each subsequent retry doubles the delay, capped at 24 hours."""
     suspended_reason: CronResponseSuspendedReason | Unset = UNSET
-    """ Why an enabled schedule is paused. Redeploy the app successfully to clear no_live_deployment. """
+    """Why an enabled schedule is paused. Redeploy the app successfully to clear no_live_deployment."""
     last_fired_at: datetime.datetime | None | Unset = UNSET
     environment: str | Unset = UNSET
-    """ Project environment the cron runs in; omitted for production. """
+    """Project environment the cron runs in; omitted for production."""
     clone_paused: bool | Unset = UNSET
-    """ A full environment clone copied this cron disabled although the source ran it; resuming the environment's
-    automation enables it. """
+    """A full environment clone copied this cron disabled although the source ran it; resuming the environment's
+    automation enables it."""
     schedule_policy: SchedulePolicy | Unset = UNSET
-    """ Versioned recurring-work scheduling policy for Jobs and both HTTP and command Crons. HTTP replace waits for
+    """Versioned recurring-work scheduling policy for Jobs and both HTTP and command Crons. HTTP replace waits for
     a prior dispatched request to complete because the scheduler has no stop acknowledgement for a request already
-    delivered to the app. """
+    delivered to the app."""
     failure_rules: FailureRules | Unset = UNSET
-    """ Versioned explicit classification policy for failed Job partitions, command-Cron executions, and HTTP Cron
-    outcome codes. HTTP status is not a business outcome matcher. """
+    """Versioned explicit classification policy for failed Job partitions, command-Cron executions, and HTTP Cron
+    outcome codes. HTTP status is not a business outcome matcher."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

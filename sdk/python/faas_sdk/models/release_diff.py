@@ -26,20 +26,20 @@ class ReleaseDiff:
 
     app: str
     to: ReleaseDiffSide
-    """ One of the two compared releases. """
+    """One of the two compared releases."""
     summary: str
-    """ One line, such as "new code, 2 config keys, 5 packages". """
+    """One line, such as "new code, 2 config keys, 5 packages"."""
     code: ReleaseDiffCode
-    """ How the releases' source and image differ. """
+    """How the releases' source and image differ."""
     config: ReleaseDiffConfig
-    """ How the configuration each release started with differs, by key. """
+    """How the configuration each release started with differs, by key."""
     dependencies: ReleaseDiffDependencies
-    """ How the builds' SBOM packages differ. Each list holds at most 100 entries. """
+    """How the builds' SBOM packages differ. Each list holds at most 100 entries."""
     runtime: list[ReleaseDiffField]
     database: ReleaseDiffDatabase
-    """ How the releases' release commands, which run database migrations, differ. """
+    """How the releases' release commands, which run database migrations, differ."""
     from_: ReleaseDiffSide | Unset = UNSET
-    """ One of the two compared releases. """
+    """One of the two compared releases."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

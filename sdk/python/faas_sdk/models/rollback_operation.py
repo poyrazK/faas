@@ -41,16 +41,16 @@ class RollbackOperation:
     code: str | Unset = UNSET
     blockers: list[BindingCheckFinding] | Unset = UNSET
     project_rollback_id: UUID | Unset = UNSET
-    """ Project operation holding this exact rollback for coordinated cutover. """
+    """Project operation holding this exact rollback for coordinated cutover."""
     completed_at: datetime.datetime | None | Unset = UNSET
     audit_id: str | Unset = UNSET
     trigger: RollbackOperationTrigger | Unset = UNSET
-    """ What started a plain rollback. Absent for a checked rollback. """
+    """What started a plain rollback. Absent for a checked rollback."""
     recovery_ms: int | Unset = UNSET
-    """ Milliseconds from the plain rollback request until its target served. Present once a plain rollback is
-    complete. """
+    """Milliseconds from the plain rollback request until its target served. Present once a plain rollback is
+    complete."""
     error: str | Unset = UNSET
-    """ Why a failed plain rollback did not restore the previous release; code carries the stable error code. """
+    """Why a failed plain rollback did not restore the previous release; code carries the stable error code."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

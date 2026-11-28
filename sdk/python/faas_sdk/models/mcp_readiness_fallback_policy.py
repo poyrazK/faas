@@ -28,21 +28,21 @@ class MCPReadinessFallbackPolicy:
     """Masked rule configuration for readiness incidents whose delivery has not yet been attempted."""
 
     version: int
-    """ Monotonic fallback configuration version. """
+    """Monotonic fallback configuration version."""
     enabled: bool
-    """ Whether this configuration supplies a fallback to new delivery incidents. """
+    """Whether this configuration supplies a fallback to new delivery incidents."""
     provider: MCPReadinessFallbackPolicyProvider | Unset = UNSET
-    """ Configured fallback provider; omitted when disabled. """
+    """Configured fallback provider; omitted when disabled."""
     region: MCPReadinessFallbackPolicyRegion | Unset = UNSET
-    """ Configured PagerDuty fallback region. """
+    """Configured PagerDuty fallback region."""
     integration_key_masked: MCPReadinessFallbackPolicyIntegrationKeyMasked | Unset = UNSET
-    """ Fixed mask for the PagerDuty fallback credential. """
+    """Fixed mask for the PagerDuty fallback credential."""
     webhook_url: str | Unset = UNSET
-    """ Configured public fallback address; omitted when disabled. """
+    """Configured public fallback address; omitted when disabled."""
     webhook_secret_sealed_masked: str | Unset = UNSET
-    """ Constant mask for the stored fallback secret; omitted when disabled. """
+    """Constant mask for the stored fallback secret; omitted when disabled."""
     after_failures: int | Unset = UNSET
-    """ Configured threshold of completed failed primary dispatches. """
+    """Configured threshold of completed failed primary dispatches."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

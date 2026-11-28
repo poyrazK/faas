@@ -20,13 +20,12 @@ class ProfileCanaryGatePolicy:
 
     confirmations: int = 2
     timeout_seconds: int = 1800
-    """ Must cover warmup plus all confirmation windows and ingestion grace. """
+    """Must cover warmup plus all confirmation windows and ingestion grace."""
     on_timeout: ProfileCanaryGatePolicyOnTimeout = "hold"
-    """ Continuing is an explicit acceptance of inconclusive profile evidence. Confirmed regressions remain held.
-    """
+    """Continuing is an explicit acceptance of inconclusive profile evidence. Confirmed regressions remain held."""
     auto_rollback: bool = False
-    """ Worker-only opt-in recovery for request-mode canaries to the exact current stable predecessor. Service
-    recovery uses the checked handoff flow. """
+    """Worker-only opt-in recovery for request-mode canaries to the exact current stable predecessor. Service
+    recovery uses the checked handoff flow."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

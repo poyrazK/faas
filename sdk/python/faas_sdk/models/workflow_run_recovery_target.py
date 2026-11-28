@@ -21,11 +21,11 @@ class WorkflowRunRecoveryTarget:
     run_id: UUID
     expected_resume_count: int
     failure_evidence_id: UUID | Unset = UNSET
-    """ Optional captured initial failure identity. Requires expected_resume_count zero and no recovery parent. Must
-    match retained app, workflow, run and failure status. """
+    """Optional captured initial failure identity. Requires expected_resume_count zero and no recovery parent. Must
+    match retained app, workflow, run and failure status."""
     parent_position: int | Unset = UNSET
-    """ Required only with parent_job_id. Unique position of the queued parent item whose saved failed outcome
-    matches this run and resume count. """
+    """Required only with parent_job_id. Unique position of the queued parent item whose saved failed outcome
+    matches this run and resume count."""
 
     def to_dict(self) -> dict[str, Any]:
         run_id = str(self.run_id)

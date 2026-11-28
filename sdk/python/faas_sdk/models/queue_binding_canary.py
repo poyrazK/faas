@@ -26,7 +26,7 @@ class QueueBindingCanary:
     published_at: datetime.datetime
     expires_at: datetime.datetime
     release_id: UUID | Unset = UNSET
-    """ Exact active reviewed release for a managed worker canary. """
+    """Exact active reviewed release for a managed worker canary."""
     reason: str | Unset = UNSET
     delivered_at: datetime.datetime | Unset = UNSET
     completed_at: datetime.datetime | Unset = UNSET

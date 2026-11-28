@@ -28,15 +28,15 @@ class CreateOrgAPIKeyRequest:
 
     label: str | Unset = UNSET
     scopes: list[CreateOrgAPIKeyRequestScopesItem] | Unset = UNSET
-    """ Requested permission set for the org-scoped key. Unknown scopes are rejected; github:manage controls
+    """Requested permission set for the org-scoped key. Unknown scopes are rejected; github:manage controls
     customer GitHub connection stored workflow; object-storage data scopes also require an explicit logical-bucket
-    grant. The legacy and org-scoped key vocabularies remain identical. """
+    grant. The legacy and org-scoped key vocabularies remain identical."""
     projects: list[str] | Unset = UNSET
-    """ Slugs of the organization's projects the key is limited to. Only an agent key can be limited; it then
-    reaches only those projects' apps and cannot carry Postgres scopes. Omit for every project. """
+    """Slugs of the organization's projects the key is limited to. Only an agent key can be limited; it then
+    reaches only those projects' apps and cannot carry Postgres scopes. Omit for every project."""
     approval_categories: list[CreateOrgAPIKeyRequestApprovalCategoriesItem] | Unset = UNSET
-    """ Kinds of action the organization's agent key must have a person approve; the organization's floor applies on
-    top. Omit for every kind, empty for none. """
+    """Kinds of action the organization's agent key must have a person approve; the organization's floor applies on
+    top. Omit for every kind, empty for none."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

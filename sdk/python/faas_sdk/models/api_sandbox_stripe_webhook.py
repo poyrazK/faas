@@ -18,10 +18,10 @@ class APISandboxStripeWebhook:
     """Owner-only synthetic Stripe event fixture for an automated run."""
 
     delivery_path: str
-    """ Sandbox app route without a query or fragment. """
+    """Sandbox app route without a query or fragment."""
     event_type: str
     data_object: APISandboxStripeWebhookDataObject
-    """ Fixture for Stripe data.object, up to 8 KiB as JSON. """
+    """Fixture for Stripe data.object, up to 8 KiB as JSON."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

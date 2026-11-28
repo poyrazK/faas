@@ -20,15 +20,15 @@ class ComposeProcess:
     """
 
     entrypoint: list[str] | Unset = UNSET
-    """ Replaces the image ENTRYPOINT and drops its CMD; the Compose command supplies the arguments. An empty array
-    clears the ENTRYPOINT. """
+    """Replaces the image ENTRYPOINT and drops its CMD; the Compose command supplies the arguments. An empty array
+    clears the ENTRYPOINT."""
     user: str | Unset = UNSET
-    """ User name or id, optionally with :group, resolved against the image's /etc/passwd and /etc/group. """
+    """User name or id, optionally with :group, resolved against the image's /etc/passwd and /etc/group."""
     working_dir: str | Unset = UNSET
-    """ Clean absolute working directory. """
+    """Clean absolute working directory."""
     stop_signal: ComposeProcessStopSignal | Unset = UNSET
     stop_grace_period_s: int | Unset = UNSET
-    """ Seconds between the stop signal and SIGKILL, capped by the plan. """
+    """Seconds between the stop signal and SIGKILL, capped by the plan."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

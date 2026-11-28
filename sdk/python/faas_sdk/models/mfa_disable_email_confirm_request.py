@@ -15,7 +15,7 @@ class MFADisableEmailConfirmRequest:
     """Body for consuming the emailed token after the cooldown."""
 
     token: str
-    """ Opaque base64url token from the confirmation email. """
+    """Opaque base64url token from the confirmation email."""
     csrf_token: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:

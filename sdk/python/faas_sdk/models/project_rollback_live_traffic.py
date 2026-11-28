@@ -17,12 +17,12 @@ class ProjectRollbackLiveTraffic:
     """Verification of configured 5xx budgets using production requests after an exact route generation was applied."""
 
     status: str
-    """ One of pending, awaiting_gateways, awaiting_traffic, insufficient_traffic, evidence_unavailable, passed, or
-    failed. """
+    """One of pending, awaiting_gateways, awaiting_traffic, insufficient_traffic, evidence_unavailable, passed, or
+    failed."""
     reason: str | Unset = UNSET
     deadline: datetime.datetime | Unset = UNSET
     observe_after: datetime.datetime | Unset = UNSET
-    """ Earliest observation time requested when rechecking after resume. """
+    """Earliest observation time requested when rechecking after resume."""
     checked_at: datetime.datetime | Unset = UNSET
     route_generation: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

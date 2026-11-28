@@ -19,10 +19,10 @@ class RollbackCrossedRelease:
 
     deployment_id: UUID
     status: str
-    """ The release task's status. A failed release may still have committed changes. """
+    """The release task's status. A failed release may still have committed changes."""
     started_at: datetime.datetime
     revision: int | Unset = UNSET
-    """ The deployment's vN revision. """
+    """The deployment's vN revision."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

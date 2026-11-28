@@ -17,9 +17,9 @@ class SecretEntryRequest:
 
     key: str
     reason: str
-    """ Shown to the owner on the entry page. """
+    """Shown to the owner on the entry page."""
     scope: str | Unset = UNSET
-    """ Env scope; empty selects default. """
+    """Env scope; empty selects default."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

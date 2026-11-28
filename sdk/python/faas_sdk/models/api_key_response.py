@@ -36,32 +36,32 @@ class APIKeyResponse:
 
     id: str
     org_id: UUID
-    """ Org the key was minted against. Always set — every `api_keys` row carries an org_id post-migration 00127.
-    Personal-org scoped keys stamp the caller's personal org id here. """
+    """Org the key was minted against. Always set — every `api_keys` row carries an org_id post-migration 00127.
+    Personal-org scoped keys stamp the caller's personal org id here."""
     prefix: str
-    """ First 16 chars of the key (e.g. `fp_live_abc12345…`). """
+    """First 16 chars of the key (e.g. `fp_live_abc12345…`)."""
     scopes: list[APIKeyResponseScopesItem]
-    """ Closed permission set attached to the key. github:manage controls customer GitHub connection stored
+    """Closed permission set attached to the key. github:manage controls customer GitHub connection stored
     workflow; storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a
-    matching per-bucket grant; admin remains full access. """
+    matching per-bucket grant; admin remains full access."""
     created_at: datetime.datetime
     label: None | str | Unset = UNSET
     last_used_at: datetime.datetime | None | Unset = UNSET
     expires_at: datetime.datetime | None | Unset = UNSET
-    """ When the key expires (RFC 3339). Absent on never-expiring admin keys. """
+    """When the key expires (RFC 3339). Absent on never-expiring admin keys."""
     status: APIKeyResponseStatus | Unset = UNSET
-    """ Status state machine. `active` = ready; `grace` = in the post-rotation window; `revoked` = terminal. """
+    """Status state machine. `active` = ready; `grace` = in the post-rotation window; `revoked` = terminal."""
     revoked_at: datetime.datetime | None | Unset = UNSET
-    """ When the key was revoked (RFC 3339). Absent on active/grace keys. """
+    """When the key was revoked (RFC 3339). Absent on active/grace keys."""
     rotated_from_id: None | str | Unset = UNSET
-    """ Predecessor key id when this row was minted by rotateKey. Absent on a fresh mint. """
+    """Predecessor key id when this row was minted by rotateKey. Absent on a fresh mint."""
     plaintext: None | str | Unset = UNSET
-    """ PRESENT ONLY on POST /v1/keys and POST /v1/keys/{id}/rotate responses. Never returned again. """
+    """PRESENT ONLY on POST /v1/keys and POST /v1/keys/{id}/rotate responses. Never returned again."""
     projects: list[str] | Unset = UNSET
-    """ Project slugs the key was limited to, on the create response of a limited agent key. """
+    """Project slugs the key was limited to, on the create response of a limited agent key."""
     approval_categories: list[APIKeyResponseApprovalCategoriesItem] | Unset = UNSET
-    """ Kinds of action the agent key must have a person approve, on the create response when the request chose
-    them. """
+    """Kinds of action the agent key must have a person approve, on the create response when the request chose
+    them."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

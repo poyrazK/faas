@@ -24,16 +24,16 @@ class ReleaseTimelineEvent:
     at: datetime.datetime
     kind: ReleaseTimelineEventKind
     summary: str
-    """ What happened, in one sentence. """
+    """What happened, in one sentence."""
     actor: str | Unset = UNSET
-    """ A person's email, or Gregale for automatic steps. """
+    """A person's email, or Gregale for automatic steps."""
     traffic_percent: int | Unset = UNSET
-    """ The release's traffic share after this event. """
+    """The release's traffic share after this event."""
     repeats: int | Unset = UNSET
-    """ Further holds with the same rule this event stands for. """
+    """Further holds with the same rule this event stands for."""
     decision: RolloutDecision | Unset = UNSET
-    """ Evidence behind one decision about a rollout: why a canary stage advanced, is held, or was aborted.
-    Aggregates only; no request payloads, routes, URLs or customer text. """
+    """Evidence behind one decision about a rollout: why a canary stage advanced, is held, or was aborted.
+    Aggregates only; no request payloads, routes, URLs or customer text."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -30,33 +30,33 @@ class RolloutDecision:
 
     kind: RolloutDecisionKind
     rule: RolloutDecisionRule
-    """ Closed set; the breaker rules reuse the canary_progression_circuit_breaker_total event names. """
+    """Closed set; the breaker rules reuse the canary_progression_circuit_breaker_total event names."""
     step: int
-    """ Zero-based canary step that was evaluated. """
+    """Zero-based canary step that was evaluated."""
     traffic_percent: int
-    """ The candidate's share during the observation window. """
+    """The candidate's share during the observation window."""
     decided_at: datetime.datetime
     summary: str | Unset = UNSET
-    """ The circuit breaker's aggregate-only reason. """
+    """The circuit breaker's aggregate-only reason."""
     window_start: datetime.datetime | Unset = UNSET
     window_end: datetime.datetime | Unset = UNSET
     stable_deployment_id: UUID | Unset = UNSET
     candidate: RolloutDecisionSample | Unset = UNSET
-    """ One side's aggregates over the observation window. Request counts are organic requests; probe counts are
-    reported separately. """
+    """One side's aggregates over the observation window. Request counts are organic requests; probe counts are
+    reported separately."""
     stable: RolloutDecisionSample | Unset = UNSET
-    """ One side's aggregates over the observation window. Request counts are organic requests; probe counts are
-    reported separately. """
+    """One side's aggregates over the observation window. Request counts are organic requests; probe counts are
+    reported separately."""
     probes_included: bool | Unset = UNSET
-    """ The 5xx sample included synthetic probes of the app. """
+    """The 5xx sample included synthetic probes of the app."""
     signals: RolloutDecisionSignals | Unset = UNSET
-    """ The candidate's OOM kills and both sides' liveness-driven restarts over the window. """
+    """The candidate's OOM kills and both sides' liveness-driven restarts over the window."""
     gates: list[ReleaseGateResult] | Unset = UNSET
-    """ The release gates judged with this decision. """
+    """The release gates judged with this decision."""
     rollback_skipped: str | Unset = UNSET
-    """ Post-release decisions only: why an automatic rollback did not take the release off: the problem code that
+    """Post-release decisions only: why an automatic rollback did not take the release off: the problem code that
     refused it, such as rollback_crosses_release, or rollback_failed when it ran and did not restore the previous
-    release. The regression was found; the release keeps serving until someone rolls back or ships a fix. """
+    release. The regression was found; the release keeps serving until someone rolls back or ships a fix."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

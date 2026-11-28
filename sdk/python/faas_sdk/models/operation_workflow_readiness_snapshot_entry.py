@@ -30,59 +30,58 @@ class OperationWorkflowReadinessSnapshotEntry:
     """One saved transition identity and stable evidence summaries for comparison within the same ownership scope."""
 
     subject: OperationSubject
-    """ Immutable public business correlation metadata. Captured at admission and preserved through recovery and
-    redeploy. Never an ownership or authorization claim. """
+    """Immutable public business correlation metadata. Captured at admission and preserved through recovery and
+    redeploy. Never an ownership or authorization claim."""
     workflow: str
-    """ ReadinessSnapshotEntry. Declared workflow name. """
+    """ReadinessSnapshotEntry. Declared workflow name."""
     instance_id: str
-    """ ReadinessSnapshotEntry. Application workflow instance identifier. """
+    """ReadinessSnapshotEntry. Application workflow instance identifier."""
     operation_id: UUID
-    """ ReadinessSnapshotEntry. Operation that reported the saved workflow state. """
+    """ReadinessSnapshotEntry. Operation that reported the saved workflow state."""
     state_revision: int
-    """ ReadinessSnapshotEntry. Application state revision observed at capture. """
+    """ReadinessSnapshotEntry. Application state revision observed at capture."""
     contract_version: int
-    """ ReadinessSnapshotEntry. Pinned workflow contract version at capture. """
+    """ReadinessSnapshotEntry. Pinned workflow contract version at capture."""
     operation: str
-    """ ReadinessSnapshotEntry. Target Operation of the saved transition. """
+    """ReadinessSnapshotEntry. Target Operation of the saved transition."""
     from_state: str
-    """ ReadinessSnapshotEntry. Declared source state of the saved transition. """
+    """ReadinessSnapshotEntry. Declared source state of the saved transition."""
     to_state: str
-    """ ReadinessSnapshotEntry. Declared destination state of the saved transition. """
+    """ReadinessSnapshotEntry. Declared destination state of the saved transition."""
     evaluated_at: datetime.datetime
-    """ ReadinessSnapshotEntry. Time of the shared per-workflow evidence evaluation or comparison completion. """
+    """ReadinessSnapshotEntry. Time of the shared per-workflow evidence evaluation or comparison completion."""
     ready: bool
-    """ ReadinessSnapshotEntry. Declared requirements were met without planned evidence at capture. """
+    """ReadinessSnapshotEntry. Declared requirements were met without planned evidence at capture."""
     reasons: list[OperationWorkflowReadinessSnapshotEntryReasonsItem]
-    """ ReadinessSnapshotEntry. Saved unmet declared requirement codes. """
+    """ReadinessSnapshotEntry. Saved unmet declared requirement codes."""
     advisories: list[OperationWorkflowReadinessSnapshotEntryAdvisoriesItem]
-    """ ReadinessSnapshotEntry. Saved reporting and verification context; advisories never determine readiness. """
+    """ReadinessSnapshotEntry. Saved reporting and verification context; advisories never determine readiness."""
     blocker_codes: list[str]
-    """ ReadinessSnapshotEntry. Sorted unique saved blocker codes for this target Operation. """
+    """ReadinessSnapshotEntry. Sorted unique saved blocker codes for this target Operation."""
     missing_milestones: list[str]
-    """ ReadinessSnapshotEntry. Saved missing planned milestone names. """
+    """ReadinessSnapshotEntry. Saved missing planned milestone names."""
     missing_dependency_workflows: list[str]
-    """ ReadinessSnapshotEntry. Saved prerequisite workflows without reported references. """
+    """ReadinessSnapshotEntry. Saved prerequisite workflows without reported references."""
     pending_verification_count: int
-    """ ReadinessSnapshotEntry. Exact saved pending verification obligation count before previews. """
+    """ReadinessSnapshotEntry. Exact saved pending verification obligation count before previews."""
     requirements_fingerprint: str
-    """ ReadinessSnapshotEntry. Digest of pinned contract version and declared edge requirements. """
+    """ReadinessSnapshotEntry. Digest of pinned contract version and declared edge requirements."""
     blockers_fingerprint: str
-    """ ReadinessSnapshotEntry. Order-independent digest of all target blocker details. """
+    """ReadinessSnapshotEntry. Order-independent digest of all target blocker details."""
     prerequisites_fingerprint: str
-    """ ReadinessSnapshotEntry. Digest of prerequisite statuses and evidence identities excluding moving ages and
-    evaluation clocks. """
+    """ReadinessSnapshotEntry. Digest of prerequisite statuses and evidence identities excluding moving ages and
+    evaluation clocks."""
     verifications_fingerprint: str
-    """ ReadinessSnapshotEntry. Order-independent digest of all retained pending target obligations before previews.
-    """
+    """ReadinessSnapshotEntry. Order-independent digest of all retained pending target obligations before previews."""
     reporting_fingerprint: str
-    """ ReadinessSnapshotEntry. Digest of reporting coverage counts and timing advisories excluding pending
-    verification. """
+    """ReadinessSnapshotEntry. Digest of reporting coverage counts and timing advisories excluding pending
+    verification."""
     platform_tenant_id: UUID | Unset = UNSET
-    """ ReadinessSnapshotEntry. Customer UUID present only in account snapshots. """
+    """ReadinessSnapshotEntry. Customer UUID present only in account snapshots."""
     evidence: list[OperationWorkflowReadinessEvidence] | Unset = UNSET
-    """ Bounded saved evidence inventory; older snapshots may omit it. """
+    """Bounded saved evidence inventory; older snapshots may omit it."""
     evidence_complete: bool | Unset = UNSET
-    """ True only when the saved evidence inventory covers every applicable observation. """
+    """True only when the saved evidence inventory covers every applicable observation."""
 
     def to_dict(self) -> dict[str, Any]:
         subject = self.subject.to_dict()

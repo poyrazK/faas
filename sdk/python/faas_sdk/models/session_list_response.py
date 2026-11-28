@@ -18,7 +18,7 @@ class SessionListResponse:
     """Body for `GET /v1/auth/sessions`."""
 
     sessions: list[SessionInfo]
-    """ Active sessions, newest first. Revoked rows are not returned. """
+    """Active sessions, newest first. Revoked rows are not returned."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

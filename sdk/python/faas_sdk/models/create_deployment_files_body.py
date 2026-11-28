@@ -24,31 +24,31 @@ T = TypeVar("T", bound="CreateDeploymentFilesBody")
 @_attrs_define
 class CreateDeploymentFilesBody:
     source: File | Unset = UNSET
-    """ Multipart file field — the source tarball or Dockerfile context. """
+    """Multipart file field — the source tarball or Dockerfile context."""
     dockerfile: bool | Unset = UNSET
     kind: CreateDeploymentFilesBodyKind | Unset = UNSET
     runtime: CreateDeploymentFilesBodyRuntime | Unset = UNSET
     healthcheck: str | Unset = UNSET
-    """ JSON startup readiness probe: exactly one HTTP path or standard gRPC health selector. """
+    """JSON startup readiness probe: exactly one HTTP path or standard gRPC health selector."""
     readiness_probe: str | Unset = UNSET
-    """ JSON steady-state readiness probe with the CreateDeploymentOverrides.readiness_probe shape. Overrides
-    gregale.yaml hosting.readiness_probe for this deployment. """
+    """JSON steady-state readiness probe with the CreateDeploymentOverrides.readiness_probe shape. Overrides
+    gregale.yaml hosting.readiness_probe for this deployment."""
     override_env: str | Unset = UNSET
-    """ JSON object of non-secret environment overrides applied to this deployment revision only; values follow the
-    plan's deployment override limits. """
+    """JSON object of non-secret environment overrides applied to this deployment revision only; values follow the
+    plan's deployment override limits."""
     source_root: str | Unset = UNSET
-    """ Optional repository-relative build directory. Empty or omitted uses the app's configured root; when the
+    """Optional repository-relative build directory. Empty or omitted uses the app's configured root; when the
     archive does not contain that directory and its own root holds a Dockerfile, package.json, requirements.txt,
-    pyproject.toml, go.mod or gregale.yaml, the archive root is used. '.' explicitly selects the archive root. """
+    pyproject.toml, go.mod or gregale.yaml, the archive root is used. '.' explicitly selects the archive root."""
     scope: str | Unset = UNSET
-    """ Named environment scope read by the developer deployment; omitted uses default. """
+    """Named environment scope read by the developer deployment; omitted uses default."""
     source_url: str | Unset = UNSET
-    """ Optional informational repository provenance URL. The server never fetches this value; the uploaded archive
-    remains the source of truth. """
+    """Optional informational repository provenance URL. The server never fetches this value; the uploaded archive
+    remains the source of truth."""
     commit_sha: str | Unset = UNSET
-    """ Optional lowercase hexadecimal Git commit identifier for deployment provenance. """
+    """Optional lowercase hexadecimal Git commit identifier for deployment provenance."""
     workflows: str | Unset = UNSET
-    """ JSON array of workflow definitions (plan-gated). """
+    """JSON array of workflow definitions (plan-gated)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

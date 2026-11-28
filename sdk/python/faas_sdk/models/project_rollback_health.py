@@ -17,11 +17,11 @@ class ProjectRollbackHealth:
     """Durable outcome of the configured HTTP health probes for the exact restored route."""
 
     status: str
-    """ One of pending, awaiting_gateways, awaiting_probe, stabilizing, passed, or failed. """
+    """One of pending, awaiting_gateways, awaiting_probe, stabilizing, passed, or failed."""
     deadline: datetime.datetime | Unset = UNSET
     checked_at: datetime.datetime | Unset = UNSET
     healthy_since: datetime.datetime | Unset = UNSET
-    """ First successful probe in the continuous stabilization window. """
+    """First successful probe in the continuous stabilization window."""
     route_generation: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

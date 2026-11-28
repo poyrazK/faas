@@ -22,12 +22,12 @@ class AppWebhookRetryDeliveryResponse:
     """
 
     delivery: AppWebhookDeliveryResponse
-    """ One row per (event × target) emission. The dispatcher mutates
+    """One row per (event × target) emission. The dispatcher mutates
     this row in place as attempts progress; the GET /deliveries
     endpoint returns this shape per row. attempt=7 + status='dead'
     is the DLQ state; the customer-facing retry endpoint flips a
     dead row back to status='pending' for one more shot.
-     """
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

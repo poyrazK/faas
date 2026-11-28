@@ -44,14 +44,14 @@ class WorkflowRecoveryOverview:
     truncated: bool
     issues: list[WorkflowRecoveryOverviewIssue]
     manual_retry_awaiting_review: int | Unset = UNSET
-    """ Undecided current enabled preview retry plans requiring a live status inspection; no freshness or readiness
-    guarantee. """
+    """Undecided current enabled preview retry plans requiring a live status inspection; no freshness or readiness
+    guarantee."""
     manual_retry_unresolved: int | Unset = UNSET
-    """ Approved retry reviews without a saved completion observation, including unapplied plans and reviews from
-    older policy versions. """
+    """Approved retry reviews without a saved completion observation, including unapplied plans and reviews from
+    older policy versions."""
     last_alert: WorkflowRecoveryOverviewAlert | Unset = UNSET
-    """ Delivery observations for frozen receipt receivers. Missing deliveries without an outbox entry are unknown.
-    No receivers is not delivered. """
+    """Delivery observations for frozen receipt receivers. Missing deliveries without an outbox entry are unknown.
+    No receivers is not delivered."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

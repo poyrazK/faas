@@ -30,33 +30,32 @@ class EdgeProtectionResponse:
     app_id: str
     range_: EdgeProtectionResponseRange
     source: str
-    """ Where the edge counts come from: prometheus, or degraded: <reason> when they are unavailable (counts are
-    then zero, not measured). """
+    """Where the edge counts come from: prometheus, or degraded: <reason> when they are unavailable (counts are
+    then zero, not measured)."""
     as_of: datetime.datetime
     pre_auth: EdgeProtectionResponsePreAuth
     validation_failures: list[EdgeProtectionResponseValidationFailuresItem]
-    """ kind=validate mismatches by validate_mode (block, observe, warn); zero counts are omitted. """
+    """kind=validate mismatches by validate_mode (block, observe, warn); zero counts are omitted."""
     rejections: list[EdgeProtectionResponseRejectionsItem]
-    """ Requests answered by an edge gate, largest count first; zero counts are omitted. """
+    """Requests answered by an edge gate, largest count first; zero counts are omitted."""
     waf: EdgeProtectionResponseWaf
-    """ kind=waf inspections. Sampled detections are never blocked; block rules' 403s also appear in rejections
-    under gate waf. """
+    """kind=waf inspections. Sampled detections are never blocked; block rules' 403s also appear in rejections
+    under gate waf."""
     challenge: EdgeProtectionResponseChallenge
-    """ kind=challenge decisions; its 403s also appear in rejections under gate challenge. """
+    """kind=challenge decisions; its 403s also appear in rejections under gate challenge."""
     penalty: EdgeProtectionResponsePenalty
-    """ Penalty boxes; refusals also appear in rejections under gate penalty. """
+    """Penalty boxes; refusals also appear in rejections under gate penalty."""
     attack_mode: EdgeAttackModeStatus
-    """ An app's attack mode. While it is on, every
+    """An app's attack mode. While it is on, every
     request without a challenge pass is challenged: browsers solve a
     short proof of work once and continue, verified search crawlers and
     requests with a verified API key, consumer key or JWT pass straight
     through, and other clients get 403 `challenge_required`. It always
     ends on its own at `expires_at`. Read from the rules, so it is
     current even when the edge-protection counts are degraded.
-     """
-    ai_crawlers: list[EdgeProtectionAICrawler]
-    """ Requests whose User-Agent names an AI crawler, largest first, counted before any edge rule acted on them.
     """
+    ai_crawlers: list[EdgeProtectionAICrawler]
+    """Requests whose User-Agent names an AI crawler, largest first, counted before any edge rule acted on them."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

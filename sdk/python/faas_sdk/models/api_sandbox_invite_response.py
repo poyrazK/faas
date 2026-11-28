@@ -18,9 +18,9 @@ class APISandboxInviteResponse:
     """Sandbox-specific bearer key and guide for using the isolated API."""
 
     sandbox: APISandboxResponse
-    """ Status and access details for a retained release's isolated API copy. """
+    """Status and access details for a retained release's isolated API copy."""
     token: str
-    """ Sandbox-only bearer credential. """
+    """Sandbox-only bearer credential."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

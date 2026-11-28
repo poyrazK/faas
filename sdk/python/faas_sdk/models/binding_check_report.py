@@ -45,17 +45,17 @@ class BindingCheckReport:
     blockers: list[BindingCheckFinding]
     warnings: list[BindingCheckFinding]
     queue_requirements: QueueReleaseRequirements | Unset = UNSET
-    """ Binding name to explicit required queue evidence. Names match ^[a-z][a-z0-9-]{0,62}$. consumer_readiness
+    """Binding name to explicit required queue evidence. Names match ^[a-z][a-z0-9-]{0,62}$. consumer_readiness
     requires one enabled push consumer with a healthy poll no older than thirty seconds; connectivity coverage
-    remains partial. """
+    remains partial."""
     object_storage_requirements: ObjectStorageReleaseRequirements | Unset = UNSET
-    """ Managed environment prefix to required canary mode in the selected scope. Prefixes match
+    """Managed environment prefix to required canary mode in the selected scope. Prefixes match
     ^[A-Z][A-Z0-9_]{0,47}$. read covers listing; read_write requires byte transfer; write and read_write require
-    successful cleanup. No implicit probes or writes. """
+    successful cleanup. No implicit probes or writes."""
     expected_deployment_id: UUID | Unset = UNSET
     require_application_ack: bool | Unset = UNSET
-    """ Whether this check required application self-attestations for current managed PostgreSQL/object-storage
-    secrets. """
+    """Whether this check required application self-attestations for current managed PostgreSQL/object-storage
+    secrets."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

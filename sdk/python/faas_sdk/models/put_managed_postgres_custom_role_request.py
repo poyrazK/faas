@@ -25,11 +25,11 @@ class PutManagedPostgresCustomRoleRequest:
 
     bypass_rls: bool | Unset = False
     granted_to: list[PutManagedPostgresCustomRoleRequestGrantedToItem] | Unset = UNSET
-    """ Access modes whose logins may SET ROLE to it; session is stored as read_write. """
+    """Access modes whose logins may SET ROLE to it; session is stored as read_write."""
     member_of: list[str] | Unset = UNSET
     default_for: list[PutManagedPostgresCustomRoleRequestDefaultForItem] | Unset = UNSET
-    """ When present, replaces the access modes whose logins start as this role; absent keeps the current ones that
-    are still granted. """
+    """When present, replaces the access modes whose logins start as this role; absent keeps the current ones that
+    are still granted."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

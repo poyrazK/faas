@@ -19,9 +19,9 @@ class ActivityActorResponse:
 
     type_: ActivityActorResponseType
     label: str
-    """ Actor name captured when the activity occurred. """
+    """Actor name captured when the activity occurred."""
     account_id: UUID | Unset = UNSET
-    """ Present for a locally-known human actor. """
+    """Present for a locally-known human actor."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -21,10 +21,10 @@ class DeploymentConfigurationStatus:
     """
 
     complete: bool
-    """ True when no deferred cron activation is recorded or the tracked intent was activated. """
+    """True when no deferred cron activation is recorded or the tracked intent was activated."""
     crons: DeploymentCronActivationStatus
-    """ The latest retained cron intent for this deployment. Activated records historical completion even after a
-    later deployment changes schedules. """
+    """The latest retained cron intent for this deployment. Activated records historical completion even after a
+    later deployment changes schedules."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

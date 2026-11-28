@@ -31,18 +31,17 @@ class OperationWorkflowConditionRefreshProgressInstance:
     """
 
     subject: OperationSubject
-    """ Immutable public business correlation metadata. Captured at admission and preserved through recovery and
-    redeploy. Never an ownership or authorization claim. """
+    """Immutable public business correlation metadata. Captured at admission and preserved through recovery and
+    redeploy. Never an ownership or authorization claim."""
     state: OperationWorkflowState
-    """ Latest app-reported state for one declared workflow instance, including terminal and staleness indicators.
-    """
+    """Latest app-reported state for one declared workflow instance, including terminal and staleness indicators."""
     baseline_overdue_condition_count: int
     newer_report_condition_count: int
     statuses: list[OperationWorkflowConditionRefreshProgressCount]
     changes_truncated: bool
     changes: list[OperationWorkflowConditionRefreshProgressChange]
-    """ First 16 overdue baseline identities in canonical order with before and optional exact-identity after
-    evidence; status counts remain exact. """
+    """First 16 overdue baseline identities in canonical order with before and optional exact-identity after
+    evidence; status counts remain exact."""
     platform_tenant_id: UUID | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:

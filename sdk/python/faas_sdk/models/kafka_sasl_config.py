@@ -22,12 +22,12 @@ class KafkaSASLConfig:
     """
 
     mechanism: KafkaSASLMechanism
-    """ Kafka SASL mechanism. Closed-vocab. """
+    """Kafka SASL mechanism. Closed-vocab."""
     username: str
     password: str | Unset = UNSET
-    """ Plaintext-on-write only. Omit inside a supplied SASL block to preserve the stored password. """
+    """Plaintext-on-write only. Omit inside a supplied SASL block to preserve the stored password."""
     password_set: bool | Unset = UNSET
-    """ Response-only marker indicating that a password is configured; no credential material is returned. """
+    """Response-only marker indicating that a password is configured; no credential material is returned."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

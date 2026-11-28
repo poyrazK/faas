@@ -20,7 +20,7 @@ class ExecutionTaskBatchItem:
 
     label: str
     input_: Any | Unset = UNSET
-    """ JSON input for this batch item. """
+    """JSON input for this batch item."""
     input_files: list[ExecutionFileInput] | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:

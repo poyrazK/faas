@@ -30,27 +30,27 @@ class UpdateDeploymentTrafficRequest:
     """
 
     traffic_percent: int
-    """ Per-deployment traffic-split weight. 0 = no traffic (used during rollback). 100 = sole live deployment. """
+    """Per-deployment traffic-split weight. 0 = no traffic (used during rollback). 100 = sole live deployment."""
     expected_review: AppReleaseReview | Unset = UNSET
-    """ Atomic app configuration and serving-deployment identities used to fence release admission. """
+    """Atomic app configuration and serving-deployment identities used to fence release admission."""
     expected_serving_deployment_id: str | Unset = UNSET
-    """ Optional 32-hex or dashed deployment id. An explicit empty string requires no live sibling with positive
+    """Optional 32-hex or dashed deployment id. An explicit empty string requires no live sibling with positive
     traffic, for guarded first deployment promotion. If the condition changes at the transaction boundary, the
-    update returns 409 traffic_serving_changed without changing traffic. """
+    update returns 409 traffic_serving_changed without changing traffic."""
     expected_traffic: UpdateDeploymentTrafficRequestExpectedTraffic | Unset = UNSET
-    """ Optional split the change was planned from: every live release in the deployment's environment with positive
+    """Optional split the change was planned from: every live release in the deployment's environment with positive
     traffic, keyed by deployment id, mapped to its percent (1-100, summing to 100, at most 100 releases). If the
     split differs at the transaction boundary, the update returns 409 traffic_serving_changed without changing
-    traffic. Cannot be combined with expected_serving_deployment_id or expected_review. """
+    traffic. Cannot be combined with expected_serving_deployment_id or expected_review."""
     expected_mcp_readiness: MCPReadinessExpectation | Unset = UNSET
-    """ Exact fresh role observations required in the traffic transaction, independently of emergency overrides.
-    Mismatches return 409 without changing traffic. """
+    """Exact fresh role observations required in the traffic transaction, independently of emergency overrides.
+    Mismatches return 409 without changing traffic."""
     expected_mcp_access_policy: UpdateDeploymentTrafficRequestExpectedMcpAccessPolicy | Unset = UNSET
-    """ Optional account-wide stored MCP policy condition, checked in the traffic transaction. Changed overlapping
+    """Optional account-wide stored MCP policy condition, checked in the traffic transaction. Changed overlapping
     JWT rules return 409 mcp_access_policy_changed without changing traffic. When account_revision is supplied, the
     transaction also requires the unchanged account revision and fresh replay from every currently registered
     serving gateway. Gateway evidence is a database snapshot at admission, not runtime authorization or a lease on
-    fleet membership. """
+    fleet membership."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

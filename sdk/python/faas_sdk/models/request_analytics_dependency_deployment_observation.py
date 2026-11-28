@@ -19,30 +19,30 @@ class RequestAnalyticsDependencyDeploymentObservation:
     """
 
     deployment_id: str
-    """ Immutable deployment owning these sampled dependency observations. """
+    """Immutable deployment owning these sampled dependency observations."""
     samples: int
-    """ Retained dependency span observations attached to this deployment. """
+    """Retained dependency span observations attached to this deployment."""
     calls: int
-    """ Observed span sample count weighted by collapsed request-row count. """
+    """Observed span sample count weighted by collapsed request-row count."""
     error_calls: int
     error_rate_pct: float
-    """ Error share among this deployment's observed weighted calls. """
+    """Error share among this deployment's observed weighted calls."""
     p50_ms: int
     p95_ms: int
     p99_ms: int
     exclusive_p95_ms: int
     regression: bool
-    """ True when p95 rose by at least 25% or error rate rose by at least 2 percentage points. """
+    """True when p95 rose by at least 25% or error rate rose by at least 2 percentage points."""
     commit_sha: str | Unset = UNSET
     deployment_tag: str | Unset = UNSET
     deployment_created_at: str | Unset = UNSET
-    """ RFC 3339 creation time used to order comparable revisions. """
+    """RFC 3339 creation time used to order comparable revisions."""
     p95_change_pct: float | Unset = UNSET
-    """ Percentage change from the preceding comparable deployment, when its baseline is non-zero. """
+    """Percentage change from the preceding comparable deployment, when its baseline is non-zero."""
     error_rate_change_pct: float | Unset = UNSET
-    """ Error-rate change in percentage points from the preceding comparable deployment. """
+    """Error-rate change in percentage points from the preceding comparable deployment."""
     compared_to: str | Unset = UNSET
-    """ Tag, commit SHA, or deployment UUID used as the preceding revision baseline. """
+    """Tag, commit SHA, or deployment UUID used as the preceding revision baseline."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

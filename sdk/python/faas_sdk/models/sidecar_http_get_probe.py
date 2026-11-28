@@ -16,9 +16,9 @@ class SidecarHTTPGetProbe:
     """HTTP GET probe sent from inside the container."""
 
     path: str | Unset = UNSET
-    """ HTTP path; defaults to /. """
+    """HTTP path; defaults to /."""
     port: int | Unset = UNSET
-    """ HTTP container port; 0/omitted inherits the workload port. """
+    """HTTP container port; 0/omitted inherits the workload port."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

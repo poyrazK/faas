@@ -27,10 +27,10 @@ class OperationWorkflowObligationReopening:
     """
 
     source_sequence: int
-    """ Source notification sequence within the delivering readiness subscription. """
+    """Source notification sequence within the delivering readiness subscription."""
     binding: OperationWorkflowObligationTargetBinding
-    """ One obligation-cycle and exact-case target binding, recorded with an authenticated actor and reason.
-    Unrelated edits preserve it; a new cycle never inherits it. Current readiness is independently reassessed. """
+    """One obligation-cycle and exact-case target binding, recorded with an authenticated actor and reason.
+    Unrelated edits preserve it; a new cycle never inherits it. Current readiness is independently reassessed."""
     fulfilled_at: datetime.datetime
     reason: str
     action_kind: OperationWorkflowObligationReopeningActionKind

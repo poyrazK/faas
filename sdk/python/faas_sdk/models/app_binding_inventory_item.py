@@ -30,48 +30,48 @@ class AppBindingInventoryItem:
     type_: AppBindingInventoryItemType
     name: str
     binding: str
-    """ Logical binding name or environment key. Empty for outbound bindings. """
+    """Logical binding name or environment key. Empty for outbound bindings."""
     scope: str
-    """ Resource environment scope or app for an app-wide binding. """
+    """Resource environment scope or app for an app-wide binding."""
     access: str
     state: str
-    """ Configuration or provisioning state; never evidence of connectivity. """
+    """Configuration or provisioning state; never evidence of connectivity."""
     runtime_status: str
-    """ Last-known queue consumer liveness (healthy, stale or degraded), otherwise unknown. """
+    """Last-known queue consumer liveness (healthy, stale or degraded), otherwise unknown."""
     verification_status: str
-    """ Latest platform canary: passed, failed, unknown or stale. Managed edges without a known verification
+    """Latest platform canary: passed, failed, unknown or stale. Managed edges without a known verification
     contract remain unsupported. Deployment or configuration changes invalidate old evidence. Inventory does not run
-    probes. """
+    probes."""
     service_context: ServiceBindingInventoryContext | Unset = UNSET
-    """ Frozen deployment service edge and current reviewed route metadata. Only the named managed verification
-    contract can qualify this context; ordinary app receipts cannot. """
+    """Frozen deployment service edge and current reviewed route metadata. Only the named managed verification
+    contract can qualify this context; ordinary app receipts cannot."""
     service_target_deployment_id: UUID | Unset = UNSET
-    """ Exact service recipient selected explicitly or resolved from the managed reviewed release. """
+    """Exact service recipient selected explicitly or resolved from the managed reviewed release."""
     queue_canary: QueueBindingCanary | Unset = UNSET
-    """ Retained deployment-bound receipt for an explicitly authorized push queue completion probe. """
+    """Retained deployment-bound receipt for an explicitly authorized push queue completion probe."""
     queue_canary_supported: bool | Unset = UNSET
-    """ Whether the exact selected deployment and current consumer can admit a canary. """
+    """Whether the exact selected deployment and current consumer can admit a canary."""
     queue_canary_reason: str | Unset = UNSET
-    """ Sanitized reason canary publication is unavailable. """
+    """Sanitized reason canary publication is unavailable."""
     queue_environment: str | Unset = UNSET
-    """ Explicit queue environment; empty means shared legacy binding. Distinguishes app-wide scope from an
-    environment named app. Consumer-readiness policies require this field; older inventories omit it. """
+    """Explicit queue environment; empty means shared legacy binding. Distinguishes app-wide scope from an
+    environment named app. Consumer-readiness policies require this field; older inventories omit it."""
     verification: BindingVerification | Unset = UNSET
-    """ Sanitized durable evidence from the latest admitted service, PostgreSQL or object-storage task guest canary.
+    """Sanitized durable evidence from the latest admitted service, PostgreSQL or object-storage task guest canary.
     Object-storage verification records bucket listing or explicitly requested permission-aware object operations
-    and cleanup; inspect checks for coverage. Resident application adoption is not checked. """
+    and cleanup; inspect checks for coverage. Resident application adoption is not checked."""
     refresh: BindingRefresh | Unset = UNSET
-    """ Durable rolling restart handoff for a pending PostgreSQL or object-storage rotation. Completion does not
+    """Durable rolling restart handoff for a pending PostgreSQL or object-storage rotation. Completion does not
     imply fresh resident instances or successful verification. Not_queued means no retained outbox record was found;
-    unknown means progress could not be read. """
+    unknown means progress could not be read."""
     application_adoption: BindingApplicationAdoption | Unset = UNSET
-    """ Metadata-only application self-attestations for managed PostgreSQL or object-storage secrets. Counts refer
+    """Metadata-only application self-attestations for managed PostgreSQL or object-storage secrets. Counts refer
     to workload/secret pairs. Reads use a single state snapshot and include missing reports. Task guests, jobs,
     mirrors and unauthorized workloads are excluded. Receipts expire when secret versions change, independently of
     probe age. An older guest projection does not erase a newer application receipt. complete describes this
-    optional observation read; a read failure leaves default checks unchanged and blocks strict checks. """
+    optional observation read; a read failure leaves default checks unchanged and blocks strict checks."""
     observed_at: datetime.datetime | Unset = UNSET
-    """ Scheduler observation time. Absent when no observation exists. """
+    """Scheduler observation time. Absent when no observation exists."""
     http_url: str | Unset = UNSET
     https_env: str | Unset = UNSET
     https_url: str | Unset = UNSET
@@ -82,8 +82,8 @@ class AppBindingInventoryItem:
     consumer_state_reason: str | Unset = UNSET
     consumer_liveness: str | Unset = UNSET
     outbound_probe: OutboundBindingProbePolicy | Unset = UNSET
-    """ Explicit provider endpoint declared safe to probe using managed outbound admission. Queries, redirects and
-    unsuccessful expected statuses are unsupported. """
+    """Explicit provider endpoint declared safe to probe using managed outbound admission. Queries, redirects and
+    unsuccessful expected statuses are unsupported."""
     credential_configured: bool | Unset = UNSET
     allowed_methods: list[str] | Unset = UNSET
     allowed_path_prefixes: list[str] | Unset = UNSET

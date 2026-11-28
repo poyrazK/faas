@@ -36,7 +36,7 @@ class ProjectResponse:
     last_reconciliation_status: str | Unset = UNSET
     last_build_status: str | Unset = UNSET
     rollback_batch: ProjectRollbackBatch | Unset = UNSET
-    """ Recorded production project deployment membership and serving predecessors. """
+    """Recorded production project deployment membership and serving predecessors."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

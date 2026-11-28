@@ -22,24 +22,24 @@ class OperationWorkflowReviewResponseCheckInEvent:
     """
 
     source_notification_id: UUID
-    """ OperationWorkflowReviewResponseCheckInEvent.source_notification_id. Original risk alert identity. """
+    """OperationWorkflowReviewResponseCheckInEvent.source_notification_id. Original risk alert identity."""
     source_sequence: int
-    """ OperationWorkflowReviewResponseCheckInEvent.source_sequence. Original alert sequence within this inbox. """
+    """OperationWorkflowReviewResponseCheckInEvent.source_sequence. Original alert sequence within this inbox."""
     checked_at: datetime.datetime
-    """ OperationWorkflowReviewResponseCheckInEvent.checked_at. Periodic evaluation time. """
+    """OperationWorkflowReviewResponseCheckInEvent.checked_at. Periodic evaluation time."""
     check_in_at: datetime.datetime
-    """ OperationWorkflowReviewResponseCheckInEvent.check_in_at. Original missed response check-in; handoff does not
-    reset it. """
+    """OperationWorkflowReviewResponseCheckInEvent.check_in_at. Original missed response check-in; handoff does not
+    reset it."""
     previous_owner: str
-    """ OperationWorkflowReviewResponseCheckInEvent.previous_owner. Response owner before the overdue check. """
+    """OperationWorkflowReviewResponseCheckInEvent.previous_owner. Response owner before the overdue check."""
     owner: str
-    """ OperationWorkflowReviewResponseCheckInEvent.owner. Effective responsible team after guarded fallback. """
+    """OperationWorkflowReviewResponseCheckInEvent.owner. Effective responsible team after guarded fallback."""
     reassigned: bool
-    """ OperationWorkflowReviewResponseCheckInEvent.reassigned. Whether guarded fallback changed both response
-    responsibility and inbox ownership. """
+    """OperationWorkflowReviewResponseCheckInEvent.reassigned. Whether guarded fallback changed both response
+    responsibility and inbox ownership."""
     response: OperationWorkflowReviewResponse
-    """ OperationWorkflowReviewResponse. Human accountability record under the notification coordination revision
-    fence, independent of business workflow success. """
+    """OperationWorkflowReviewResponse. Human accountability record under the notification coordination revision
+    fence, independent of business workflow success."""
 
     def to_dict(self) -> dict[str, Any]:
         source_notification_id = str(self.source_notification_id)

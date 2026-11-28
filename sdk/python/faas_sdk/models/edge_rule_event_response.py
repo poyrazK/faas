@@ -28,31 +28,31 @@ class EdgeRuleEventResponse:
     id: str
     rule_id: str
     outcome: EdgeRuleEventResponseOutcome
-    """ matched (enforced rule) and logged (log-mode rule) are rule matches. detected is a kind=waf detection in a
+    """matched (enforced rule) and logged (log-mode rule) are rule matches. detected is a kind=waf detection in a
     sampled request; warned and blocked are kind=waf detections in-path by a warn or block rule (blocked requests
     were answered with 403). challenged, rejected, solved and failed are kind=challenge outcomes: the challenge page
     served to a browser, a request that is not a browser navigation answered with 403, a solution that earned a
     pass, and a solution answered with 403. An enforced challenge rule records these instead of matched. boxed is a
-    client put in a penalty box by the rule, recorded from the request whose refusal tipped it in. """
+    client put in a penalty box by the rule, recorded from the request whose refusal tipped it in."""
     occurred_at: datetime.datetime
     rule_name: str | Unset = UNSET
-    """ Empty once the rule is deleted. """
+    """Empty once the rule is deleted."""
     rule_kind: str | Unset = UNSET
     request_id: str | Unset = UNSET
     method: str | Unset = UNSET
     host: str | Unset = UNSET
     path: str | Unset = UNSET
-    """ Request path without the query string. """
+    """Request path without the query string."""
     client_ip: str | Unset = UNSET
-    """ Trusted client IP, when known. """
+    """Trusted client IP, when known."""
     country: str | Unset = UNSET
     user_agent: str | Unset = UNSET
     waf_rule_ids: list[int] | Unset = UNSET
-    """ CRS rule IDs that scored in a kind=waf detection. """
+    """CRS rule IDs that scored in a kind=waf detection."""
     waf_categories: list[str] | Unset = UNSET
-    """ CRS attack categories of a kind=waf detection (sqli, xss, lfi, ...). """
+    """CRS attack categories of a kind=waf detection (sqli, xss, lfi, ...)."""
     waf_score: int | Unset = UNSET
-    """ CRS inbound anomaly score of a kind=waf detection. """
+    """CRS inbound anomaly score of a kind=waf detection."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

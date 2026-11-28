@@ -23,18 +23,18 @@ class OperationWorkflowNextActionDigestPolicy:
     """
 
     owner: str
-    """ Nonblank trimmed control-free UTF-8 team label, at most 256 bytes. """
+    """Nonblank trimmed control-free UTF-8 team label, at most 256 bytes."""
     workflow: str | Unset = UNSET
-    """ Optional exact workflow selector, independent of the subscription discovery workflow. """
+    """Optional exact workflow selector, independent of the subscription discovery workflow."""
     action_kind: str | Unset = UNSET
-    """ Optional exact next-action kind supported by the work queue. """
+    """Optional exact next-action kind supported by the work queue."""
     action_trigger: OperationWorkflowNextActionDigestPolicyActionTrigger | Unset = UNSET
     cadence_seconds: int | Unset = 3600
-    """ Digest cadence, default one hour. The first evaluation is scheduled from subscription creation; retries
-    retain the due time. """
+    """Digest cadence, default one hour. The first evaluation is scheduled from subscription creation; retries
+    retain the due time."""
     soon_after_seconds: int | Unset = 86400
-    """ Approaching deadline window from each successful evaluation, default one day. Undated suggestions do not
-    qualify. """
+    """Approaching deadline window from each successful evaluation, default one day. Undated suggestions do not
+    qualify."""
 
     def to_dict(self) -> dict[str, Any]:
         owner = self.owner

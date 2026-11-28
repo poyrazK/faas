@@ -24,10 +24,10 @@ class GitHubWebhookActivity:
     commit_sha: str | Unset = UNSET
     processed_at: datetime.datetime | None | Unset = UNSET
     skip_reason: str | Unset = UNSET
-    """ Why a processed event deployed nothing: actions_trigger (production deploys come from a GitHub Actions
+    """Why a processed event deployed nothing: actions_trigger (production deploys come from a GitHub Actions
     workflow), branch_not_deployed, superseded (a newer commit reached the branch first), not_enabled,
     tag_not_branch_head, no_binding, skip_marker, invalid_release_tag, release_tag_moved or ignored. Absent when the
-    event did its work. """
+    event did its work."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

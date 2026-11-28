@@ -40,49 +40,48 @@ class OperationWorkflowReadinessFollowUpOptions:
     """Selectors for the live retained follow-up queue; offset pages may move as coordination is edited."""
 
     scope: str
-    """ OperationWorkflowReadinessFollowUpOptions.scope. Follow-up queue selector; customer tenant derives from
-    authentication. """
+    """OperationWorkflowReadinessFollowUpOptions.scope. Follow-up queue selector; customer tenant derives from
+    authentication."""
     view: OperationWorkflowReadinessFollowUpOptionsView | Unset = UNSET
-    """ Default follow-up view or cross-case next-action rows. Next-action view uses action owners and deadlines and
-    rejects reminder/business-impact selectors. """
+    """Default follow-up view or cross-case next-action rows. Next-action view uses action owners and deadlines and
+    rejects reminder/business-impact selectors."""
     action_kind: str | Unset = UNSET
-    """ Exact next-action kind; requires view=next_actions. """
+    """Exact next-action kind; requires view=next_actions."""
     action_trigger: OperationWorkflowReadinessFollowUpOptionsActionTrigger | Unset = UNSET
-    """ Action trigger selector; requires view=next_actions. """
+    """Action trigger selector; requires view=next_actions."""
     impact_priority: OperationWorkflowReadinessFollowUpOptionsImpactPriority | Unset = UNSET
-    """ OperationWorkflowReadinessFollowUpOptions.impact_priority. Exact unresolved review priority filter. """
+    """OperationWorkflowReadinessFollowUpOptions.impact_priority. Exact unresolved review priority filter."""
     impact_kind: OperationWorkflowReadinessFollowUpOptionsImpactKind | Unset = UNSET
-    """ OperationWorkflowReadinessFollowUpOptions.impact_kind. Exact protected business result category. """
+    """OperationWorkflowReadinessFollowUpOptions.impact_kind. Exact protected business result category."""
     impact_code: str | Unset = UNSET
-    """ OperationWorkflowReadinessFollowUpOptions.impact_code. Exact protected result code, requires impact_kind.
-    """
+    """OperationWorkflowReadinessFollowUpOptions.impact_code. Exact protected result code, requires impact_kind."""
     sort: OperationWorkflowReadinessFollowUpOptionsSort | Unset = UNSET
-    """ OperationWorkflowReadinessFollowUpOptions.sort. Due by default; business_impact orders overdue first, then
-    declared unresolved review priority and due time before pagination. """
+    """OperationWorkflowReadinessFollowUpOptions.sort. Due by default; business_impact orders overdue first, then
+    declared unresolved review priority and due time before pagination."""
     app_id: UUID | Unset = UNSET
-    """ OperationWorkflowReadinessFollowUpOptions.app_id. Follow-up queue selector; customer tenant derives from
-    authentication. """
+    """OperationWorkflowReadinessFollowUpOptions.app_id. Follow-up queue selector; customer tenant derives from
+    authentication."""
     tenant_id: UUID | Unset = UNSET
-    """ OperationWorkflowReadinessFollowUpOptions.tenant_id. Follow-up queue selector; customer tenant derives from
-    authentication. """
+    """OperationWorkflowReadinessFollowUpOptions.tenant_id. Follow-up queue selector; customer tenant derives from
+    authentication."""
     owner: str | Unset = UNSET
-    """ OperationWorkflowReadinessFollowUpOptions.owner. Follow-up queue selector; customer tenant derives from
-    authentication. """
+    """OperationWorkflowReadinessFollowUpOptions.owner. Follow-up queue selector; customer tenant derives from
+    authentication."""
     workflow: str | Unset = UNSET
-    """ OperationWorkflowReadinessFollowUpOptions.workflow. Follow-up queue selector; customer tenant derives from
-    authentication. """
+    """OperationWorkflowReadinessFollowUpOptions.workflow. Follow-up queue selector; customer tenant derives from
+    authentication."""
     due: OperationWorkflowReadinessFollowUpOptionsDue | Unset = UNSET
-    """ OperationWorkflowReadinessFollowUpOptions.due. Follow-up queue selector; customer tenant derives from
-    authentication. """
+    """OperationWorkflowReadinessFollowUpOptions.due. Follow-up queue selector; customer tenant derives from
+    authentication."""
     offset: int | Unset = UNSET
-    """ OperationWorkflowReadinessFollowUpOptions.offset. Follow-up queue selector; customer tenant derives from
-    authentication. """
+    """OperationWorkflowReadinessFollowUpOptions.offset. Follow-up queue selector; customer tenant derives from
+    authentication."""
     limit: int | Unset = UNSET
-    """ OperationWorkflowReadinessFollowUpOptions.limit. Follow-up queue selector; customer tenant derives from
-    authentication. """
+    """OperationWorkflowReadinessFollowUpOptions.limit. Follow-up queue selector; customer tenant derives from
+    authentication."""
     reminder_only: bool | Unset = UNSET
-    """ OperationWorkflowReadinessFollowUpOptions.reminder_only. Select only active published due reminders;
-    defaults to false. """
+    """OperationWorkflowReadinessFollowUpOptions.reminder_only. Select only active published due reminders;
+    defaults to false."""
 
     def to_dict(self) -> dict[str, Any]:
         scope = self.scope

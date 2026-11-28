@@ -33,52 +33,52 @@ class OperationWorkflowReadinessCompletion:
     """
 
     outcome: OperationWorkflowReadinessCompletionOutcome
-    """ OperationWorkflowReadinessCompletion.outcome. Retained follow-up completion value; never changes application
-    evidence. """
+    """OperationWorkflowReadinessCompletion.outcome. Retained follow-up completion value; never changes application
+    evidence."""
     note: str
-    """ OperationWorkflowReadinessCompletion.note. Retained follow-up completion value; never changes application
-    evidence. """
+    """OperationWorkflowReadinessCompletion.note. Retained follow-up completion value; never changes application
+    evidence."""
     evidence_operation_ids: list[UUID]
-    """ OperationWorkflowReadinessCompletion.evidence_operation_ids. Retained follow-up completion value; never
-    changes application evidence. """
+    """OperationWorkflowReadinessCompletion.evidence_operation_ids. Retained follow-up completion value; never
+    changes application evidence."""
     completed_at: datetime.datetime
-    """ OperationWorkflowReadinessCompletion.completed_at. Retained follow-up completion value; never changes
-    application evidence. """
+    """OperationWorkflowReadinessCompletion.completed_at. Retained follow-up completion value; never changes
+    application evidence."""
     completed_by: str
-    """ OperationWorkflowReadinessCompletion.completed_by. Retained follow-up completion value; never changes
-    application evidence. """
+    """OperationWorkflowReadinessCompletion.completed_by. Retained follow-up completion value; never changes
+    application evidence."""
     evidence: OperationWorkflowReadinessCompletionEvidence
-    """ Server-observed advisory evidence before the revision-checked completion write. Workflow reports may change
-    after this observation. Explicit boundaries never imply readiness. """
+    """Server-observed advisory evidence before the revision-checked completion write. Workflow reports may change
+    after this observation. Explicit boundaries never imply readiness."""
     playbook_review_after_seconds: int | Unset = UNSET
-    """ OperationWorkflowReadinessCompletion.playbook_review_after_seconds. Optional review window after business-
-    aware playbook completion; zero disables. Monitoring also ends with source inbox retention. """
+    """OperationWorkflowReadinessCompletion.playbook_review_after_seconds. Optional review window after business-
+    aware playbook completion; zero disables. Monitoring also ends with source inbox retention."""
     playbook_outcome: OperationWorkflowPlaybookCompletionOutcome | Unset = UNSET
-    """ OperationWorkflowPlaybookCompletionOutcome. Immutable human disposition and exact scoped advisory
-    application evidence observed before completion; neither establishes causation nor authorizes execution. """
+    """OperationWorkflowPlaybookCompletionOutcome. Immutable human disposition and exact scoped advisory
+    application evidence observed before completion; neither establishes causation nor authorizes execution."""
     escalation_policy: OperationWorkflowReadinessOutcomeEscalationPolicy | Unset = UNSET
-    """ Opt-in deadline escalation policy frozen at completion. Requires an outcome watch and future outcome
-    deadline. Schedules one assigned follow-up on the deadline notification; never executes business actions. """
+    """Opt-in deadline escalation policy frozen at completion. Requires an outcome watch and future outcome
+    deadline. Schedules one assigned follow-up on the deadline notification; never executes business actions."""
     watch_outcome: bool | Unset = UNSET
-    """ OperationWorkflowReadinessCompletion.watch_outcome. Opt in at completion to observe a pending or unknown
+    """OperationWorkflowReadinessCompletion.watch_outcome. Opt in at completion to observe a pending or unknown
     business result; requires expected_outcome_code and a source workflow. The watch expires with source inbox
-    retention. """
+    retention."""
     outcome_deadline_at: datetime.datetime | Unset = UNSET
-    """ OperationWorkflowReadinessCompletion.outcome_deadline_at. Optional future UTC deadline requiring
+    """OperationWorkflowReadinessCompletion.outcome_deadline_at. Optional future UTC deadline requiring
     watch_outcome. The first successful due check without an observed achieved outcome emits one notice; this is not
-    business failure or a historical deadline verdict. """
+    business failure or a historical deadline verdict."""
     expected_outcome_code: str | Unset = UNSET
-    """ OperationWorkflowReadinessCompletion.expected_outcome_code. Optional caller-selected terminal outcome slug
+    """OperationWorkflowReadinessCompletion.expected_outcome_code. Optional caller-selected terminal outcome slug
     compared with application reports for the source workflow; never defines or modifies application success rules.
-    """
+   """
     business_outcome: OperationWorkflowReadinessBusinessOutcome | Unset = UNSET
-    """ Advisory comparison of the expected terminal outcome with a scoped retained application report. Missing
+    """Advisory comparison of the expected terminal outcome with a scoped retained application report. Missing
     state, stale reports, contract changes, older revisions and terminal reports without outcome codes remain
     unknown. Explicit outcome codes do not imply causation or authorize execution. Completion snapshots are
-    immutable; current checks are live reads. """
+    immutable; current checks are live reads."""
     watch_verification: bool | Unset = UNSET
-    """ OperationWorkflowReadinessCompletion.watch_verification. Opt in at completion to watch up to 16 currently
-    pending saved resolutions; requires comparable current pending evidence. """
+    """OperationWorkflowReadinessCompletion.watch_verification. Opt in at completion to watch up to 16 currently
+    pending saved resolutions; requires comparable current pending evidence."""
 
     def to_dict(self) -> dict[str, Any]:
         outcome: str = self.outcome

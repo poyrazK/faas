@@ -15,11 +15,11 @@ class PrewarmRequest:
     """Schedule temporary capacity restoration ahead of a demand window."""
 
     count: int
-    """ Desired number of live instances during the window; normal plan and ledger caps still apply. """
+    """Desired number of live instances during the window; normal plan and ledger caps still apply."""
     wake_at: datetime.datetime
-    """ Start of the expected demand window. """
+    """Start of the expected demand window."""
     expires_at: datetime.datetime
-    """ End of the temporary intent; must be after wake_at. """
+    """End of the temporary intent; must be after wake_at."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -19,23 +19,23 @@ class OperationWorkflowPlaybookEvidenceWatchRequest:
     """
 
     subscription_id: UUID
-    """ OperationWorkflowPlaybookEvidenceWatchRequest.subscription_id. Existing inbox destination in the same
-    application, environment, and caller access boundary. """
+    """OperationWorkflowPlaybookEvidenceWatchRequest.subscription_id. Existing inbox destination in the same
+    application, environment, and caller access boundary."""
     progress_revision: int
-    """ OperationWorkflowPlaybookEvidenceWatchRequest.progress_revision. Expected exact human checklist revision;
-    stale observations conflict. """
+    """OperationWorkflowPlaybookEvidenceWatchRequest.progress_revision. Expected exact human checklist revision;
+    stale observations conflict."""
     revision: int
-    """ OperationWorkflowPlaybookEvidenceWatchRequest.revision. Watch configuration revision. Zero creates; polling
-    leaves it unchanged. """
+    """OperationWorkflowPlaybookEvidenceWatchRequest.revision. Watch configuration revision. Zero creates; polling
+    leaves it unchanged."""
     enabled: bool
-    """ OperationWorkflowPlaybookEvidenceWatchRequest.enabled. Explicit monitoring preference; enabling establishes
-    a silent baseline. """
+    """OperationWorkflowPlaybookEvidenceWatchRequest.enabled. Explicit monitoring preference; enabling establishes
+    a silent baseline."""
     owner: str
-    """ OperationWorkflowPlaybookEvidenceWatchRequest.owner. Responsible team label assigned to new inbox
-    deliveries; no external destination. """
+    """OperationWorkflowPlaybookEvidenceWatchRequest.owner. Responsible team label assigned to new inbox
+    deliveries; no external destination."""
     watch_id: UUID | Unset = UNSET
-    """ OperationWorkflowPlaybookEvidenceWatchRequest.watch_id. Required current watch UUID when changing
-    configuration; omit for a new watch. Prevents stale edits after a stopped slot is reclaimed. """
+    """OperationWorkflowPlaybookEvidenceWatchRequest.watch_id. Required current watch UUID when changing
+    configuration; omit for a new watch. Prevents stale edits after a stopped slot is reclaimed."""
 
     def to_dict(self) -> dict[str, Any]:
         subscription_id = str(self.subscription_id)

@@ -15,7 +15,7 @@ class OutboundAIUserUsageExportRow:
     """One NDJSON line of a per-end-user usage export; CSV rows carry the same fields in this order."""
 
     end_user: str
-    """ X-Gregale-AI-User value; "~other" collects end users beyond the daily cap. """
+    """X-Gregale-AI-User value; "~other" collects end users beyond the daily cap."""
     requests: int
     error_requests: int
     input_tokens: int

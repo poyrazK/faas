@@ -24,12 +24,11 @@ class OperationWorkflowRelatedInstance:
     """One-hop retained state resolution. Terminal without a required outcome does not establish business success."""
 
     dependency: OperationWorkflowDependency
-    """ Direct prerequisite in the same application/customer/environment. References may have no retained state.
-    Self references and duplicate targets are rejected. """
+    """Direct prerequisite in the same application/customer/environment. References may have no retained state.
+    Self references and duplicate targets are rejected."""
     status: OperationWorkflowRelatedInstanceStatus
     state: OperationWorkflowState | Unset = UNSET
-    """ Latest app-reported state for one declared workflow instance, including terminal and staleness indicators.
-    """
+    """Latest app-reported state for one declared workflow instance, including terminal and staleness indicators."""
 
     def to_dict(self) -> dict[str, Any]:
         dependency = self.dependency.to_dict()

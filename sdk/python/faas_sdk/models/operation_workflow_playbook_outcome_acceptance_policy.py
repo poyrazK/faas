@@ -16,9 +16,9 @@ class OperationWorkflowPlaybookOutcomeAcceptancePolicy:
     """
 
     alternative_outcome_codes: list[str]
-    """ OperationWorkflowPlaybookOutcomeAcceptancePolicy.alternative_outcome_codes. Distinct application-defined
+    """OperationWorkflowPlaybookOutcomeAcceptancePolicy.alternative_outcome_codes. Distinct application-defined
     terminal outcome slugs, excluding the primary expected outcome. Sorted canonically; never overrides application
-    reports or the primary deadline target. """
+    reports or the primary deadline target."""
 
     def to_dict(self) -> dict[str, Any]:
         alternative_outcome_codes = self.alternative_outcome_codes

@@ -13,7 +13,7 @@ class SetManagedPostgresWakeWithAppRequest:
     """Whether a scale-to-zero database starts when an app bound to it wakes."""
 
     enabled: bool
-    """ True starts the database with its app; false leaves it to start on the app's first query. """
+    """True starts the database with its app; false leaves it to start on the app's first query."""
 
     def to_dict(self) -> dict[str, Any]:
         enabled = self.enabled

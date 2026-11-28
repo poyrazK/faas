@@ -29,22 +29,22 @@ class OperationWorkflowPlaybookDependencyState:
     """
 
     outcome_code: str
-    """ OperationWorkflowPlaybookDependencyState.outcome_code. Exact pinned outcome list. """
+    """OperationWorkflowPlaybookDependencyState.outcome_code. Exact pinned outcome list."""
     item_index: int
-    """ OperationWorkflowPlaybookDependencyState.item_index. Local immutable step index. """
+    """OperationWorkflowPlaybookDependencyState.item_index. Local immutable step index."""
     label: str
-    """ OperationWorkflowPlaybookDependencyState.label. Exact pinned step label. """
+    """OperationWorkflowPlaybookDependencyState.label. Exact pinned step label."""
     status: OperationWorkflowPlaybookDependencyStateStatus
-    """ OperationWorkflowPlaybookDependencyState.status. Observed human review status. """
+    """OperationWorkflowPlaybookDependencyState.status. Observed human review status."""
     owner: str
-    """ OperationWorkflowPlaybookDependencyState.owner. Current checklist step owner; inbox overrides remain
-    separate. """
+    """OperationWorkflowPlaybookDependencyState.owner. Current checklist step owner; inbox overrides remain
+    separate."""
     readiness: OperationWorkflowPlaybookStepReadiness
-    """ OperationWorkflowPlaybookStepReadiness. Human review dependency status, not business state or execution
-    authority. """
+    """OperationWorkflowPlaybookStepReadiness. Human review dependency status, not business state or execution
+    authority."""
     regression: OperationWorkflowReadinessOutcomeEscalationReference | Unset = UNSET
-    """ Reference to the single retained escalation notification in the same subscription. Pruning does not recreate
-    escalations; links may expire. """
+    """Reference to the single retained escalation notification in the same subscription. Pruning does not recreate
+    escalations; links may expire."""
 
     def to_dict(self) -> dict[str, Any]:
         outcome_code = self.outcome_code

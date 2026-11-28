@@ -45,15 +45,15 @@ class WorkflowRecoveryPolicy:
     rate_per_second: int
     reason: str
     health_alerts: WorkflowRecoveryHealthAlertPolicy | Unset = UNSET
-    """ Opt-in recovery health incident notifications with explicit scheduler evaluation and sustained unhealthy
+    """Opt-in recovery health incident notifications with explicit scheduler evaluation and sustained unhealthy
     duration thresholds. Settings are replaced with the full recovery policy. Read-only health query thresholds
-    remain request-local. """
+    remain request-local."""
     hourly_execution_budget: int | Unset = UNSET
-    """ Required 1..100 for either automatic mode; zero or omitted in preview. Counts automatic job creation across
-    policy versions and automatic modes """
+    """Required 1..100 for either automatic mode; zero or omitted in preview. Counts automatic job creation across
+    policy versions and automatic modes"""
     pause_after_failures: int | Unset = UNSET
-    """ Required 1..10 for either automatic mode; zero or omitted in preview. Consecutive proven failures pause
-    automatic execution. """
+    """Required 1..10 for either automatic mode; zero or omitted in preview. Consecutive proven failures pause
+    automatic execution."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

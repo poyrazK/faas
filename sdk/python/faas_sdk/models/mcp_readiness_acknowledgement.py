@@ -26,15 +26,15 @@ class MCPReadinessAcknowledgement:
     created_at: datetime.datetime
     reason: str
     source: MCPReadinessAcknowledgementSource | Unset = UNSET
-    """ Provider provenance for this MCPReadinessAcknowledgement; absence denotes a local account action. """
+    """Provider provenance for this MCPReadinessAcknowledgement; absence denotes a local account action."""
     provider_event_id: str | Unset = UNSET
-    """ PagerDuty event associated with this MCPReadinessAcknowledgement. """
+    """PagerDuty event associated with this MCPReadinessAcknowledgement."""
     provider_incident_id: str | Unset = UNSET
-    """ Provider incident associated with this MCPReadinessAcknowledgement. """
+    """Provider incident associated with this MCPReadinessAcknowledgement."""
     provider_occurred_at: datetime.datetime | Unset = UNSET
-    """ Signed provider event time retained in this MCPReadinessAcknowledgement. """
+    """Signed provider event time retained in this MCPReadinessAcknowledgement."""
     expires_at: datetime.datetime | Unset = UNSET
-    """ Omitted for acknowledgement until release or incident resolution. """
+    """Omitted for acknowledgement until release or incident resolution."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

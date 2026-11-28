@@ -22,7 +22,7 @@ class UpdateAppLogDrainRequest:
     kind: UpdateAppLogDrainRequestKind | Unset = UNSET
     target_url: str | Unset = UNSET
     auth_header: str | Unset = UNSET
-    """ One Name: value pair; an empty value clears credentials. """
+    """One Name: value pair; an empty value clears credentials."""
     enabled: bool | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

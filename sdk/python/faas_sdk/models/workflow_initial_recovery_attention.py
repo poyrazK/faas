@@ -29,15 +29,15 @@ class WorkflowInitialRecoveryAttention:
     observed_at: datetime.datetime
     block_reason: str | Unset = UNSET
     diagnosis: WorkflowInitialEvidenceDiagnosis | Unset = UNSET
-    """ Consistent diagnosis of retained evidence for an initial recovery review. """
+    """Consistent diagnosis of retained evidence for an initial recovery review."""
     operator_action: str | Unset = UNSET
     evidence_url: str | Unset = UNSET
     cli_command: str | Unset = UNSET
     notification: WorkflowRecoveryAutomaticBlockedNotification | Unset = UNSET
-    """ Latest blocked or recovered evidence capture for a retry or initial-recovery review. Retry sequence
+    """Latest blocked or recovered evidence capture for a retry or initial-recovery review. Retry sequence
     increases only on a changed evidence diagnosis or proven clearance. Receivers are frozen at capture; queued
     identifies ledger admission rather than successful delivery. No receivers prevents historical replay to later
-    subscribers. """
+    subscribers."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

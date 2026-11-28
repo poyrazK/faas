@@ -20,7 +20,7 @@ class ManagedRealtimePrincipalMessageRequest:
 
     principal: str
     data_base64: str
-    """ Standard base64; at most 4096 decoded bytes. """
+    """Standard base64; at most 4096 decoded bytes."""
     binary: bool | Unset = False
     delivery: ManagedRealtimePrincipalMessageRequestDelivery | Unset = "live"
     message_id: str | Unset = UNSET

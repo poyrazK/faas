@@ -29,22 +29,22 @@ class PlanDetectedBy:
     """
 
     detector: PlanDetectedByDetector
-    """ closed vocabulary — the detector that won identity for this workload """
+    """closed vocabulary — the detector that won identity for this workload"""
     marker: str
-    """ Concrete source marker for the winning detector, such as compose.yaml or Procfile; excludes the workload
-    name. """
+    """Concrete source marker for the winning detector, such as compose.yaml or Procfile; excludes the workload
+    name."""
     priority: int
-    """ The detector's tiebreak weight; higher wins identity
+    """The detector's tiebreak weight; higher wins identity
     within a tier. Surfaced so the precedence order is visible
     on the wire rather than implied by server source.
-     """
+    """
     merged_from: list[PlanDetectedByMergedFromItem] | Unset = UNSET
-    """ Other detectors whose seeds collapsed into this workload
+    """Other detectors whose seeds collapsed into this workload
     under the (root_dir, name) merge key, deduplicated and
     deterministically ordered. Absent when the workload came
     from a single seed. Answers "why didn't my Procfile `web`
     get its own workload?" — it merged into the compose `web`.
-     """
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

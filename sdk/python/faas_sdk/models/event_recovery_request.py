@@ -30,48 +30,48 @@ class EventRecoveryRequest:
     """
 
     workflow_runs: WorkflowRunRecoveryPlan | Unset = UNSET
-    """ Explicit reviewed native workflow runs. Requires workflow mode and request_id; excludes event selections and
+    """Explicit reviewed native workflow runs. Requires workflow mode and request_id; excludes event selections and
     receipt protection. Each resume checks the original count and eligibility atomically with its job outcome.
     Concurrency pressure leaves the item pending; changed or unsafe targets are skipped. Queued means a resume was
     admitted, not execution success. No new runs are selected. The original normalized request returns the retained
-    job on retry; changes conflict. """
+    job on retry; changes conflict."""
     workflow_routing: EventWorkflowRecoveryPlan | Unset = UNSET
-    """ Explicit reviewed workflow acceptance recipients. Routing mode only, requires request_id and excludes parent
+    """Explicit reviewed workflow acceptance recipients. Routing mode only, requires request_id and excludes parent
     and backlog filters. Creation freezes the exact selection. Before each admission the worker atomically compares
     published version, replay count and routing generation; changes are skipped. Repeated request_id returns the
     retained job, even after completion; a different normalized plan or rate conflicts. Preview and preflight are
     advisory; workflow fence eligibility is unknown in preflight. Queued means routing recovery was admitted, not
-    workflow completion. """
+    workflow completion."""
     parent_job_id: UUID | Unset = UNSET
-    """ Select saved failed/dead-lettered execution items or saved failed native workflow items from a retained
+    """Select saved failed/dead-lettered execution items or saved failed native workflow items from a retained
     terminal recovery in the same account/app. Native workflow retries require explicit parent_position and the
     saved resume count for every target, and the same workflow name. Changed runs are rejected at creation or
-    skipped at admission. Does not follow newer replays. """
+    skipped at admission. Does not follow newer replays."""
     request_id: UUID | Unset = UNSET
-    """ Required for workflow_runs, workflow_routing and on child creation; optional on child preview. Account-
+    """Required for workflow_runs, workflow_routing and on child creation; optional on child preview. Account-
     scoped durable idempotency while the job is retained. Repeating the normalized selection returns its existing
     job; different selection/app with the same UUID conflicts. Only allowed with parent_job_id, workflow_runs or
-    workflow_routing. Operator reason is excluded from comparison and the original audit reason wins. """
+    workflow_routing. Operator reason is excluded from comparison and the original audit reason wins."""
     reason: str | Unset = UNSET
-    """ Optional operator reason, limited to 512 UTF-8 bytes without control characters. Stored only in audit
-    history; omitted from frozen selection. Preview does not record it. """
+    """Optional operator reason, limited to 512 UTF-8 bytes without control characters. Stored only in audit
+    history; omitted from frozen selection. Preview does not record it."""
     mode: EventRecoveryRequestMode | Unset = "routing"
     outcome: EventRecoveryRequestOutcome | Unset = UNSET
-    """ Execution mode only; omitted selects both replayable outcomes. """
+    """Execution mode only; omitted selects both replayable outcomes."""
     subscription_id: str | Unset = UNSET
     event_source: str | Unset = UNSET
     event_type: str | Unset = UNSET
     failure_code: str | Unset = UNSET
     min_age_seconds: int | Unset = 0
-    """ Minimum age of the recorded terminal failure. """
+    """Minimum age of the recorded terminal failure."""
     protect_receipts: bool | Unset = False
-    """ Hold selected retained receipts from pruning while their items are pending and the job is active and
+    """Hold selected retained receipts from pruning while their items are pending and the job is active and
     unexpired. Pausing does not extend the existing 24-hour lifetime. Preview acquires no holds. Held receipts still
-    count toward account storage limits. """
+    count toward account storage limits."""
     include_non_retryable: bool | Unset = False
     rate_per_second: int | Unset = 10
-    """ Maximum recipients processed per job in a one-second window; zero uses the default. Actual throughput
-    depends on scheduler load. """
+    """Maximum recipients processed per job in a one-second window; zero uses the default. Actual throughput
+    depends on scheduler load."""
 
     def to_dict(self) -> dict[str, Any]:
         workflow_runs: dict[str, Any] | Unset = UNSET

@@ -31,7 +31,7 @@ class MCPReadinessRole:
     catalog_format: MCPReadinessRoleCatalogFormat
     catalog_sha256: str
     monitor: MCPReadinessMonitorConfig | Unset = UNSET
-    """ Schedule, failure threshold and connection settings for continuous readiness probes. """
+    """Schedule, failure threshold and connection settings for continuous readiness probes."""
 
     def to_dict(self) -> dict[str, Any]:
         name = self.name

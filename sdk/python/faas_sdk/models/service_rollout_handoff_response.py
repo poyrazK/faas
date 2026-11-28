@@ -32,8 +32,8 @@ class ServiceRolloutHandoffResponse:
     phase: ServiceRolloutHandoffResponsePhase
     retry_count: int
     bindings_check: ServiceRolloutBindingGate | Unset = UNSET
-    """ Bounded progress of an exact binding check at the service routing boundary. Passed confirms the routing
-    transaction; scheduler ACK and drain completion are reported by the enclosing handoff phase. """
+    """Bounded progress of an exact binding check at the service routing boundary. Passed confirms the routing
+    transaction; scheduler ACK and drain completion are reported by the enclosing handoff phase."""
     predecessor_deployment_id: str | Unset = UNSET
     generation: int | Unset = UNSET
     expected_gateways: list[str] | Unset = UNSET

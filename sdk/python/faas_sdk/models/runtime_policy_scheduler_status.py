@@ -33,7 +33,7 @@ class RuntimePolicySchedulerStatus:
     state: RuntimePolicySchedulerStatusState
     stale: bool
     scheduler_node_id: str | Unset = UNSET
-    """ Scheduler owner node when this app is sharded. """
+    """Scheduler owner node when this app is sharded."""
     observed_at: datetime.datetime | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

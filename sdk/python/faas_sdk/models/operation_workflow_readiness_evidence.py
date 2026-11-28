@@ -24,21 +24,21 @@ class OperationWorkflowReadinessEvidence:
     """Compact app-reported evidence observation preserving prerequisite group/path or verification obligation identity."""
 
     category: OperationWorkflowReadinessEvidenceCategory
-    """ Evidence category. """
+    """Evidence category."""
     key: str
-    """ Stable scoped evidence identity digest. """
+    """Stable scoped evidence identity digest."""
     name: str
-    """ Human-readable requirement or blocker identity. """
+    """Human-readable requirement or blocker identity."""
     status: OperationWorkflowReadinessEvidenceStatus
-    """ Retained observation status. """
+    """Retained observation status."""
     fingerprint: str
-    """ Stable evidence content digest excluding moving age counters. """
+    """Stable evidence content digest excluding moving age counters."""
     owner: str | Unset = UNSET
-    """ Reported evidence owner. """
+    """Reported evidence owner."""
     operation_id: UUID | Unset = UNSET
-    """ Operation containing the reported evidence or expected verification. """
+    """Operation containing the reported evidence or expected verification."""
     invalidation_operation_id: UUID | Unset = UNSET
-    """ Operation containing the invalidating milestone. """
+    """Operation containing the invalidating milestone."""
 
     def to_dict(self) -> dict[str, Any]:
         category: str = self.category

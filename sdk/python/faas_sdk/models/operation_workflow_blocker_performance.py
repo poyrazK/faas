@@ -20,10 +20,10 @@ class OperationWorkflowBlockerPerformance:
     operation: str
     code: str
     owner: str
-    """ Application-reported blocker owner for this cohort group; empty means unassigned. """
+    """Application-reported blocker owner for this cohort group; empty means unassigned."""
     duration: OperationWorkflowDurationDistribution
-    """ One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
-    zero. """
+    """One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
+    zero."""
 
     def to_dict(self) -> dict[str, Any]:
         contract_version = self.contract_version

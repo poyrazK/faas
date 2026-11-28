@@ -29,17 +29,16 @@ class StoredWorkflowLiveBaselineHealth:
     """Coherent read-only evidence health observations for a named baseline head."""
 
     baseline: StoredWorkflowLiveBaseline
-    """ Immutable attributed receipt binding a named baseline revision to its retained suite and reviewed policy.
-    """
+    """Immutable attributed receipt binding a named baseline revision to its retained suite and reviewed policy."""
     evidence_status: StoredWorkflowLiveBaselineHealthEvidenceStatus
-    """ Availability of current recorded reports; not a gate verdict. """
+    """Availability of current recorded reports; not a gate verdict."""
     renewal_status: StoredWorkflowLiveBaselineHealthRenewalStatus
-    """ Whether this same suite qualifies for a new promotion now. """
+    """Whether this same suite qualifies for a new promotion now."""
     reasons: list[str]
     outdated: bool
     cases: list[StoredWorkflowLiveBaselineCaseHealth]
     age_seconds: float | Unset = UNSET
-    """ Oldest original retained run age. Negative values indicate future timestamps. """
+    """Oldest original retained run age. Negative values indicate future timestamps."""
     oldest_run_created_at: datetime.datetime | Unset = UNSET
     max_age_seconds: int | Unset = UNSET
 

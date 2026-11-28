@@ -25,29 +25,28 @@ class UpdateCronRequest:
 
     schedule: None | str | Unset = UNSET
     path: None | str | Unset = UNSET
-    """ HTTP target path on the cron's own app; starts with a single /. """
+    """HTTP target path on the cron's own app; starts with a single /."""
     enabled: bool | None | Unset = UNSET
     timezone: None | str | Unset = UNSET
-    """ IANA timezone; an empty value resets to UTC. """
+    """IANA timezone; an empty value resets to UTC."""
     skip_if_running: bool | None | Unset = UNSET
-    """ Enable or disable overlap skipping for scheduled fires. """
+    """Enable or disable overlap skipping for scheduled fires."""
     retry_max: int | None | Unset = UNSET
-    """ Replace the retry allowance for an existing deployment-command cron. """
+    """Replace the retry allowance for an existing deployment-command cron."""
     retry_backoff_seconds: int | None | Unset = UNSET
-    """ Replace the base retry delay for an existing deployment-command cron; the delay doubles after each failed
-    attempt. """
+    """Replace the base retry delay for an existing deployment-command cron; the delay doubles after each failed
+    attempt."""
     schedule_policy: SchedulePolicy | Unset = UNSET
-    """ Versioned recurring-work scheduling policy for Jobs and both HTTP and command Crons. HTTP replace waits for
+    """Versioned recurring-work scheduling policy for Jobs and both HTTP and command Crons. HTTP replace waits for
     a prior dispatched request to complete because the scheduler has no stop acknowledgement for a request already
-    delivered to the app. """
+    delivered to the app."""
     failure_rules: FailureRules | Unset = UNSET
-    """ Versioned explicit classification policy for failed Job partitions, command-Cron executions, and HTTP Cron
-    outcome codes. HTTP status is not a business outcome matcher. """
+    """Versioned explicit classification policy for failed Job partitions, command-Cron executions, and HTTP Cron
+    outcome codes. HTTP status is not a business outcome matcher."""
     clear_schedule_policy: bool | Unset = UNSET
-    """ Remove the cron's schedule policy. An omitted schedule_policy keeps it; cannot be sent with schedule_policy.
-    """
+    """Remove the cron's schedule policy. An omitted schedule_policy keeps it; cannot be sent with schedule_policy."""
     clear_failure_rules: bool | Unset = UNSET
-    """ Remove the cron's failure rules. An omitted failure_rules keeps them; cannot be sent with failure_rules. """
+    """Remove the cron's failure rules. An omitted failure_rules keeps them; cannot be sent with failure_rules."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

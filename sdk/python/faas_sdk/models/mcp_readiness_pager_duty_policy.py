@@ -24,12 +24,12 @@ class MCPReadinessPagerDutyPolicy:
     """Masked native PagerDuty settings without plaintext, ciphertext or receiver fingerprint."""
 
     version: int
-    """ Monotonic PagerDuty receiver policy version; zero denotes webhook primary without native configuration. """
+    """Monotonic PagerDuty receiver policy version; zero denotes webhook primary without native configuration."""
     enabled: bool
     region: MCPReadinessPagerDutyPolicyRegion
-    """ Effective Events API region; US for unconfigured or disabled policies. """
+    """Effective Events API region; US for unconfigured or disabled policies."""
     integration_key_masked: MCPReadinessPagerDutyPolicyIntegrationKeyMasked | Unset = UNSET
-    """ Fixed mask returned only for an enabled PagerDuty integration. """
+    """Fixed mask returned only for an enabled PagerDuty integration."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

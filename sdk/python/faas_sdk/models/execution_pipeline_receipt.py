@@ -25,10 +25,10 @@ class ExecutionPipelineReceipt:
 
     id: UUID
     completion: ExecutionPipelineCompletion | Unset = UNSET
-    """ Immutable v1 terminal manifest. Metadata and scoped references only; result and artifact bytes retain their
+    """Immutable v1 terminal manifest. Metadata and scoped references only; result and artifact bytes retain their
     ordinary Run receipt permissions and expiry. Completion identity is stable across delivery retries and redrive.
     Aggregate wall/CPU time sums every attempt; peak memory is the maximum attempt peak, not simultaneous residency
-    or an invoice. """
+    or an invoice."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

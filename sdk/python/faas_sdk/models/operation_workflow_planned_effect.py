@@ -18,8 +18,8 @@ class OperationWorkflowPlannedEffect:
 
     milestone: str
     effect: OperationBusinessEffect
-    """ Application-reported effect. Text bounds are UTF-8 bytes; confirmed status requires a nonempty reference.
-    Amount/currency are supplied together in minor units. """
+    """Application-reported effect. Text bounds are UTF-8 bytes; confirmed status requires a nonempty reference.
+    Amount/currency are supplied together in minor units."""
 
     def to_dict(self) -> dict[str, Any]:
         milestone = self.milestone

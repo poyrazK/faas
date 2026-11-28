@@ -37,15 +37,15 @@ class OperationWorkflowObligationAssessment:
     summary: str
     checked_at: datetime.datetime
     binding: OperationWorkflowObligationTargetBinding | Unset = UNSET
-    """ One obligation-cycle and exact-case target binding, recorded with an authenticated actor and reason.
-    Unrelated edits preserve it; a new cycle never inherits it. Current readiness is independently reassessed. """
+    """One obligation-cycle and exact-case target binding, recorded with an authenticated actor and reason.
+    Unrelated edits preserve it; a new cycle never inherits it. Current readiness is independently reassessed."""
     readiness: OperationWorkflowTransitionReadiness | Unset = UNSET
-    """ Ready means declared requirements match retained reports and the proposed milestone plan. It does not
+    """Ready means declared requirements match retained reports and the proposed milestone plan. It does not
     authorize or commit a transition or validate milestone payloads. All reported workflow prerequisites apply; only
     blockers targeting this Operation apply. Staleness, overdue deadlines, current-state reporting context and
     pending resolution proofs are advisories rather than undeclared guards. Reporting context uses current pinned
     expected_states, not invented required transition conditions. Planned reports do not replace this retained
-    context. """
+    context."""
     obligation_id: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:

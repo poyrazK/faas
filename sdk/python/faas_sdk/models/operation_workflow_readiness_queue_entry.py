@@ -25,55 +25,55 @@ class OperationWorkflowReadinessQueueEntry:
     """One declared current-state transition evaluated without planned evidence; reporting is advisory."""
 
     subject: OperationSubject
-    """ Immutable public business correlation metadata. Captured at admission and preserved through recovery and
-    redeploy. Never an ownership or authorization claim. """
+    """Immutable public business correlation metadata. Captured at admission and preserved through recovery and
+    redeploy. Never an ownership or authorization claim."""
     workflow: str
-    """ Declared workflow name. """
+    """Declared workflow name."""
     instance_id: str
-    """ Application workflow instance identifier. """
+    """Application workflow instance identifier."""
     operation_id: UUID
-    """ Current reporting Operation identifier. """
+    """Current reporting Operation identifier."""
     state_revision: int
-    """ Evaluated current state revision. """
+    """Evaluated current state revision."""
     contract_version: int
-    """ Evaluated pinned workflow contract version. """
+    """Evaluated pinned workflow contract version."""
     transition: OperationWorkflowInstanceTransition
-    """ One allowed state edge from the selected contract version, bound to the Operation that can report it.
+    """One allowed state edge from the selected contract version, bound to the Operation that can report it.
     Required milestones must be committed with the transition in the same application transaction. This declaration
     does not establish that the edge is currently valid for the application's business row or authorized for the
-    caller. """
+    caller."""
     evaluated_at: datetime.datetime
-    """ Shared reporting and retained-evidence evaluation time for this workflow. """
+    """Shared reporting and retained-evidence evaluation time for this workflow."""
     ready: bool
-    """ Whether declared requirements are met without planned evidence. """
+    """Whether declared requirements are met without planned evidence."""
     reasons: list[str]
-    """ Unmet declared requirement codes. """
+    """Unmet declared requirement codes."""
     advisories: list[str]
-    """ Reporting or verification context that does not change readiness. """
+    """Reporting or verification context that does not change readiness."""
     owners: list[str]
-    """ Sorted unique blocker and pending verification owners for the target Operation. """
+    """Sorted unique blocker and pending verification owners for the target Operation."""
     unassigned: bool
-    """ Whether a matching blocker or pending verification has no owner. """
+    """Whether a matching blocker or pending verification has no owner."""
     blockers: list[OperationWorkflowBlocker]
-    """ Application-reported blockers for this transition Operation. """
+    """Application-reported blockers for this transition Operation."""
     missing_milestones: list[str]
-    """ Required planned milestone names absent from the empty plan. """
+    """Required planned milestone names absent from the empty plan."""
     missing_dependency_workflows: list[str]
-    """ Declared prerequisite workflows without a reported dependency reference. """
+    """Declared prerequisite workflows without a reported dependency reference."""
     pending_verifications_truncated: bool
-    """ More pending evidence obligations exist than the queue preview contains. """
+    """More pending evidence obligations exist than the queue preview contains."""
     pending_verification_count: int
-    """ Exact pending obligation count before previews. """
+    """Exact pending obligation count before previews."""
     reporting_status: str
-    """ Current-state reporting coverage status; unknown coverage does not invent missing evidence. """
+    """Current-state reporting coverage status; unknown coverage does not invent missing evidence."""
     missing_report_count: int
-    """ Known missing condition reports when reporting coverage is comparable. """
+    """Known missing condition reports when reporting coverage is comparable."""
     overdue_report_count: int
-    """ Known overdue condition reports when reporting coverage is comparable. """
+    """Known overdue condition reports when reporting coverage is comparable."""
     platform_tenant_id: UUID | Unset = UNSET
-    """ Customer identity present only on the account surface. """
+    """Customer identity present only on the account surface."""
     pending_verifications: list[OperationWorkflowResolutionVerification] | Unset = UNSET
-    """ Canonical preview of pending evidence obligations for this transition Operation. """
+    """Canonical preview of pending evidence obligations for this transition Operation."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

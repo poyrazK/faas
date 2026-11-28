@@ -31,11 +31,11 @@ class OperationWorkflowDecisionOutcomeGroup:
     contract_version: int
     outcome_code: str
     completion_time: OperationWorkflowDurationDistribution
-    """ One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
-    zero. """
+    """One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
+    zero."""
     blocked_time: OperationWorkflowDurationDistribution
-    """ One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
-    zero. """
+    """One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
+    zero."""
     decision_code: str | Unset = UNSET
     rule_id: str | Unset = UNSET
     rule_version: str | Unset = UNSET

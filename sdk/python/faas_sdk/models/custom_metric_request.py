@@ -16,9 +16,9 @@ class CustomMetricRequest:
     """
 
     value: float
-    """ Fleet-total quantity one instance should carry. The scheduler computes ceil(value / target). Must be finite,
+    """Fleet-total quantity one instance should carry. The scheduler computes ceil(value / target). Must be finite,
     >= 0, and <= 1e12; a larger reading is a broken producer, and without the bound one bad push would demand the
-    plan cap's worth of instances on the very next tick. """
+    plan cap's worth of instances on the very next tick."""
 
     def to_dict(self) -> dict[str, Any]:
         value = self.value

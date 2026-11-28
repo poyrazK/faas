@@ -31,12 +31,12 @@ class DeploymentBuildDependencyGate:
     status: DeploymentBuildDependencyGateStatus
     deadline_at: datetime.datetime
     check_after: datetime.datetime
-    """ Earliest time the gate is re-checked. Zero time (0001-01-01T00:00:00Z) when no re-check is scheduled. """
+    """Earliest time the gate is re-checked. Zero time (0001-01-01T00:00:00Z) when no re-check is scheduled."""
     code: str | Unset = UNSET
-    """ Machine-readable reason while waiting or failed, for example build_dependency_not_ready or
-    build_dependency_timeout. Absent once ready. """
+    """Machine-readable reason while waiting or failed, for example build_dependency_not_ready or
+    build_dependency_timeout. Absent once ready."""
     blocker: str | Unset = UNSET
-    """ The dependency or deadline currently blocking the build. """
+    """The dependency or deadline currently blocking the build."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

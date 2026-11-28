@@ -24,28 +24,28 @@ class StoredWorkflowResponse:
 
     name: str
     version: int
-    """ Opaque monotonically increasing revision. Zero creates the first draft. A stale value returns
-    stored_workflow_version_conflict. """
+    """Opaque monotonically increasing revision. Zero creates the first draft. A stale value returns
+    stored_workflow_version_conflict."""
     source: StoredWorkflowResponseSource
     draft: WorkflowSpec
-    """ A named workflow DAG submitted with a deployment. max_concurrent_runs caps active run instances for this
+    """A named workflow DAG submitted with a deployment. max_concurrent_runs caps active run instances for this
     workflow; excess admitted runs remain pending until a slot opens, subject to the app plan's run quota.
     max_concurrent_actions caps active executor steps across runs of this workflow; steps wait in the scheduler
-    queue while all action slots are occupied. """
+    queue while all action slots are occupied."""
     enabled: bool
     test_suite: StoredWorkflowTestSuite | Unset = UNSET
-    """ At most 32 uniquely named cases; sample up to 3 MiB, cases up to 24 MiB combined, suite up to 27 MiB. Data
-    is explicitly persisted, never captured from real runs. """
+    """At most 32 uniquely named cases; sample up to 3 MiB, cases up to 24 MiB combined, suite up to 27 MiB. Data
+    is explicitly persisted, never captured from real runs."""
     test_report: StoredWorkflowTestReport | Unset = UNSET
-    """ Retained observation, not a publishing receipt. Freshness compares definition and suite content; running
-    does not advance the draft version or perform real actions. """
+    """Retained observation, not a publishing receipt. Freshness compares definition and suite content; running
+    does not advance the draft version or perform real actions."""
     failure_paused: bool | Unset = UNSET
-    """ Runtime failure guard blocks automatic admissions independently of configured enabled intent. """
+    """Runtime failure guard blocks automatic admissions independently of configured enabled intent."""
     published: WorkflowSpec | Unset = UNSET
-    """ A named workflow DAG submitted with a deployment. max_concurrent_runs caps active run instances for this
+    """A named workflow DAG submitted with a deployment. max_concurrent_runs caps active run instances for this
     workflow; excess admitted runs remain pending until a slot opens, subject to the app plan's run quota.
     max_concurrent_actions caps active executor steps across runs of this workflow; steps wait in the scheduler
-    queue while all action slots are occupied. """
+    queue while all action slots are occupied."""
     published_version: int | Unset = UNSET
     updated_at: datetime.datetime | Unset = UNSET
 

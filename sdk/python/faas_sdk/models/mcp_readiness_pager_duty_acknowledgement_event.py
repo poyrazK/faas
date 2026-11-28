@@ -34,9 +34,9 @@ class MCPReadinessPagerDutyAcknowledgementEvent:
     """Immutable minimal receipt committed atomically with any provider acknowledgement and reminder suppression."""
 
     region: MCPReadinessPagerDutyAcknowledgementEventRegion
-    """ Authenticated receiver region retained in this provider event receipt. """
+    """Authenticated receiver region retained in this provider event receipt."""
     service_id: str
-    """ Authenticated PagerDuty service retained in this provider event receipt. """
+    """Authenticated PagerDuty service retained in this provider event receipt."""
     id: UUID
     event_id: str
     incident_id: UUID
@@ -47,10 +47,10 @@ class MCPReadinessPagerDutyAcknowledgementEvent:
     outcome: MCPReadinessPagerDutyAcknowledgementEventOutcome
     attention_version: int
     action: MCPReadinessPagerDutyAcknowledgementEventAction | Unset = UNSET
-    """ Provider decision; absent on legacy acknowledgement receipts. Release event receipts are independent per
-    destination. """
+    """Provider decision; absent on legacy acknowledgement receipts. Release event receipts are independent per
+    destination."""
     destination: MCPReadinessPagerDutyAcknowledgementEventDestination | Unset = UNSET
-    """ Authenticated pinned receiver; absent on legacy primary receipts. """
+    """Authenticated pinned receiver; absent on legacy primary receipts."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

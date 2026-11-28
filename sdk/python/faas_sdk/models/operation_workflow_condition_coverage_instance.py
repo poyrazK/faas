@@ -25,11 +25,10 @@ class OperationWorkflowConditionCoverageInstance:
     """
 
     subject: OperationSubject
-    """ Immutable public business correlation metadata. Captured at admission and preserved through recovery and
-    redeploy. Never an ownership or authorization claim. """
+    """Immutable public business correlation metadata. Captured at admission and preserved through recovery and
+    redeploy. Never an ownership or authorization claim."""
     state: OperationWorkflowState
-    """ Latest app-reported state for one declared workflow instance, including terminal and staleness indicators.
-    """
+    """Latest app-reported state for one declared workflow instance, including terminal and staleness indicators."""
     expected_condition_count: int
     reported_condition_count: int
     missing_condition_count: int
@@ -37,7 +36,7 @@ class OperationWorkflowConditionCoverageInstance:
     conditions_truncated: bool
     conditions: list[OperationWorkflowConditionCoverageEntry]
     platform_tenant_id: UUID | Unset = UNSET
-    """ Operator only; omitted in customer projections. """
+    """Operator only; omitted in customer projections."""
 
     def to_dict(self) -> dict[str, Any]:
         subject = self.subject.to_dict()

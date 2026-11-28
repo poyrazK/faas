@@ -6,6 +6,8 @@ from pathlib import Path
 
 import httpx
 import pytest
+
+from faas_sdk import JobContract, JobInput
 from faas_sdk.job_runtime import job_value_hash
 from faas_sdk.preview import (
     PIPELINE_GATE_SCHEMA,
@@ -22,8 +24,6 @@ from faas_sdk.preview import (
 )
 from faas_sdk.preview.live_jobs import LiveJobSnapshot
 from faas_sdk.workflows import WORKFLOW_CODE_PROTOCOL, run_workflow_invocation
-
-from faas_sdk import JobContract, JobInput
 
 ROOT = Path(__file__).resolve().parents[1] / "request-contracts"
 if not ROOT.exists():

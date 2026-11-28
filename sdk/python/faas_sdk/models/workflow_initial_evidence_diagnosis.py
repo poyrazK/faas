@@ -30,16 +30,16 @@ class WorkflowInitialEvidenceDiagnosis:
     repairable: bool
     job_id: UUID | Unset = UNSET
     execution: EventRecoveryExecution | Unset = UNSET
-    """ Read-only observation of the exact admitted replay or workflow resume. Invocation mode prefers saved
+    """Read-only observation of the exact admitted replay or workflow resume. Invocation mode prefers saved
     confirmed terminal results, retained with the recovery job. Workflow mode prefers saved terminal results for the
     admitted resume, then live retained run and resume evidence. Missing evidence without a saved result is unknown.
     Native failed/dead runs both report failed. Pending and running workflow states report queued and running;
     awaiting_event also reports running. Without a saved result, later native resumes report superseded with no
     completion time. Saved native results survive workflow-history pruning for the recovery job retention period;
     the first confirmed terminal result wins across later resumes. Omitted for routing recovery and items not
-    admitted. """
+    admitted."""
     repair: WorkflowInitialEvidenceRepairReceipt | Unset = UNSET
-    """ Recorded result of an initial recovery evidence repair. """
+    """Recorded result of an initial recovery evidence repair."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

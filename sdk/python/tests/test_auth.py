@@ -12,6 +12,7 @@ import pytest
 ec = pytest.importorskip("cryptography.hazmat.primitives.asymmetric.ec")
 from cryptography.hazmat.primitives import hashes  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature  # noqa: E402
+
 from faas_sdk.preview.auth import (  # noqa: E402
     AuthClient,
     AuthError,
@@ -370,9 +371,7 @@ def test_audience_accepts_an_oauth_clients_token():
     resource = "https://shop-mcp.gregale.app/mcp"
     transport = httpx.MockTransport(app.handle)
     mcp = AuthClient(ORIGIN, clock=clock, audience=resource, http_client=httpx.Client(transport=transport))
-    token = key.sign(
-        user_claims(clock, aud=resource, client_id="6a1b2c3d-0000-4000-8000-000000000002", scope="openid email")
-    )
+    token = key.sign(user_claims(clock, aud=resource, client_id="6a1b2c3d-0000-4000-8000-000000000002", scope="openid email"))
     claims = mcp.verify(token)
     assert claims.client_id == "6a1b2c3d-0000-4000-8000-000000000002"
     assert claims.scopes == ("openid", "email")
@@ -390,19 +389,8 @@ ACCOUNT = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
 def test_verify_reads_the_service_account():
     key, clock = Key("0A1B2C3D"), Clock()
     auth = AuthApp(key).client(clock)
-    machine = user_claims(
-        clock,
-        sub=ACCOUNT,
-        session_id=None,
-        email=None,
-        service_account=True,
-        secret_id="k1",
-        scope="docs:read",
-        org_id="o1",
-        org_slug="acme",
-        org_role="deployer",
-        org_permissions=["docs:read"],
-    )
+    machine = user_claims(clock, sub=ACCOUNT, session_id=None, email=None, service_account=True, secret_id="k1", scope="docs:read",
+                          org_id="o1", org_slug="acme", org_role="deployer", org_permissions=["docs:read"])
     claims = auth.verify(key.sign(machine))
     assert claims.service_account == ServiceAccount(id=ACCOUNT, secret_id="k1")
     assert claims.scopes == ("docs:read",)
@@ -422,14 +410,8 @@ def test_client_credentials_caches_tokens_until_shortly_before_expiry():
         seen.append(request)
         return httpx.Response(answer["status"], json=answer["json"])
 
-    machine = ClientCredentials(
-        ORIGIN,
-        ACCOUNT,
-        secret,
-        scope=["docs:read", "docs:write"],
-        clock=clock,
-        http_client=httpx.Client(transport=httpx.MockTransport(handle)),
-    )
+    machine = ClientCredentials(ORIGIN, ACCOUNT, secret, scope=["docs:read", "docs:write"], clock=clock,
+                                http_client=httpx.Client(transport=httpx.MockTransport(handle)))
     assert machine.token() == "token-1"
     assert machine.token() == "token-1"
     assert len(seen) == 1

@@ -17,7 +17,7 @@ class AppOperationCheck:
 
     status: AppOperationCheckStatus
     reason: str
-    """ Stable native policy reason code; no customer-provided text. """
+    """Stable native policy reason code; no customer-provided text."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

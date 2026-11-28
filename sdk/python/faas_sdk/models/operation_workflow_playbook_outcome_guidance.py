@@ -26,23 +26,23 @@ class OperationWorkflowPlaybookOutcomeGuidance:
     """
 
     outcome_code: str
-    """ OperationWorkflowPlaybookOutcomeGuidance.outcome_code. Primary expected outcome or explicit acceptable
-    alternative; unique within the playbook guidance set. """
+    """OperationWorkflowPlaybookOutcomeGuidance.outcome_code. Primary expected outcome or explicit acceptable
+    alternative; unique within the playbook guidance set."""
     description: str
-    """ OperationWorkflowPlaybookOutcomeGuidance.description. Required trimmed UTF-8 plain-text business meaning, at
-    most 1024 bytes and no control characters. """
+    """OperationWorkflowPlaybookOutcomeGuidance.description. Required trimmed UTF-8 plain-text business meaning, at
+    most 1024 bytes and no control characters."""
     follow_up_dependencies: list[OperationWorkflowPlaybookStepDependency] | Unset = UNSET
-    """ OperationWorkflowPlaybookOutcomeGuidance.follow_up_dependencies. Optional pinned acyclic prerequisite graph
-    within this outcome's follow-up steps. """
+    """OperationWorkflowPlaybookOutcomeGuidance.follow_up_dependencies. Optional pinned acyclic prerequisite graph
+    within this outcome's follow-up steps."""
     follow_up_assignments: list[OperationWorkflowPlaybookStepAssignmentPolicy] | Unset = UNSET
-    """ OperationWorkflowPlaybookOutcomeGuidance.follow_up_assignments. Optional team and completion window for
-    declared steps; at most 16 assignments across the entire playbook. """
+    """OperationWorkflowPlaybookOutcomeGuidance.follow_up_assignments. Optional team and completion window for
+    declared steps; at most 16 assignments across the entire playbook."""
     follow_up_steps: list[str] | Unset = UNSET
-    """ OperationWorkflowPlaybookOutcomeGuidance.follow_up_steps. Optional ordered human follow-up labels, unique
-    and at most 256 bytes each; tracked separately from original playbook evidence items. """
+    """OperationWorkflowPlaybookOutcomeGuidance.follow_up_steps. Optional ordered human follow-up labels, unique
+    and at most 256 bytes each; tracked separately from original playbook evidence items."""
     suggested_follow_up: str | Unset = UNSET
-    """ OperationWorkflowPlaybookOutcomeGuidance.suggested_follow_up. Optional trimmed UTF-8 plain-text suggestion,
-    at most 1024 bytes and no control characters; application-owned decisions and execution remain separate. """
+    """OperationWorkflowPlaybookOutcomeGuidance.suggested_follow_up. Optional trimmed UTF-8 plain-text suggestion,
+    at most 1024 bytes and no control characters; application-owned decisions and execution remain separate."""
 
     def to_dict(self) -> dict[str, Any]:
         outcome_code = self.outcome_code

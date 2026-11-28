@@ -24,7 +24,7 @@ class StoredWorkflowTestStepResult:
     item_index: int | Unset = UNSET
     state: str | Unset = UNSET
     mismatches: list[StoredWorkflowTestStepResultMismatchesItem] | Unset = UNSET
-    """ Failed assertion field names only; expected and observed values are omitted. """
+    """Failed assertion field names only; expected and observed values are omitted."""
 
     def to_dict(self) -> dict[str, Any]:
         step = self.step

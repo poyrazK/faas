@@ -22,9 +22,9 @@ class APISandboxLibraryScenario:
 
     id: UUID
     scenario: APISandboxScenario
-    """ Saved scenario definition and revision metadata. """
+    """Saved scenario definition and revision metadata."""
     source_request_id: UUID | Unset = UNSET
-    """ Private Debugger provenance of this scenario. """
+    """Private Debugger provenance of this scenario."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

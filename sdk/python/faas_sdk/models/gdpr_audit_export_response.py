@@ -37,11 +37,11 @@ class GdprAuditExportResponse:
     action: GdprAuditExportResponseAction | Unset = UNSET
     completed_at: datetime.datetime | None | Unset = UNSET
     kind: str | Unset = UNSET
-    """ Security event kind. Populated only when `source` = `event`. Examples: `auth.login`, `key.created`,
-    `secret.set`, `env.set`, `account.deletion_scheduled`. """
+    """Security event kind. Populated only when `source` = `event`. Examples: `auth.login`, `key.created`,
+    `secret.set`, `env.set`, `account.deletion_scheduled`."""
     data: GdprAuditExportResponseData | Unset = UNSET
-    """ Kind-specific JSON payload from the events row. Populated only when `source` = `event`. Plaintext values
-    (e.g. secret VALUE) are NEVER carried in `data`. """
+    """Kind-specific JSON payload from the events row. Populated only when `source` = `event`. Plaintext values
+    (e.g. secret VALUE) are NEVER carried in `data`."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -22,18 +22,18 @@ class PublicAuthStatus:
     """
 
     mode: PublicAuthStatusMode
-    """ Active auth mode. One of 'open', 'bearer', 'basic', 'ip_allowlist', 'internal_only'. Matches
+    """Active auth mode. One of 'open', 'bearer', 'basic', 'ip_allowlist', 'internal_only'. Matches
     apps.public_auth_mode on disk; a PATCH 'open' cleared any prior sealed blob so a stale secretbox row never
     reaches a fresh request. 'internal_only' requires an Authorization: Bearer JWT with aud='gregale.internal'
-    signed by a Gregale daemon's Ed25519 key — see PublicAuthBlock.mode for the write-side description. """
+    signed by a Gregale daemon's Ed25519 key — see PublicAuthBlock.mode for the write-side description."""
     has_basic_creds: bool
-    """ True iff the row carries a non-null apps.public_auth_basic blob (i.e. mode='basic' with credentials). A
+    """True iff the row carries a non-null apps.public_auth_basic blob (i.e. mode='basic' with credentials). A
     mode='basic' row without creds would 401 every request — has_basic_creds is the operator-greppable signal that
-    the seal succeeded. """
+    the seal succeeded."""
     ip_allowlist_entry_count: int | Unset = UNSET
-    """ Integer count of CIDRs in apps.public_auth_ip_allowlist. Returned (not the CIDR strings themselves) so the
+    """Integer count of CIDRs in apps.public_auth_ip_allowlist. Returned (not the CIDR strings themselves) so the
     dashboard can show 'app X has 3 CIDRs configured' without leaking the partner-customer ranges. Always 0 when
-    mode != 'ip_allowlist'. """
+    mode != 'ip_allowlist'."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

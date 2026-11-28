@@ -42,8 +42,8 @@ class OperationWorkflowConditionRefreshProgress:
     newer_report_condition_count: int
     statuses: list[OperationWorkflowConditionRefreshProgressCount]
     items: list[OperationWorkflowConditionRefreshProgressInstance]
-    """ Compared workflows in stable workflow identity order from current samples of up to 100 completed and 100
-    ongoing runs. Missing original baseline members are not classified as cleared. """
+    """Compared workflows in stable workflow identity order from current samples of up to 100 completed and 100
+    ongoing runs. Missing original baseline members are not classified as cleared."""
 
     def to_dict(self) -> dict[str, Any]:
         baseline_at = self.baseline_at.isoformat()

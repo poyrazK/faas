@@ -26,23 +26,23 @@ class OperationWorkflowPlaybookCompletionReviewEvent:
     """
 
     review_id: UUID
-    """ OperationWorkflowPlaybookCompletionReviewEvent.review_id. Exact review identity. """
+    """OperationWorkflowPlaybookCompletionReviewEvent.review_id. Exact review identity."""
     source_notification_id: UUID
-    """ OperationWorkflowPlaybookCompletionReviewEvent.source_notification_id. Original closed escalation
-    notification. """
+    """OperationWorkflowPlaybookCompletionReviewEvent.source_notification_id. Original closed escalation
+    notification."""
     source_sequence: int
-    """ OperationWorkflowPlaybookCompletionReviewEvent.source_sequence. Linkable original inbox sequence. """
+    """OperationWorkflowPlaybookCompletionReviewEvent.source_sequence. Linkable original inbox sequence."""
     resolution: OperationWorkflowPlaybookCompletionReviewEventResolution
-    """ OperationWorkflowPlaybookCompletionReviewEvent.resolution. Original human disposition, unchanged by later
-    evidence. """
+    """OperationWorkflowPlaybookCompletionReviewEvent.resolution. Original human disposition, unchanged by later
+    evidence."""
     previous: OperationWorkflowPlaybookBusinessOutcome
-    """ OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen
+    """OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen
     playbook expectation. Independent of human completion and evidence satisfaction; changed guidance never silently
-    changes the expected outcome. """
+    changes the expected outcome."""
     current: OperationWorkflowPlaybookBusinessOutcome
-    """ OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen
+    """OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen
     playbook expectation. Independent of human completion and evidence satisfaction; changed guidance never silently
-    changes the expected outcome. """
+    changes the expected outcome."""
 
     def to_dict(self) -> dict[str, Any]:
         review_id = str(self.review_id)

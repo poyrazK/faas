@@ -17,17 +17,17 @@ class AccountHealthRequest:
     """One refused request: the matched route pattern, the problem code and the ids to quote to support."""
 
     occurred_at: datetime.datetime
-    """ When the request was refused. """
+    """When the request was refused."""
     route: str
-    """ Matched route pattern, for example POST /v1/apps/{slug}/deployments; never the raw URL. """
+    """Matched route pattern, for example POST /v1/apps/{slug}/deployments; never the raw URL."""
     code: str
-    """ Problem code returned. """
+    """Problem code returned."""
     app_slug: str | Unset = UNSET
-    """ App slug from the request path, when the route has one. """
+    """App slug from the request path, when the route has one."""
     request_id: str | Unset = UNSET
-    """ X-Faas-Request-Id of the request. """
+    """X-Faas-Request-Id of the request."""
     trace_id: str | Unset = UNSET
-    """ X-Gregale-Trace-Id of the request. """
+    """X-Gregale-Trace-Id of the request."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

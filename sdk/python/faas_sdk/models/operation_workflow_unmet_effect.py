@@ -22,7 +22,7 @@ class OperationWorkflowUnmetEffect:
     """A required effect confirmation that is absent or incompatible with the planned evidence."""
 
     requirement: OperationWorkflowEffectRequirement
-    """ Exact effect code and version that must be confirmed by fresh transition evidence. """
+    """Exact effect code and version that must be confirmed by fresh transition evidence."""
     reason: OperationWorkflowUnmetEffectReason
 
     def to_dict(self) -> dict[str, Any]:

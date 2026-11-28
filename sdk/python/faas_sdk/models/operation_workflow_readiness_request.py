@@ -25,8 +25,8 @@ class OperationWorkflowReadinessRequest:
 
     scope: str
     subject: OperationSubject
-    """ Immutable public business correlation metadata. Captured at admission and preserved through recovery and
-    redeploy. Never an ownership or authorization claim. """
+    """Immutable public business correlation metadata. Captured at admission and preserved through recovery and
+    redeploy. Never an ownership or authorization claim."""
     workflow: str
     instance_id: str
     operation: str
@@ -37,16 +37,16 @@ class OperationWorkflowReadinessRequest:
     invariants: list[OperationWorkflowPlannedInvariant] | Unset = UNSET
     decisions: list[OperationWorkflowPlannedDecision] | Unset = UNSET
     app_id: UUID | Unset = UNSET
-    """ For this proposed transition, required in customer-self mode only. """
+    """For this proposed transition, required in customer-self mode only."""
     tenant_id: UUID | Unset = UNSET
-    """ For this proposed transition, required in account mode only. """
+    """For this proposed transition, required in account mode only."""
     milestones: list[str] | Unset = UNSET
-    """ Planned milestone names for this transition; retained historical facts are not evidence for the new
-    transaction. """
+    """Planned milestone names for this transition; retained historical facts are not evidence for the new
+    transaction."""
     state_revision: int | Unset = UNSET
-    """ For this proposed transition, optional expected retained source revision. """
+    """For this proposed transition, optional expected retained source revision."""
     contract_version: int | Unset = UNSET
-    """ For this proposed transition, optional expected selected contract version. """
+    """For this proposed transition, optional expected selected contract version."""
 
     def to_dict(self) -> dict[str, Any]:
         scope = self.scope

@@ -27,23 +27,23 @@ class MCPReadinessDeliveryRouting:
     """
 
     policy_version: int
-    """ Fallback configuration version captured when this incident first claimed delivery. """
+    """Fallback configuration version captured when this incident first claimed delivery."""
     primary_attempts: int
-    """ Number of primary dispatch claims including expired leases. """
+    """Number of primary dispatch claims including expired leases."""
     fallback_attempts: int
-    """ Number of fallback dispatch claims for this logical event. """
+    """Number of fallback dispatch claims for this logical event."""
     primary_failures: int
-    """ Number of fenced unsuccessful primary completions for this event. """
+    """Number of fenced unsuccessful primary completions for this event."""
     primary_delivered: bool
-    """ Whether primary accepted this event in a completed delivery claim. """
+    """Whether primary accepted this event in a completed delivery claim."""
     fallback_delivered: bool
-    """ Whether fallback accepted this event in a completed delivery claim. """
+    """Whether fallback accepted this event in a completed delivery claim."""
     pagerduty_version: int | Unset = UNSET
-    """ Native primary policy version pinned at first delivery; omitted for legacy webhook routing. """
+    """Native primary policy version pinned at first delivery; omitted for legacy webhook routing."""
     last_destination: MCPReadinessDeliveryRoutingLastDestination | Unset = UNSET
-    """ Receiver role used for this event's most recent dispatch claim. """
+    """Receiver role used for this event's most recent dispatch claim."""
     failover_reason: MCPReadinessDeliveryRoutingFailoverReason | Unset = UNSET
-    """ Explanation for selecting a receiver after failover; omitted for ordinary primary delivery. """
+    """Explanation for selecting a receiver after failover; omitted for ordinary primary delivery."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

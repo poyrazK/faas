@@ -25,9 +25,9 @@ class OperationWorkflowConditionCoverage:
     """
 
     missing_groups: list[OperationWorkflowMissingConditionGroup]
-    """ Missing reports grouped by current contract and state and pinned refresh owner. Workflow counts are unique
+    """Missing reports grouped by current contract and state and pinned refresh owner. Workflow counts are unique
     per group; one workflow may appear for several owners. Canonical contract/state/owner ordering includes
-    unassigned. Counts precede condition previews; group display caps do not change total missing conditions. """
+    unassigned. Counts precede condition previews; group display caps do not change total missing conditions."""
     missing_groups_truncated: bool
     matching_workflow_count: int
     sampled_workflow_count: int

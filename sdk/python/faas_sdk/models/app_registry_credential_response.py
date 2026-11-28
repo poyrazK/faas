@@ -24,7 +24,7 @@ class AppRegistryCredentialResponse:
     created_at: datetime.datetime
     updated_at: datetime.datetime
     last_used_at: datetime.datetime | Unset = UNSET
-    """ Timestamp of the last successful authenticated pull. Omitted when the credential has not been used yet. """
+    """Timestamp of the last successful authenticated pull. Omitted when the credential has not been used yet."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

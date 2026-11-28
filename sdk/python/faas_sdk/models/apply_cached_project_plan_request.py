@@ -21,12 +21,12 @@ class ApplyCachedProjectPlanRequest:
 
     plan_token: str
     only: list[str] | Unset = UNSET
-    """ Selected workload names; unselected existing workloads remain unchanged. """
+    """Selected workload names; unselected existing workloads remain unchanged."""
     exclude: list[str] | Unset = UNSET
     approval_token: str | Unset = UNSET
     initial_secrets: ProjectInitialSecrets | Unset = UNSET
-    """ Request-only mapping of exact selected workload names to initial sealed environment values. Values stay in
-    memory until sealing and never enter responses or source caches. """
+    """Request-only mapping of exact selected workload names to initial sealed environment values. Values stay in
+    memory until sealing and never enter responses or source caches."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

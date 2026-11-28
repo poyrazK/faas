@@ -22,7 +22,7 @@ class AppRegistryCredentialListResponse:
 
     credentials: list[AppRegistryCredentialResponse]
     quota_max: int
-    """ Per-app cap from the customer's plan (Free 0, Hobby 2, Pro 5, Scale 20). """
+    """Per-app cap from the customer's plan (Free 0, Hobby 2, Pro 5, Scale 20)."""
     count: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

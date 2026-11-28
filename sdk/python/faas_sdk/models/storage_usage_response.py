@@ -19,9 +19,9 @@ class StorageUsageResponse:
     app_id: str
     day: str
     snapshot_bytes: int
-    """ Cumulative snapshot bytes (mem_bytes + disk_bytes) for the day (informational; not billed today). """
+    """Cumulative snapshot bytes (mem_bytes + disk_bytes) for the day (informational; not billed today)."""
     layer_bytes: int
-    """ Cumulative overlay-staging layer bytes for the day (informational; not billed today). """
+    """Cumulative overlay-staging layer bytes for the day (informational; not billed today)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -39,13 +39,13 @@ class AppsMetricsResponse:
     """
 
     range_: AppsMetricsResponseRange
-    """ Time window that was queried for every per-app rollup row. """
+    """Time window that was queried for every per-app rollup row."""
     source: str
-    """ "prometheus" on success; "degraded: <reason>" otherwise. """
+    """"prometheus" on success; "degraded: <reason>" otherwise."""
     as_of: datetime.datetime
-    """ RFC3339Nano UTC stamp at which the rollup was assembled. """
+    """RFC3339Nano UTC stamp at which the rollup was assembled."""
     apps: AppsMetricsResponseAppsType0 | None
-    """ Per-app `AppMetricsResponse`, keyed by app_slug. Null when degraded. """
+    """Per-app `AppMetricsResponse`, keyed by app_slug. Null when degraded."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -24,7 +24,7 @@ class ExecutionPipelineStepResponse:
     max_attempts: int
     attempts: list[ExecutionPipelineAttemptResponse]
     task: ExecutionTaskRef | Unset = UNSET
-    """ Identity of a published executable task version. """
+    """Identity of a published executable task version."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

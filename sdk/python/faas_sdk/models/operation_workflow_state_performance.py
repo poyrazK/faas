@@ -21,8 +21,8 @@ class OperationWorkflowStatePerformance:
     contract_version: int
     state: str
     duration: OperationWorkflowDurationDistribution
-    """ One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
-    zero. """
+    """One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
+    zero."""
 
     def to_dict(self) -> dict[str, Any]:
         sla_evaluated_visit_count = self.sla_evaluated_visit_count

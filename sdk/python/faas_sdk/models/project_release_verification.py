@@ -36,19 +36,19 @@ class ProjectReleaseVerification:
     healthy_rounds: int
     regressed_rounds: int
     stabilization: ProjectReleaseStabilization | Unset = UNSET
-    """ Opt-in bounded health monitoring after progressive rollout success. """
+    """Opt-in bounded health monitoring after progressive rollout success."""
     control: ProjectReleaseControl | Unset = UNSET
-    """ Most recent durable operator decision and its restoration outcome. """
+    """Most recent durable operator decision and its restoration outcome."""
     actions: list[ProjectReleaseVerificationActionsItem] | Unset = UNSET
-    """ Currently available guarded controls; an empty list permits inspection only. """
+    """Currently available guarded controls; an empty list permits inspection only."""
     progressive: bool | Unset = UNSET
-    """ Require staged 5 percent, 25 percent and full project promotion. """
+    """Require staged 5 percent, 25 percent and full project promotion."""
     percent: ProjectReleaseVerificationPercent | Unset = UNSET
-    """ Current progressive stage traffic percentage. """
+    """Current progressive stage traffic percentage."""
     generation: int | Unset = UNSET
-    """ Durable progressive observation generation. """
+    """Durable progressive observation generation."""
     worker_health: ProjectWorkerHealth | Unset = UNSET
-    """ Opt-in real production queue delivery verification; absence of traffic never proves health. """
+    """Opt-in real production queue delivery verification; absence of traffic never proves health."""
     deadline: datetime.datetime | Unset = UNSET
     checked_at: datetime.datetime | Unset = UNSET
     evidence: list[ProjectReleaseProbeEvidence] | Unset = UNSET

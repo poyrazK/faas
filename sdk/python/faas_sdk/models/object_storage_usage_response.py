@@ -28,24 +28,24 @@ class ObjectStorageUsageResponse:
     """Current UTC-month accounting, customer charge estimate, billing rollout state, and operator safety policy."""
 
     usage: ObjectStorageUsage
-    """ Account-wide usage and reserved capacity. In gateway_safety_v1 requests count durable provider attempts and
+    """Account-wide usage and reserved capacity. In gateway_safety_v1 requests count durable provider attempts and
     egress counts full response lengths reserved before forwarding; disconnects retain reservations. Fields named in
     unavailable_meters are unknown, their numeric placeholders are not measured zeros and must not be billed. Legacy
-    costs are EUR millicents, not a customer invoice. """
+    costs are EUR millicents, not a customer invoice."""
     policy: ObjectStoragePolicy
-    """ Operator safety limits. Empty accounting_mode requires qualified provider reports including cost. Explicit
+    """Operator safety limits. Empty accounting_mode requires qualified provider reports including cost. Explicit
     gateway_safety_v1 requires a coverage start, proxied transfers, billing off and no cost ceiling; all other
-    budgets remain positive and finite. """
+    budgets remain positive and finite."""
     billing_mode: ObjectStorageUsageResponseBillingMode
-    """ Whether finalized object-storage charges are disabled, audited locally, or sent to the billing provider. """
+    """Whether finalized object-storage charges are disabled, audited locally, or sent to the billing provider."""
     charges: ObjectStorageCharge | Unset = UNSET
-    """ Current UTC-month customer charge estimate. This is not an invoice until a billing provider posts a line
-    item. """
+    """Current UTC-month customer charge estimate. This is not an invoice until a billing provider posts a line
+    item."""
     billing_from: datetime.datetime | Unset = UNSET
-    """ UTC month boundary at which shadow/live handling starts. Periods before it are never charged. """
+    """UTC month boundary at which shadow/live handling starts. Periods before it are never charged."""
     over_ceiling: ObjectStorageOverCeilingDeletion | Unset = UNSET
-    """ Present while the account stores more than its object-storage ceiling. Unless the account gets back under
-    the ceiling first, Gregale deletes the excess on deletion_scheduled_at. """
+    """Present while the account stores more than its object-storage ceiling. Unless the account gets back under
+    the ceiling first, Gregale deletes the excess on deletion_scheduled_at."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

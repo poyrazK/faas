@@ -22,7 +22,7 @@ class MFARecoverRequest:
 
     code: str
     csrf_token: str | Unset = UNSET
-    """ Dashboard CSRF token for the recover mutation. """
+    """Dashboard CSRF token for the recover mutation."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

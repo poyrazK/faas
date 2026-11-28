@@ -13,9 +13,9 @@ class ProjectReleaseControlRequest:
     """An operator decision fenced against the inspected progressive checkpoint."""
 
     request_id: str
-    """ Reuse this identity after an ambiguous response. """
+    """Reuse this identity after an ambiguous response."""
     expected_generation: int
-    """ Inspected checkpoint generation. """
+    """Inspected checkpoint generation."""
 
     def to_dict(self) -> dict[str, Any]:
         request_id = self.request_id

@@ -30,7 +30,7 @@ class ExecutionPipelineCompletedAttempt:
     status: ExecutionPipelineCompletedAttemptStatus
     receipt: str
     usage: ExecutionUsage
-    """ Host-measured resource usage for a terminal execution. """
+    """Host-measured resource usage for a terminal execution."""
     artifacts: list[ExecutionPipelineArtifactRef]
     failure_code: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

@@ -15,7 +15,7 @@ class ExecutionNetworkPolicy:
     """Network policy for a disposable run; v1 is loopback-only."""
 
     mode: ExecutionNetworkPolicyMode
-    """ Loopback only; no tenant bridge, DNS, or public egress. """
+    """Loopback only; no tenant bridge, DNS, or public egress."""
 
     def to_dict(self) -> dict[str, Any]:
         mode: str = self.mode

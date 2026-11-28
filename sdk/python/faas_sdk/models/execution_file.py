@@ -13,9 +13,9 @@ class ExecutionFile:
     """One regular file in an ephemeral execution bundle. Content is base64-encoded in JSON."""
 
     path: str
-    """ Normalized relative POSIX path; absolute paths, dot segments, and symlinks are rejected. """
+    """Normalized relative POSIX path; absolute paths, dot segments, and symlinks are rejected."""
     content: str
-    """ File bytes, base64-encoded by JSON clients. """
+    """File bytes, base64-encoded by JSON clients."""
 
     def to_dict(self) -> dict[str, Any]:
         path = self.path

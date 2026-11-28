@@ -30,8 +30,8 @@ class DeploymentHostingVerification:
     attempts: int
     last_error_code: str | Unset = UNSET
     last_route_checks: HostingRouteCheckSet | Unset = UNSET
-    """ API route checks from the app's imported OpenAPI document. document_sha256 binds them to that exact
-    document. """
+    """API route checks from the app's imported OpenAPI document. document_sha256 binds them to that exact
+    document."""
     retry_not_before: datetime.datetime | Unset = UNSET
     completed_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

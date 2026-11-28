@@ -28,14 +28,14 @@ class OperationWorkflowObligationFulfillment:
     """
 
     binding: OperationWorkflowObligationTargetBinding
-    """ One obligation-cycle and exact-case target binding, recorded with an authenticated actor and reason.
-    Unrelated edits preserve it; a new cycle never inherits it. Current readiness is independently reassessed. """
+    """One obligation-cycle and exact-case target binding, recorded with an authenticated actor and reason.
+    Unrelated edits preserve it; a new cycle never inherits it. Current readiness is independently reassessed."""
     reason: str
     action_kind: OperationWorkflowObligationFulfillmentActionKind
     owner: str
     evidence: OperationWorkflowStateHistoryEntry
-    """ One retained app-reported state update. Pages are ordered by revision, then stable publication and report
-    identifiers. """
+    """One retained app-reported state update. Pages are ordered by revision, then stable publication and report
+    identifiers."""
     evidence_checked_at: datetime.datetime
     completed_at: datetime.datetime
     completed_by: str

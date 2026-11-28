@@ -23,9 +23,9 @@ class FinancialMeterCoverage:
     non_billable_quantity: int
     reasons: list[str]
     projectable: bool | Unset = UNSET
-    """ Enough of the period was sampled to forecast it, either every minute or at least 99% of the elapsed minutes
+    """Enough of the period was sampled to forecast it, either every minute or at least 99% of the elapsed minutes
     with the last hour complete. A forecast over a partly sampled period uses the covered_time_run_rate_v1 method.
-    """
+   """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

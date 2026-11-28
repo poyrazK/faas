@@ -25,32 +25,32 @@ class OperationWorkflowReadinessImpactSummary:
     """
 
     workflow: str
-    """ OperationWorkflowReadinessImpactSummary.workflow. Scoped workflow identity; identical result codes in
-    different workflows remain separate. """
+    """OperationWorkflowReadinessImpactSummary.workflow. Scoped workflow identity; identical result codes in
+    different workflows remain separate."""
     kind: OperationWorkflowReadinessImpactSummaryKind
-    """ OperationWorkflowReadinessImpactSummary.kind. Pinned protected result category. """
+    """OperationWorkflowReadinessImpactSummary.kind. Pinned protected result category."""
     code: str
-    """ OperationWorkflowReadinessImpactSummary.code. Pinned protected milestone or outcome code. """
+    """OperationWorkflowReadinessImpactSummary.code. Pinned protected milestone or outcome code."""
     review_count: int
-    """ OperationWorkflowReadinessImpactSummary.review_count. Distinct progress/outcome/step/regression obligations
-    across inbox deliveries. """
+    """OperationWorkflowReadinessImpactSummary.review_count. Distinct progress/outcome/step/regression obligations
+    across inbox deliveries."""
     task_count: int
-    """ OperationWorkflowReadinessImpactSummary.task_count. Matching retained inbox delivery tasks. """
+    """OperationWorkflowReadinessImpactSummary.task_count. Matching retained inbox delivery tasks."""
     case_count: int
-    """ OperationWorkflowReadinessImpactSummary.case_count. Distinct tenant/subject/workflow/instance cases. """
+    """OperationWorkflowReadinessImpactSummary.case_count. Distinct tenant/subject/workflow/instance cases."""
     critical_count: int
-    """ OperationWorkflowReadinessImpactSummary.critical_count. Distinct critical review obligations. """
+    """OperationWorkflowReadinessImpactSummary.critical_count. Distinct critical review obligations."""
     high_count: int
-    """ OperationWorkflowReadinessImpactSummary.high_count. Distinct high-priority review obligations. """
+    """OperationWorkflowReadinessImpactSummary.high_count. Distinct high-priority review obligations."""
     overdue_count: int
-    """ OperationWorkflowReadinessImpactSummary.overdue_count. Distinct review obligations with at least one overdue
-    queue delivery. """
+    """OperationWorkflowReadinessImpactSummary.overdue_count. Distinct review obligations with at least one overdue
+    queue delivery."""
     critical_overdue_count: int
-    """ OperationWorkflowReadinessImpactSummary.critical_overdue_count. Distinct critical review obligations with
-    overdue queue attention. """
+    """OperationWorkflowReadinessImpactSummary.critical_overdue_count. Distinct critical review obligations with
+    overdue queue attention."""
     owners: list[OperationWorkflowReadinessImpactOwner]
-    """ OperationWorkflowReadinessImpactSummary.owners. Effective inbox ownership totals, ordered by overdue task
-    count, task count and owner label. A review delivered to several teams contributes to each delivery's owner. """
+    """OperationWorkflowReadinessImpactSummary.owners. Effective inbox ownership totals, ordered by overdue task
+    count, task count and owner label. A review delivered to several teams contributes to each delivery's owner."""
 
     def to_dict(self) -> dict[str, Any]:
         workflow = self.workflow

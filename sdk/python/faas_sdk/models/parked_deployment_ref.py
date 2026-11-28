@@ -25,10 +25,9 @@ class ParkedDeploymentRef:
 
     id: str
     parked_reason: ParkedDeploymentRefParkedReason
-    """ Closed-set parking reason from the schema-layer CHECK constraint. """
+    """Closed-set parking reason from the schema-layer CHECK constraint."""
     parked_at: datetime.datetime
-    """ Wall-clock timestamp the deployment was parked (set once, idempotent across the scheduler restart cycles).
-    """
+    """Wall-clock timestamp the deployment was parked (set once, idempotent across the scheduler restart cycles)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

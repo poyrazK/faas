@@ -23,7 +23,7 @@ class ObjectBucketNotifications:
     revision: int
     rules: list[ObjectNotificationRule]
     managed_rule_ids: list[str] | Unset = UNSET
-    """ Rules owned by declarative compute reconciliation. Full manual replacement clears ownership. """
+    """Rules owned by declarative compute reconciliation. Full manual replacement clears ownership."""
 
     def to_dict(self) -> dict[str, Any]:
         bucket_id = str(self.bucket_id)

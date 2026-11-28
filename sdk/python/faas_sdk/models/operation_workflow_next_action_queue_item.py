@@ -25,13 +25,13 @@ class OperationWorkflowNextActionQueueItem:
     """
 
     action: OperationWorkflowCaseNextAction
-    """ One current coordination obligation or suggestion for an exact workflow case, including the responsible
+    """One current coordination obligation or suggestion for an exact workflow case, including the responsible
     label, its own deadline and a source inbox link. Shared plans may span cases; evidence includes only references
-    matching this case. This does not authorize application execution or infer business completion. """
+    matching this case. This does not authorize application execution or infer business completion."""
     cases: list[OperationWorkflowNextActionCase]
     scope: str
     subscription_tenant_id: UUID | Unset = UNSET
-    """ Source subscription customer selector for opening its controls, distinct from affected case customers. """
+    """Source subscription customer selector for opening its controls, distinct from affected case customers."""
 
     def to_dict(self) -> dict[str, Any]:
         action = self.action.to_dict()

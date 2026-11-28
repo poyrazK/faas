@@ -33,55 +33,54 @@ class UpdateAlertRuleRequest:
     """Partial update — every field is optional. Omitted means leave alone."""
 
     observe_only: bool | Unset = UNSET
-    """ Switch an app-scoped baseline rule between observing and notifying. """
+    """Switch an app-scoped baseline rule between observing and notifying."""
     recovery_confirmation_checks: int | Unset = UNSET
-    """ Change the number of consecutive healthy checks required to recover. Two checks require an app-scoped
-    baseline comparison. """
+    """Change the number of consecutive healthy checks required to recover. Two checks require an app-scoped
+    baseline comparison."""
     environment_scope: str | Unset = UNSET
-    """ Change the environment of an anomaly rule in Observe only mode. Set to the empty string to clear the scope.
-    Omit to keep the saved scope when enabling notifications. """
+    """Change the environment of an anomaly rule in Observe only mode. Set to the empty string to clear the scope.
+    Omit to keep the saved scope when enabling notifications."""
     mcp_readiness_scope: str | Unset = UNSET
-    """ Immutable environment selector. If supplied it must equal the current value; create a new rule to select
-    another environment. """
+    """Immutable environment selector. If supplied it must equal the current value; create a new rule to select
+    another environment."""
     mcp_min_calls: int | Unset = UNSET
-    """ Replacement observation minimum for the existing protocol alert. MCP protocol alerts only. Minimum
+    """Replacement observation minimum for the existing protocol alert. MCP protocol alerts only. Minimum
     observations in every rolling window; defaults to 20 on create. Latency uses measured executions. Omit for other
-    metrics. """
+    metrics."""
     mcp_for_minutes: int | Unset = UNSET
-    """ Replacement sustained duration for the existing protocol alert. MCP protocol alerts only. Continuous breach
+    """Replacement sustained duration for the existing protocol alert. MCP protocol alerts only. Continuous breach
     duration sampled every 30 seconds; defaults to 10 on create. Missing observations interrupt eligibility. Webhook
     action, app scope, gt/gte and windows 5m/15m/1h are required. Error thresholds are percent (0..100), execution
-    p95 thresholds are milliseconds (0..300000). """
+    p95 thresholds are milliseconds (0..300000)."""
     post_deploy_rollback_window_seconds: int | Unset = UNSET
-    """ Change the completed-release recovery window. Omission preserves it and explicit 0 disables it. Positive
+    """Change the completed-release recovery window. Omission preserves it and explicit 0 disables it. Positive
     values require action=rollback; only error_rate_pct or boot_failures with gt or gte and sufficient exact
-    deployment evidence qualifies. A boot_failures rule with action=rollback needs a positive window. """
+    deployment evidence qualifies. A boot_failures rule with action=rollback needs a positive window."""
     notify_resolved: bool | Unset = UNSET
-    """ Turn the webhook's alert.resolved events on or off. Turning them on requires the rule to have a webhook_url.
-    """
+    """Turn the webhook's alert.resolved events on or off. Turning them on requires the rule to have a webhook_url."""
     job_name: str | Unset = UNSET
-    """ Change a job_failures rule's job filter. Omission preserves it and an empty string clears it. """
+    """Change a job_failures rule's job filter. Omission preserves it and an empty string clears it."""
     cron_id: str | Unset = UNSET
-    """ Change the cron filter of a failed_invocations rule with failure_source cron (a cron id). Omission preserves
-    it and an empty string clears it. """
+    """Change the cron filter of a failed_invocations rule with failure_source cron (a cron id). Omission preserves
+    it and an empty string clears it."""
     name: str | Unset = UNSET
     enabled: bool | Unset = UNSET
     metric: UpdateAlertRuleRequestMetric | Unset = UNSET
-    """ Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400. MCP task metrics are
-    notification-only. """
+    """Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400. MCP task metrics are
+    notification-only."""
     comparison: UpdateAlertRuleRequestComparison | Unset = UNSET
     threshold: float | Unset = UNSET
     window_spec: UpdateAlertRuleRequestWindowSpec | Unset = UNSET
     webhook_url: str | Unset = UNSET
     channel_ids: list[UUID] | Unset = UNSET
-    """ Replaces the rule's notification channels; an empty list clears them, which a rule without a webhook cannot
-    do. """
+    """Replaces the rule's notification channels; an empty list clears them, which a rule without a webhook cannot
+    do."""
     webhook_secret: str | Unset = UNSET
-    """ New plaintext HMAC secret. Omit to keep the existing secret. """
+    """New plaintext HMAC secret. Omit to keep the existing secret."""
     cooldown_minutes: int | Unset = UNSET
     action: UpdateAlertRuleRequestAction | Unset = UNSET
-    """ Replace the action. Omit to leave the existing action in place. Pre-auth target and MCP task, event
-    consumer, and workflow metrics support webhook only. """
+    """Replace the action. Omit to leave the existing action in place. Pre-auth target and MCP task, event
+    consumer, and workflow metrics support webhook only."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

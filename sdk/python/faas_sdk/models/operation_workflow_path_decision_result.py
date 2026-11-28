@@ -23,11 +23,10 @@ class OperationWorkflowPathDecisionResult:
     """
 
     requirement: OperationWorkflowPolicyRequirement
-    """ Exact policy rule identity, version, and decision code required as fresh transition evidence. """
+    """Exact policy rule identity, version, and decision code required as fresh transition evidence."""
     satisfied: bool
     reported: OperationBusinessDecision | Unset = UNSET
-    """ Application-reported business decision with a public explanation and optional exact policy rule identity.
-    """
+    """Application-reported business decision with a public explanation and optional exact policy rule identity."""
 
     def to_dict(self) -> dict[str, Any]:
         requirement = self.requirement.to_dict()

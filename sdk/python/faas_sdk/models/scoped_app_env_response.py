@@ -21,7 +21,7 @@ class ScopedAppEnvResponse:
     created_at: datetime.datetime
     updated_at: datetime.datetime
     value: str | Unset = UNSET
-    """ This scope's plaintext value of the variable, included only on a `?values=true` listing. """
+    """This scope's plaintext value of the variable, included only on a `?values=true` listing."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -19,7 +19,7 @@ class ClearObsoleteReport:
     app_slug: str
     count: int
     older_than: str
-    """ Echoes the cutoff the store applied to this clear pass (e.g. 168h = 7 days). """
+    """Echoes the cutoff the store applied to this clear pass (e.g. 168h = 7 days)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

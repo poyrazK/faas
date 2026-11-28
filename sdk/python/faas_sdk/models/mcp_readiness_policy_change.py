@@ -13,7 +13,7 @@ class MCPReadinessPolicyChange:
     """One field change between two readiness policy configurations."""
 
     path: str
-    """ JSON Pointer configuration field or role; role order and audit fields are ignored """
+    """JSON Pointer configuration field or role; role order and audit fields are ignored"""
     before: Any
     after: Any
 

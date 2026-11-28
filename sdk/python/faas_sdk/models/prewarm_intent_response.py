@@ -30,7 +30,7 @@ class PrewarmIntentResponse:
     claimed_at: datetime.datetime | None | Unset = UNSET
     fired_at: datetime.datetime | None | Unset = UNSET
     admitted_count: int | Unset = UNSET
-    """ Instances actually admitted; may be lower than count when capacity gates apply. """
+    """Instances actually admitted; may be lower than count when capacity gates apply."""
     outcome: str | Unset = UNSET
     last_error: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

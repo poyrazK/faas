@@ -41,7 +41,7 @@ class BuildListResponse:
 
     items: list[BuildResponse]
     next_before: str | Unset = UNSET
-    """ Opaque cursor for the next page. Empty = end of list.
+    """Opaque cursor for the next page. Empty = end of list.
     Wire format: `<rfc3339nano>|<id_hex>` (pipe-separated).
     The id is the Build.ID of the LAST row on this page;
     the started_at segment is RFC3339Nano (sub-second
@@ -49,7 +49,7 @@ class BuildListResponse:
     rows (the cursor then keys on id alone in the NULL
     zone). Round-trip verbatim — server-parsed, no client
     re-encoding.
-     """
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

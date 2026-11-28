@@ -16,13 +16,13 @@ class AccountHealthDomain:
     """A custom domain that is not serving correctly."""
 
     domain: str
-    """ The custom hostname. """
+    """The custom hostname."""
     problem: str
-    """ What is wrong with the hostname. """
+    """What is wrong with the hostname."""
     app_slug: str | Unset = UNSET
-    """ Slug of the app the hostname routes to. """
+    """Slug of the app the hostname routes to."""
     cert_error: str | Unset = UNSET
-    """ The certificate authority's last error, when issuance failed. """
+    """The certificate authority's last error, when issuance failed."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

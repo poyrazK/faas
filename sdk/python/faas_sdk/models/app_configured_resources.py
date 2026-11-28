@@ -19,9 +19,9 @@ class AppConfiguredResources:
     """The memory and sustained CPU shape selected for each instance of this app."""
 
     memory_mb: int
-    """ Configured instance memory in MB. """
+    """Configured instance memory in MB."""
     cpu_millicores: AppConfiguredResourcesCpuMillicores
-    """ Configured sustained CPU allowance in millicores. """
+    """Configured sustained CPU allowance in millicores."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

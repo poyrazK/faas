@@ -65,8 +65,8 @@ class EnvironmentGitOpsChangedWebhookPayload:
     graph_id: UUID | Unset = UNSET
     plan_hash: str | Unset = UNSET
     diagnostics: list[EnvironmentGitOpsDiagnostic] | Unset = UNSET
-    """ Safe mapped blocker codes and guidance, optionally scoped to a workload. Never includes upstream error text,
-    logs, values or secret-reference targets. """
+    """Safe mapped blocker codes and guidance, optionally scoped to a workload. Never includes upstream error text,
+    logs, values or secret-reference targets."""
     run_id: UUID | Unset = UNSET
     error_code: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

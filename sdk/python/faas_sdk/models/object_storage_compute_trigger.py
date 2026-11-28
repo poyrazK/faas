@@ -19,9 +19,9 @@ class ObjectStorageComputeTrigger:
     """Stable ObjectCreated filter targeting only the bucket's owning app."""
 
     id: str
-    """ Stable manifest identity scoped to the bucket. """
+    """Stable manifest identity scoped to the bucket."""
     events: list[ObjectStorageComputeTriggerEventsItem] | Unset = UNSET
-    """ Defaults to s3:ObjectCreated:* when omitted or empty. """
+    """Defaults to s3:ObjectCreated:* when omitted or empty."""
     prefix: str | Unset = UNSET
     suffix: str | Unset = UNSET
 

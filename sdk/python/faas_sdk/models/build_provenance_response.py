@@ -35,11 +35,11 @@ class BuildProvenanceResponse:
     id: UUID
     build_id: str
     source_sha256: str
-    """ sha256 of the customer's source tarball (the cache lookup key). """
+    """sha256 of the customer's source tarball (the cache lookup key)."""
     plan: str
-    """ free / hobby / pro / scale — copied from the account at claim time. """
+    """free / hobby / pro / scale — copied from the account at claim time."""
     builder_node_id: str
-    """ Compute node name (`default-local` on a single-node install). """
+    """Compute node name (`default-local` on a single-node install)."""
     started_at: datetime.datetime
     finished_at: datetime.datetime
     buildkit_version: str | Unset = UNSET
@@ -49,10 +49,10 @@ class BuildProvenanceResponse:
     commit_sha: str | Unset = UNSET
     runner_digest: str | Unset = UNSET
     sbom_storage_key: None | str | Unset = UNSET
-    """ Populator fills this from `syft` output. Empty string when not yet populated. """
+    """Populator fills this from `syft` output. Empty string when not yet populated."""
     framework_version: None | str | Unset = UNSET
-    """ Source-declared language version (nodes 22.11.0 / python 3.13 / go 1.24, etc.). Empty string when no version
-    file is present or any parser fails — best-effort, never an error. Added. """
+    """Source-declared language version (nodes 22.11.0 / python 3.13 / go 1.24, etc.). Empty string when no version
+    file is present or any parser fails — best-effort, never an error. Added."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

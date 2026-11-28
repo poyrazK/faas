@@ -32,41 +32,41 @@ class ProjectRollbackOperation:
     steps: list[ProjectRollbackStep]
     operation_id: UUID | Unset = UNSET
     request_id: UUID | Unset = UNSET
-    """ The request ID saved when this rollback was accepted. """
+    """The request ID saved when this rollback was accepted."""
     plan_hash: str | Unset = UNSET
-    """ Hash identifying the runnable plan returned by preview or saved at admission. """
+    """Hash identifying the runnable plan returned by preview or saved at admission."""
     resume_plan_hash: str | Unset = UNSET
-    """ Hash from a runnable resume preview or the latest accepted reviewed resume. """
+    """Hash from a runnable resume preview or the latest accepted reviewed resume."""
     undo_of: UUID | Unset = UNSET
-    """ Source rollback whose cutovers this receipt undoes. """
+    """Source rollback whose cutovers this receipt undoes."""
     undo_operation_id: UUID | Unset = UNSET
-    """ Accepted undo operation linked to this paused rollback. """
+    """Accepted undo operation linked to this paused rollback."""
     deploy_group_id: UUID | Unset = UNSET
     acknowledge_releases: bool | Unset = UNSET
     verify: bool | Unset = UNSET
-    """ Whether configured HTTP health verification is required. """
+    """Whether configured HTTP health verification is required."""
     verify_before_cutover: bool | Unset = UNSET
-    """ Whether configured probes must pass before project traffic moves. """
+    """Whether configured probes must pass before project traffic moves."""
     stabilize_for_seconds: int | Unset = UNSET
-    """ Saved duration of the post-cutover health stabilization window. """
+    """Saved duration of the post-cutover health stabilization window."""
     verify_live_traffic: bool | Unset = UNSET
-    """ Whether configured production 5xx budgets gate the rollback. """
+    """Whether configured production 5xx budgets gate the rollback."""
     undo_on_health_failure: bool | Unset = UNSET
-    """ Whether a confirmed health probe 5xx can trigger automatic undo. """
+    """Whether a confirmed health probe 5xx can trigger automatic undo."""
     undo_on_live_traffic_failure: bool | Unset = UNSET
-    """ Whether a sustained production 5xx breach can trigger automatic undo. """
+    """Whether a sustained production 5xx breach can trigger automatic undo."""
     auto_undo: ProjectRollbackAutoUndo | Unset = UNSET
-    """ The trigger and outcome of an automatic undo after a confirmed health failure. """
+    """The trigger and outcome of an automatic undo after a confirmed health failure."""
     phase: str | Unset = UNSET
-    """ Preparation phase of the operation, either preparing, cutover, or releasing. """
+    """Preparation phase of the operation, either preparing, cutover, or releasing."""
     pause_requested_at: datetime.datetime | Unset = UNSET
-    """ When an operator requested the current pause. Cleared on resume. """
+    """When an operator requested the current pause. Cleared on resume."""
     preparation_deadline: datetime.datetime | Unset = UNSET
-    """ Deadline for preparation """
+    """Deadline for preparation"""
     created_at: datetime.datetime | Unset = UNSET
     updated_at: datetime.datetime | Unset = UNSET
     recovery_ms: int | Unset = UNSET
-    """ Time from project rollback acceptance until the last targeted HTTP service was verified. """
+    """Time from project rollback acceptance until the last targeted HTTP service was verified."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

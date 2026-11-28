@@ -38,32 +38,31 @@ class OperationWorkflowDecisionOutcomeEvidence:
     state: str
     occurred_at: datetime.datetime
     condition_freshness: OperationWorkflowConditionFreshness | Unset = UNSET
-    """ Report-age status using the selected fact reporting Operation's immutable condition definition and the
+    """Report-age status using the selected fact reporting Operation's immutable condition definition and the
     summary evaluation time. A positive budget yields a refresh deadline from occurred_at; overdue begins at the
     deadline. Missing or zero budgets remain no_budget. This does not expire facts, change reported results, or
     authorize execution. Republishing an explicit snapshot updates reporting freshness; it does not prove renewed
-    business verification. """
+    business verification."""
     evidence_age_seconds: int | Unset = UNSET
-    """ Age of the selected active condition fact at evaluated_at; not a condition expiry or assertion of current
-    truth. """
+    """Age of the selected active condition fact at evaluated_at; not a condition expiry or assertion of current
+    truth."""
     condition: OperationBusinessConditionResult | Unset = UNSET
-    """ Application-reported condition result matching the pinned milestone declaration. Omitted conditions remain
-    unreported; unknown is explicit. No execution authority or causal inference. """
+    """Application-reported condition result matching the pinned milestone declaration. Omitted conditions remain
+    unreported; unknown is explicit. No execution authority or causal inference."""
     observed_condition_results: list[OperationWorkflowDecisionOutcomeEvidenceObservedConditionResultsItem] | Unset = (
         UNSET
     )
-    """ All results reported before or at the first terminal report for the selected exact contract and decision and
+    """All results reported before or at the first terminal report for the selected exact contract and decision and
     rule and condition ID/description identity. Present on condition contributors; multiple results explain
-    overlapping group membership. """
+    overlapping group membership."""
     condition_comparison: OperationWorkflowConditionComparison | Unset = UNSET
-    """ Condition changes in explicit decision snapshots between consecutive retained revisions in the same tenant
+    """Condition changes in explicit decision snapshots between consecutive retained revisions in the same tenant
     and workflow run and pinned contract. Shares history comparison statuses; missing decisions on metadata reports
-    do not clear conditions. No causal inference. """
+    do not clear conditions. No causal inference."""
     from_state: str | Unset = UNSET
     milestone_id: UUID | Unset = UNSET
     decision: OperationBusinessDecision | Unset = UNSET
-    """ Application-reported business decision with a public explanation and optional exact policy rule identity.
-    """
+    """Application-reported business decision with a public explanation and optional exact policy rule identity."""
 
     def to_dict(self) -> dict[str, Any]:
         report_id = str(self.report_id)

@@ -31,8 +31,8 @@ class OperationWorkflowNextActionDigestCheckItem:
     """
 
     history_limited: bool
-    """ Lifecycle coverage is bounded by source retention and available anchored receipts; missing events never
-    prove completion. """
+    """Lifecycle coverage is bounded by source retention and available anchored receipts; missing events never
+    prove completion."""
     subscription_id: UUID
     sequence: int
     action_kind: str
@@ -42,12 +42,12 @@ class OperationWorkflowNextActionDigestCheckItem:
     obligation_id: str | Unset = UNSET
     lifecycle: list[OperationWorkflowObligationEvent] | Unset = UNSET
     current: OperationWorkflowNextActionQueueItem | Unset = UNSET
-    """ Current source action shown once across its matching workflow cases. Owner and due filters apply to the
+    """Current source action shown once across its matching workflow cases. Owner and due filters apply to the
     action, not parent coordination. Shared record controls affect all covered cases; evidence and case lists
-    respect the customer/workflow selector. """
+    respect the customer/workflow selector."""
     completion: OperationWorkflowReadinessCompletion | Unset = UNSET
-    """ Immutable recorded follow-up completion with server-derived actor, write time and advisory pre-write
-    evidence check. Retained with the original notification. """
+    """Immutable recorded follow-up completion with server-derived actor, write time and advisory pre-write
+    evidence check. Retained with the original notification."""
 
     def to_dict(self) -> dict[str, Any]:
         history_limited = self.history_limited

@@ -29,14 +29,14 @@ class AlertDeliveryAnomalyEvidence:
     metric: AlertDeliveryAnomalyEvidenceMetric
     comparison: AlertDeliveryAnomalyEvidenceComparison
     threshold: float
-    """ Configured multiplier when the alert fired. """
+    """Configured multiplier when the alert fired."""
     window: AlertDeliveryAnomalyEvidenceWindow
     baseline: float
-    """ Median value in the metric's units. """
+    """Median value in the metric's units."""
     baseline_days: int
-    """ Historical windows used in the baseline. """
+    """Historical windows used in the baseline."""
     ratio: float
-    """ Observed value divided by baseline. """
+    """Observed value divided by baseline."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

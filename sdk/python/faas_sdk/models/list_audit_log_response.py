@@ -28,9 +28,9 @@ class ListAuditLogResponse:
 
     entries: list[AuditLogEntry]
     limit: int
-    """ Effective page size applied (always 1..100; mirrors the customer and operator /v1/audit-log routes). """
+    """Effective page size applied (always 1..100; mirrors the customer and operator /v1/audit-log routes)."""
     next_before: str | Unset = UNSET
-    """ Opaque cursor for the next older page; omitted when this page reaches the end. """
+    """Opaque cursor for the next older page; omitted when this page reaches the end."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

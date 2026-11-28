@@ -26,7 +26,7 @@ class OperationWorkflowConditionEvidence:
     rule_id: str
     rule_version: str
     path_id: str | Unset = UNSET
-    """ Selected path when the decision was reported for a path group. """
+    """Selected path when the decision was reported for a path group."""
 
     def to_dict(self) -> dict[str, Any]:
         report_id = str(self.report_id)

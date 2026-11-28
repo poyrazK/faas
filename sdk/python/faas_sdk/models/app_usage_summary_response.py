@@ -34,34 +34,34 @@ class AppUsageSummaryResponse:
 
     slug: str
     period_start: datetime.datetime
-    """ Half-open [period_start, period_end) window's inclusive lower bound. UTC. """
+    """Half-open [period_start, period_end) window's inclusive lower bound. UTC."""
     period_end: datetime.datetime
-    """ Half-open window's exclusive upper bound. UTC midnight snap (handler defaults). """
+    """Half-open window's exclusive upper bound. UTC midnight snap (handler defaults)."""
     mb_seconds: int
-    """ Sum of usage_minutes.mb_seconds for this app in the window (billable unit). """
+    """Sum of usage_minutes.mb_seconds for this app in the window (billable unit)."""
     gb_hours: float
-    """ mb_seconds / 1024 / 3600, rounded to 6 decimal places (mirror of meter.MonthlyUsageGB). """
+    """mb_seconds / 1024 / 3600, rounded to 6 decimal places (mirror of meter.MonthlyUsageGB)."""
     requests: int
-    """ Cumulative HTTP request count (informational; not billed). """
+    """Cumulative HTTP request count (informational; not billed)."""
     tx_bytes: int
-    """ Cumulative HTTP response body bytes (diagnostic subset of net_tx_bytes; never add both). """
+    """Cumulative HTTP response body bytes (diagnostic subset of net_tx_bytes; never add both)."""
     net_tx_bytes: int
-    """ Canonical cumulative host-interface egress bytes for the window (includes framing). """
+    """Canonical cumulative host-interface egress bytes for the window (includes framing)."""
     builder_seconds: float
-    """ Cumulative builder-microVM CPU-seconds (informational; surfaced as a sidebar line on the dashboard). """
+    """Cumulative builder-microVM CPU-seconds (informational; surfaced as a sidebar line on the dashboard)."""
     cold_boot_count: int
-    """ WAKE_RESTORE→WAKE_COLD_BOOT transitions in the window. """
+    """WAKE_RESTORE→WAKE_COLD_BOOT transitions in the window."""
     plan_included_gb_hours: float
-    """ Echoed from acct.Plan.PlanIncludedGBHours() — plan's per-month included band so the dashboard renders the
-    included-band badge without a second round-trip. """
+    """Echoed from acct.Plan.PlanIncludedGBHours() — plan's per-month included band so the dashboard renders the
+    included-band badge without a second round-trip."""
     overage_gb_hours: float
-    """ max(0, gb_hours - plan_included_gb_hours). 0 when the customer is under their included band; the billable
-    overage above the band otherwise. """
+    """max(0, gb_hours - plan_included_gb_hours). 0 when the customer is under their included band; the billable
+    overage above the band otherwise."""
     source: AppUsageSummaryResponseSource
-    """ Which rollup reader produced this summary. usage_minutes today (30d retention); usage_daily lands with the
-    trail-period follow-up. """
+    """Which rollup reader produced this summary. usage_minutes today (30d retention); usage_daily lands with the
+    trail-period follow-up."""
     as_of: datetime.datetime
-    """ RFC3339Nano UTC stamping the envelope's authoritative 'as of' instant. """
+    """RFC3339Nano UTC stamping the envelope's authoritative 'as of' instant."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

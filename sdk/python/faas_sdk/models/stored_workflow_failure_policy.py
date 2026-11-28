@@ -13,15 +13,15 @@ class StoredWorkflowFailurePolicy:
     """Opt-in thresholds for scheduler-enforced failure admission pausing."""
 
     version: int
-    """ Monotonic failure monitoring policy revision; zero means no policy has been configured. """
+    """Monotonic failure monitoring policy revision; zero means no policy has been configured."""
     enabled: bool
-    """ Whether scheduler evaluation can create a new runtime failure pause. """
+    """Whether scheduler evaluation can create a new runtime failure pause."""
     failure_threshold: int
-    """ Terminal failures required to latch a failure pause. """
+    """Terminal failures required to latch a failure pause."""
     min_completed_runs: int
-    """ Minimum terminal non-cancelled sample count before failure pausing. """
+    """Minimum terminal non-cancelled sample count before failure pausing."""
     window_seconds: int
-    """ Lookback in seconds, bounded by the latest monitoring epoch. """
+    """Lookback in seconds, bounded by the latest monitoring epoch."""
 
     def to_dict(self) -> dict[str, Any]:
         version = self.version

@@ -25,7 +25,7 @@ class OperationWorkflowRetainedMilestonePath:
     id: str
     all_of: list[OperationWorkflowRetainedMilestoneRequirement]
     decision: OperationWorkflowPolicyRequirement | Unset = UNSET
-    """ Exact policy rule identity, version, and decision code required as fresh transition evidence. """
+    """Exact policy rule identity, version, and decision code required as fresh transition evidence."""
 
     def to_dict(self) -> dict[str, Any]:
         id = self.id

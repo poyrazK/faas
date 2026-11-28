@@ -37,11 +37,11 @@ class WorkflowRecoveryHealthIncident:
     reason: str
     closed_at: datetime.datetime | Unset = UNSET
     alert_notification: WorkflowRecoveryHealthNotification | Unset = UNSET
-    """ Frozen health notification identity and receiver set; no_receivers is terminal for this transition and does
-    not replay to late receivers. """
+    """Frozen health notification identity and receiver set; no_receivers is terminal for this transition and does
+    not replay to late receivers."""
     recovery_notification: WorkflowRecoveryHealthNotification | Unset = UNSET
-    """ Frozen health notification identity and receiver set; no_receivers is terminal for this transition and does
-    not replay to late receivers. """
+    """Frozen health notification identity and receiver set; no_receivers is terminal for this transition and does
+    not replay to late receivers."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

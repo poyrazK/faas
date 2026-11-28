@@ -23,18 +23,18 @@ class UsageExportResponse:
     mb_seconds: int
     requests: int
     cpu_usec: int | Unset = UNSET
-    """ Cumulative host cgroup CPU-µs consumed by the app in the export window (informational; not billed). """
+    """Cumulative host cgroup CPU-µs consumed by the app in the export window (informational; not billed)."""
     tx_bytes: int | Unset = UNSET
-    """ Per-(app, month) HTTP response bytes (informational; not billed). It is not collected yet and stays 0. """
+    """Per-(app, month) HTTP response bytes (informational; not billed). It is not collected yet and stays 0."""
     net_tx_bytes: int | Unset = UNSET
-    """ Per-(app, month) byte delta on root-side vethHost.rx_bytes (informational; not billed). Sourced from the VM
+    """Per-(app, month) byte delta on root-side vethHost.rx_bytes (informational; not billed). Sourced from the VM
     manager netstats.Cache via the scheduler ListInstanceStats. Includes Ethernet framing — same kernel counter the
-    per-plan tc tbf qdisc reads. """
+    per-plan tc tbf qdisc reads."""
     net_rx_bytes: int | Unset = UNSET
-    """ Per-(app, month) byte delta on root-side vethHost.tx_bytes (root→guest = ingress; informational; not
-    billed). Mirror of `net_tx_bytes` for the inbound direction. """
+    """Per-(app, month) byte delta on root-side vethHost.tx_bytes (root→guest = ingress; informational; not
+    billed). Mirror of `net_tx_bytes` for the inbound direction."""
     cold_boots: int | Unset = UNSET
-    """ Per-(app, month) count of WAKE_RESTORE→WAKE_COLD_BOOT transitions observed (informational; not billed). """
+    """Per-(app, month) count of WAKE_RESTORE→WAKE_COLD_BOOT transitions observed (informational; not billed)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

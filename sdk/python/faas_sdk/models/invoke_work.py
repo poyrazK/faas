@@ -16,10 +16,10 @@ class InvokeWork:
 
     policy: str
     key: Any
-    """ A bounded JSON string, number, or boolean. Equal typed values share one work lane. """
+    """A bounded JSON string, number, or boolean. Equal typed values share one work lane."""
     fairness_key: Any | Unset = UNSET
-    """ Optional scalar shared by multiple work keys, such as a tenant ID. Defaults to key when the policy has a
-    fairness cap. """
+    """Optional scalar shared by multiple work keys, such as a tenant ID. Defaults to key when the policy has a
+    fairness cap."""
 
     def to_dict(self) -> dict[str, Any]:
         policy = self.policy

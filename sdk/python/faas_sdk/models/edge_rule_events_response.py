@@ -21,7 +21,7 @@ class EdgeRuleEventsResponse:
     """A page of sampled edge-rule matches."""
 
     since: datetime.datetime
-    """ Effective window start after the plan clamp. """
+    """Effective window start after the plan clamp."""
     events: list[EdgeRuleEventResponse]
     next_cursor: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

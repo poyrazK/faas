@@ -26,8 +26,8 @@ class WorkflowRecoveryPolicyAutomaticExecution:
     consecutive_failures: int
     pause_reason: str
     polling_failure: WorkflowRecoveryAutomaticPollingFailure | Unset = UNSET
-    """ Last deterministic automatic polling error. A committed deferral rolls back execution writes and retries
-    with bounded backoff. Successful polling or policy update clears it; raw database messages are never stored. """
+    """Last deterministic automatic polling error. A committed deferral rolls back execution writes and retries
+    with bounded backoff. Successful polling or policy update clears it; raw database messages are never stored."""
     paused_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

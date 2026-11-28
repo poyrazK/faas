@@ -23,16 +23,16 @@ class DevPatchPreview:
 
     eligible: bool
     changed_paths: int
-    """ Files added, modified or deleted inside the build's source root. """
+    """Files added, modified or deleted inside the build's source root."""
     patch_bytes: int
-    """ Total size of the added or modified files. """
+    """Total size of the added or modified files."""
     reason: DevPatchPreviewReason | Unset = UNSET
-    """ Why the sync could not use a live patch. Absent when eligible. """
+    """Why the sync could not use a live patch. Absent when eligible."""
     generation: int | Unset = UNSET
-    """ Set when this sync published a live patch; poll getDevPatchStatus with it. """
+    """Set when this sync published a live patch; poll getDevPatchStatus with it."""
     build_deferred_until: datetime.datetime | Unset = UNSET
-    """ Set when this sync's build waits behind its live patch. The build starts at this time unless a later sync
-    replaces it first; a patch that fails to apply starts it at once. """
+    """Set when this sync's build waits behind its live patch. The build starts at this time unless a later sync
+    replaces it first; a patch that fails to apply starts it at once."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

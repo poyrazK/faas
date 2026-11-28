@@ -94,60 +94,57 @@ class Sidecar:
     """
 
     name: str
-    """ RFC 1123 label (lowercase alphanumeric + dash, 1..63 chars, starts with [a-z0-9]). """
+    """RFC 1123 label (lowercase alphanumeric + dash, 1..63 chars, starts with [a-z0-9])."""
     type_: SidecarType
-    """ `init` runs once before the main workload (DB migrator shape). `sidecar` runs alongside (metrics scraper
-    shape). """
+    """`init` runs once before the main workload (DB migrator shape). `sidecar` runs alongside (metrics scraper
+    shape)."""
     image: str | Unset = UNSET
-    """ Digest-pinned OCI reference (repo@sha256:...). Tag references rejected with 400 `sidecar_invalid_image`. """
+    """Digest-pinned OCI reference (repo@sha256:...). Tag references rejected with 400 `sidecar_invalid_image`."""
     preset: SidecarPreset | Unset = UNSET
-    """ Platform-managed companion preset. The installation must configure an immutable image digest. """
+    """Platform-managed companion preset. The installation must configure an immutable image digest."""
     cmd: list[str] | Unset = UNSET
-    """ Argv. Image's ENTRYPOINT unchanged; CMD overridden. Every element non-empty. """
+    """Argv. Image's ENTRYPOINT unchanged; CMD overridden. Every element non-empty."""
     env: SidecarEnv | Unset = UNSET
-    """ Plaintext env map (sealed at rest). Keys `^[A-Z][A-Z0-9_]*$`; per-value byte cap = plan EnvValueMaxBytes.
-    """
+    """Plaintext env map (sealed at rest). Keys `^[A-Z][A-Z0-9_]*$`; per-value byte cap = plan EnvValueMaxBytes."""
     env_secrets: SidecarEnvSecrets | Unset = UNSET
-    """ Per-sidecar positive allowlist of same-named app secrets, resolved in the deployment scope. Values refresh
+    """Per-sidecar positive allowlist of same-named app secrets, resolved in the deployment scope. Values refresh
     on restart by default; long-running sidecars can additionally opt into runtime projection and signal delivery
-    through their image metadata. Sidecars never inherit main secrets. """
+    through their image metadata. Sidecars never inherit main secrets."""
     port: int | Unset = UNSET
-    """ Listen port. 0 = absent / fall back to image default. """
+    """Listen port. 0 = absent / fall back to image default."""
     primary_ingress: bool | Unset = False
-    """ Route the app's primary public hostname through this long-running companion. Requires an explicit port. """
+    """Route the app's primary public hostname through this long-running companion. Requires an explicit port."""
     ram_mb: int | Unset = UNSET
-    """ Cgroup memory ceiling for this sidecar. 0 = inherit plan RAM; 32..512 enforced at the API. """
+    """Cgroup memory ceiling for this sidecar. 0 = inherit plan RAM; 32..512 enforced at the API."""
     scratch_mb: int | Unset = UNSET
-    """ Writable /tmp tmpfs ceiling for this sidecar in MB. 0 = platform default; explicit values must be 16..512.
-    """
+    """Writable /tmp tmpfs ceiling for this sidecar in MB. 0 = platform default; explicit values must be 16..512."""
     cpu_millicores: SidecarCpuMillicores | Unset = 0
-    """ Sustained cgroup CPU allowance in millicores. 0 = inherit app CPU quota. """
+    """Sustained cgroup CPU allowance in millicores. 0 = inherit app CPU quota."""
     disk_io_profile: SidecarDiskIoProfile | Unset = UNSET
-    """ Per-workload guest cgroup I/O scheduling policy. Omit to inherit the guest default. """
+    """Per-workload guest cgroup I/O scheduling policy. Omit to inherit the guest default."""
     essential: bool | Unset = UNSET
-    """ Defaults to true. Essential workload failure fails the set; non-essential failure is logged and contained.
-    """
+    """Defaults to true. Essential workload failure fails the set; non-essential failure is logged and contained."""
     startup_probe: SidecarProbe | Unset = UNSET
-    """ Container-local startup, liveness, or readiness probe for a companion. Specify
+    """Container-local startup, liveness, or readiness probe for a companion. Specify
     exactly one action: exec, http_get, tcp_socket, grpc, or the legacy OCI
     test field. Network probes use port 0/omitted to inherit the workload's
     declared port, then the image port, then the platform default.
-     """
+    """
     liveness_probe: SidecarProbe | Unset = UNSET
-    """ Container-local startup, liveness, or readiness probe for a companion. Specify
+    """Container-local startup, liveness, or readiness probe for a companion. Specify
     exactly one action: exec, http_get, tcp_socket, grpc, or the legacy OCI
     test field. Network probes use port 0/omitted to inherit the workload's
     declared port, then the image port, then the platform default.
-     """
+    """
     readiness_probe: SidecarProbe | Unset = UNSET
-    """ Container-local startup, liveness, or readiness probe for a companion. Specify
+    """Container-local startup, liveness, or readiness probe for a companion. Specify
     exactly one action: exec, http_get, tcp_socket, grpc, or the legacy OCI
     test field. Network probes use port 0/omitted to inherit the workload's
     declared port, then the image port, then the platform default.
-     """
+    """
     depends_on: list[WorkloadDependency] | Unset = UNSET
-    """ Optional workload lifecycle dependencies. Init workloads are implicit prerequisites of main and long-running
-    sidecars. """
+    """Optional workload lifecycle dependencies. Init workloads are implicit prerequisites of main and long-running
+    sidecars."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

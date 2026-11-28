@@ -27,11 +27,10 @@ class OperationWorkflowDependentInstance:
     """
 
     subject: OperationSubject
-    """ Immutable public business correlation metadata. Captured at admission and preserved through recovery and
-    redeploy. Never an ownership or authorization claim. """
+    """Immutable public business correlation metadata. Captured at admission and preserved through recovery and
+    redeploy. Never an ownership or authorization claim."""
     state: OperationWorkflowState
-    """ Latest app-reported state for one declared workflow instance, including terminal and staleness indicators.
-    """
+    """Latest app-reported state for one declared workflow instance, including terminal and staleness indicators."""
     dependency_status: OperationWorkflowDependentInstanceDependencyStatus
     needs_attention: bool
     required_outcome_code: str | Unset = UNSET

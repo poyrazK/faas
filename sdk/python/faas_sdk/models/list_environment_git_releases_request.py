@@ -17,9 +17,9 @@ class ListEnvironmentGitReleasesRequest:
     """Validated query inputs for an immutable-target recovery catalog read."""
 
     target_commit_sha: str
-    """ Exact target-manifest revision against which recovery eligibility is assessed. """
+    """Exact target-manifest revision against which recovery eligibility is assessed."""
     before: UUID | Unset = UNSET
-    """ Scoped anchor release from an earlier catalog response; omitted for the newest page. """
+    """Scoped anchor release from an earlier catalog response; omitted for the newest page."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

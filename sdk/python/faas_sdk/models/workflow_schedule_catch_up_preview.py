@@ -31,19 +31,19 @@ class WorkflowScheduleCatchUpPreview:
     policy: WorkflowScheduleCatchUpPreviewPolicy
     outcome: WorkflowScheduleCatchUpPreviewOutcome
     eligible_occurrences: int
-    """ Candidate occurrences within the latest policy window, or the single current occurrence for skip. """
+    """Candidate occurrences within the latest policy window, or the single current occurrence for skip."""
     coalesced_occurrences: int
-    """ Older eligible fires represented by the selected latest occurrence. """
+    """Older eligible fires represented by the selected latest occurrence."""
     missed_occurrences_not_recovered: bool
-    """ True when the skip policy drops earlier fires before the current occurrence. """
+    """True when the skip policy drops earlier fires before the current occurrence."""
     missed_outside_window: bool
-    """ True when at least one unconsumed fire is older than the latest policy window. """
+    """True when at least one unconsumed fire is older than the latest policy window."""
     window: str | Unset = UNSET
-    """ Effective maximum age for latest catch-up. """
+    """Effective maximum age for latest catch-up."""
     since: datetime.datetime | Unset = UNSET
-    """ Durable or simulated prior evaluator time. """
+    """Durable or simulated prior evaluator time."""
     selected: WorkflowScheduleFirePreview | Unset = UNSET
-    """ One canonical fire time with its offset-bearing local representation. """
+    """One canonical fire time with its offset-bearing local representation."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

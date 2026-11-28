@@ -19,17 +19,17 @@ class OperationWorkflowReviewResponseHandoffDeclineRequest:
     """
 
     decision_at: datetime.datetime
-    """ OperationWorkflowReviewResponseHandoffDeclineRequest.decision_at. Exact decision timestamp of the handed-off
-    episode. """
+    """OperationWorkflowReviewResponseHandoffDeclineRequest.decision_at. Exact decision timestamp of the handed-off
+    episode."""
     required_at: datetime.datetime
-    """ OperationWorkflowReviewResponseHandoffDeclineRequest.required_at. Exact requirement timestamp; stale
-    episodes conflict. """
+    """OperationWorkflowReviewResponseHandoffDeclineRequest.required_at. Exact requirement timestamp; stale
+    episodes conflict."""
     reason: str
-    """ OperationWorkflowReviewResponseHandoffDeclineRequest.reason. Nonblank UTF-8 reason up to 1024 bytes; line
-    breaks and tabs allowed. """
+    """OperationWorkflowReviewResponseHandoffDeclineRequest.reason. Nonblank UTF-8 reason up to 1024 bytes; line
+    breaks and tabs allowed."""
     handed_off_at: datetime.datetime | Unset = UNSET
-    """ OperationWorkflowReviewResponseHandoffDeclineRequest.handed_off_at. Current handoff timestamp; required by
-    acceptance and decline after manual reassignment. Legacy automatic handoffs can omit it. """
+    """OperationWorkflowReviewResponseHandoffDeclineRequest.handed_off_at. Current handoff timestamp; required by
+    acceptance and decline after manual reassignment. Legacy automatic handoffs can omit it."""
 
     def to_dict(self) -> dict[str, Any]:
         decision_at = self.decision_at.isoformat()

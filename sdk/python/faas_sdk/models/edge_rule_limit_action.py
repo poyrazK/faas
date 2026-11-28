@@ -47,18 +47,18 @@ class EdgeRuleLimitAction:
     """
 
     max_body_bytes: int
-    """ Required per-rule buffered-path body cap. Must be > 0
+    """Required per-rule buffered-path body cap. Must be > 0
     and ≤ `api.MaxRequestBodyBytes` (25 MiB). A standalone
     limit rule with no cap is rejected at create-time with
     422 — use `kind=validate` if you need a body cap
     alongside a JSON Schema.
-     """
+    """
     max_body_bytes_streaming: int | Unset = UNSET
-    """ Optional streaming opt-in cap. 0 (default) = no
+    """Optional streaming opt-in cap. 0 (default) = no
     streaming carve-out; the buffered `max_body_bytes` is
     the cap on both paths. Must be ≥ `max_body_bytes` when
     set. Runtime enforcement deferred to follow-up PR.
-     """
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

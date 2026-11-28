@@ -25,20 +25,19 @@ class RolloutTransitionResponse:
     """
 
     deployment: DeploymentResponse
-    """ One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional
+    """One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional
     `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object; they round-
     trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy pinned. Env
     values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed because the ref shape
-    is non-secret by design. """
+    is non-secret by design."""
     audit_id: str
-    """ The deployment_audit row id (stringified so JSON-number → int64 → BigInt drift doesn't poison SDK callers).
-    """
+    """The deployment_audit row id (stringified so JSON-number → int64 → BigInt drift doesn't poison SDK callers)."""
     recovery: RolloutRecoveryReceipt | Unset = UNSET
-    """ Committed exact canary abort, including the restored traffic recipient and any binding reports required by
-    its stored release policy. """
+    """Committed exact canary abort, including the restored traffic recipient and any binding reports required by
+    its stored release policy."""
     service_recovery: ServiceRolloutRecoveryReceipt | Unset = UNSET
-    """ Durable exact service abort request. Acceptance does not confirm traffic restoration, gateway
-    acknowledgement or request drain. Poll the exact deployment's service_rollout_handoff. """
+    """Durable exact service abort request. Acceptance does not confirm traffic restoration, gateway
+    acknowledgement or request drain. Poll the exact deployment's service_rollout_handoff."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

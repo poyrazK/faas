@@ -29,7 +29,7 @@ class DebugDependencyLatencyResponse:
     window_end: datetime.datetime
     retention_clamped: bool
     complete: bool
-    """ True only when the row, span, and dependency-cardinality caps were not reached. """
+    """True only when the row, span, and dependency-cardinality caps were not reached."""
     truncated: bool
     telemetry_rows: int
     represented_requests: int
@@ -37,8 +37,8 @@ class DebugDependencyLatencyResponse:
     dependencies: list[DebugDependencyLatencyItem]
     edges: list[DebugDependencyImpactEdge]
     deployment_comparison: DebugDependencyDeploymentComparison | Unset = UNSET
-    """ Dependency latency split by deployment: baseline_* fields describe the previous deployment, current_* the
-    compared one. Regressions first, then by current p95. """
+    """Dependency latency split by deployment: baseline_* fields describe the previous deployment, current_* the
+    compared one. Regressions first, then by current p95."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

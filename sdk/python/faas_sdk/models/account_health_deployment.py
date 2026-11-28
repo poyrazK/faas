@@ -17,19 +17,19 @@ class AccountHealthDeployment:
     """A failed deployment with the error and fix hint the build or rollout reported."""
 
     deployment_id: str
-    """ Failed deployment identifier. """
+    """Failed deployment identifier."""
     app_id: str
-    """ Identifier of the deployment's app. """
+    """Identifier of the deployment's app."""
     created_at: datetime.datetime
-    """ When the deployment was created. """
+    """When the deployment was created."""
     app_slug: str | Unset = UNSET
-    """ Slug of the deployment's app. """
+    """Slug of the deployment's app."""
     error_code: str | Unset = UNSET
-    """ Stable failure code. """
+    """Stable failure code."""
     error: str | Unset = UNSET
-    """ Failure message, at most 500 bytes. """
+    """Failure message, at most 500 bytes."""
     hint: str | Unset = UNSET
-    """ Suggested fix, at most 500 bytes. """
+    """Suggested fix, at most 500 bytes."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

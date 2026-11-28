@@ -25,27 +25,27 @@ class AuditEventResponse:
     """
 
     id: str
-    """ Audit event row id (bigint as string). """
+    """Audit event row id (bigint as string)."""
     at: datetime.datetime
-    """ When the event was recorded (RFC 3339, UTC). """
+    """When the event was recorded (RFC 3339, UTC)."""
     actor: str
-    """ Which daemon wrote the row. `apid` for surface; `schedd` for state-transition events (instance wakes / parks
-    / watchdog timeouts). """
+    """Which daemon wrote the row. `apid` for surface; `schedd` for state-transition events (instance wakes / parks
+    / watchdog timeouts)."""
     kind: str
-    """ Namespaced event kind. Common values: `auth.login`, `auth.logout`, `auth.session.created`,
+    """Namespaced event kind. Common values: `auth.login`, `auth.logout`, `auth.session.created`,
     `auth.session.revoke`, `auth.sessions.revoke_all`, `auth.session.stolen`, `key.created`, `key.deleted`,
     `secret.set`, `secret.deleted`, `env.set`, `env.deleted`, `account.plan_changed`, `account.deletion_scheduled`,
-    `account.deletion_restored`. """
+    `account.deletion_restored`."""
     data: AuditEventResponseData
-    """ Kind-specific payload. Always a JSON object; the inner shape depends on `kind`. Plaintext values (e.g.
-    secret VALUE) are NEVER carried in `data`. """
+    """Kind-specific payload. Always a JSON object; the inner shape depends on `kind`. Plaintext values (e.g.
+    secret VALUE) are NEVER carried in `data`."""
     subject: str | Unset = UNSET
-    """ Account id (uuid string form) the event was recorded against. Omitted when the event has no subject (e.g.
-    system-level). """
+    """Account id (uuid string form) the event was recorded against. Omitted when the event has no subject (e.g.
+    system-level)."""
     severity: AuditEventResponseSeverity | Unset = UNSET
-    """ Highest-severity classification for stateless.advisory rows (`high` for /data, /db, /var/lib/postgresql,
+    """Highest-severity classification for stateless.advisory rows (`high` for /data, /db, /var/lib/postgresql,
     /var/lib/mysql; `warn` for other closed paths; `info` for an empty batch). Omitted for non-stateless kinds and
-    for older stateless.advisory rows without a severity. """
+    for older stateless.advisory rows without a severity."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

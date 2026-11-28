@@ -19,9 +19,9 @@ class DeploymentLiveWebhookPayload:
     """Deployment reached the live state. Delivery IDs are stable across retries."""
 
     app_id: str
-    """ App that owns this live deployment. """
+    """App that owns this live deployment."""
     deployment_id: str
-    """ Deployment that entered the live state. """
+    """Deployment that entered the live state."""
     status: DeploymentLiveWebhookPayloadStatus
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

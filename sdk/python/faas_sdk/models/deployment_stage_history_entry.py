@@ -30,7 +30,7 @@ class DeploymentStageHistoryEntry:
     duration_ms: int
     status: DeploymentStageHistoryEntryStatus
     reason: str | Unset = UNSET
-    """ Failure or cancellation detail; absent or empty for completed stages. """
+    """Failure or cancellation detail; absent or empty for completed stages."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

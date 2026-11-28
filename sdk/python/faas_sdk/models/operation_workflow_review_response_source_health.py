@@ -20,31 +20,31 @@ class OperationWorkflowReviewResponseSourceHealth:
     """A scoped source observation for one fixed linked review; unavailable observations never establish review resolution."""
 
     review_index: int
-    """ OperationWorkflowReviewResponseSourceHealth.review_index. Zero-based index into the response's fixed reviews
-    array. """
+    """OperationWorkflowReviewResponseSourceHealth.review_index. Zero-based index into the response's fixed reviews
+    array."""
     status: OperationWorkflowReviewResponseSourceHealthStatus
-    """ OperationWorkflowReviewResponseSourceHealth.status. Whether the linked progress, step and declared evidence
-    could be observed without availability or staleness issues. """
+    """OperationWorkflowReviewResponseSourceHealth.status. Whether the linked progress, step and declared evidence
+    could be observed without availability or staleness issues."""
     checked_at: datetime.datetime
-    """ OperationWorkflowReviewResponseSourceHealth.checked_at. Latest attempt to observe this source. """
+    """OperationWorkflowReviewResponseSourceHealth.checked_at. Latest attempt to observe this source."""
     review_required: bool
-    """ OperationWorkflowReviewResponseSourceHealth.review_required. Current validity review obligation when the
-    step is observable; unavailable sources cannot prove it cleared. """
+    """OperationWorkflowReviewResponseSourceHealth.review_required. Current validity review obligation when the
+    step is observable; unavailable sources cannot prove it cleared."""
     blockers: list[str]
-    """ OperationWorkflowReviewResponseSourceHealth.blockers. Blockers observed in this attempt; consult summary
-    remaining blockers for unverified prior observations. """
+    """OperationWorkflowReviewResponseSourceHealth.blockers. Blockers observed in this attempt; consult summary
+    remaining blockers for unverified prior observations."""
     explanation: str
-    """ OperationWorkflowReviewResponseSourceHealth.explanation. Availability explanation without backend error
-    details. """
+    """OperationWorkflowReviewResponseSourceHealth.explanation. Availability explanation without backend error
+    details."""
     progress_revision: int | Unset = UNSET
-    """ OperationWorkflowReviewResponseSourceHealth.progress_revision. Retained linked progress revision; absent if
-    progress could not be read. """
+    """OperationWorkflowReviewResponseSourceHealth.progress_revision. Retained linked progress revision; absent if
+    progress could not be read."""
     state_revision: int | Unset = UNSET
-    """ OperationWorkflowReviewResponseSourceHealth.state_revision. Retained application state revision sampled with
-    this case; absent if unavailable. """
+    """OperationWorkflowReviewResponseSourceHealth.state_revision. Retained application state revision sampled with
+    this case; absent if unavailable."""
     last_successful_check_at: datetime.datetime | Unset = UNSET
-    """ OperationWorkflowReviewResponseSourceHealth.last_successful_check_at. Most recent available source
-    observation, retained through later read failures. """
+    """OperationWorkflowReviewResponseSourceHealth.last_successful_check_at. Most recent available source
+    observation, retained through later read failures."""
 
     def to_dict(self) -> dict[str, Any]:
         review_index = self.review_index

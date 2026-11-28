@@ -17,9 +17,9 @@ class SourceReviewRequest:
 
     repo: str
     ref: str
-    """ GitHub branch or full lowercase commit SHA; use the commit SHA for tags. """
+    """GitHub branch or full lowercase commit SHA; use the commit SHA for tags."""
     environment: str | Unset = UNSET
-    """ Registered target environment; omitted selects default. """
+    """Registered target environment; omitted selects default."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

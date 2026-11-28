@@ -23,19 +23,19 @@ class OperationWorkflowPlaybookProgressChange:
     """
 
     revision: int
-    """ OperationWorkflowPlaybookProgressChange.revision. Committed revision after this edit. """
+    """OperationWorkflowPlaybookProgressChange.revision. Committed revision after this edit."""
     item_index: int
-    """ OperationWorkflowPlaybookProgressChange.item_index. Edited frozen checklist position. """
+    """OperationWorkflowPlaybookProgressChange.item_index. Edited frozen checklist position."""
     item: OperationWorkflowPlaybookProgressItem
-    """ OperationWorkflowPlaybookProgressItem. Durable advisory checklist coordination, independent of application
-    business success. """
+    """OperationWorkflowPlaybookProgressItem. Durable advisory checklist coordination, independent of application
+    business success."""
     at: datetime.datetime
-    """ OperationWorkflowPlaybookProgressChange.at. Server commit preparation clock. """
+    """OperationWorkflowPlaybookProgressChange.at. Server commit preparation clock."""
     actor: str
-    """ OperationWorkflowPlaybookProgressChange.actor. Server-derived reviewer identity. """
+    """OperationWorkflowPlaybookProgressChange.actor. Server-derived reviewer identity."""
     outcome_code: str | Unset = UNSET
-    """ OperationWorkflowPlaybookProgressChange.outcome_code. Present for outcome follow-up step reviews; item_index
-    is local to that list. """
+    """OperationWorkflowPlaybookProgressChange.outcome_code. Present for outcome follow-up step reviews; item_index
+    is local to that list."""
 
     def to_dict(self) -> dict[str, Any]:
         revision = self.revision

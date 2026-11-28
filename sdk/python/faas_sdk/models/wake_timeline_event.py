@@ -32,13 +32,13 @@ class WakeTimelineEvent:
     """
 
     at: datetime.datetime
-    """ RFC 3339 UTC. Oldest-first (forward narrative). """
+    """RFC 3339 UTC. Oldest-first (forward narrative)."""
     kind: str
-    """ Canonical `wake.*` kind. """
+    """Canonical `wake.*` kind."""
     actor: str
-    """ Daemon that wrote the row (`schedd` / `vmmd` / `gatewayd` / `egress` / `builderd` / `apid`). """
+    """Daemon that wrote the row (`schedd` / `vmmd` / `gatewayd` / `egress` / `builderd` / `apid`)."""
     data: WakeTimelineEventData
-    """ Producer-supplied payload (json object). """
+    """Producer-supplied payload (json object)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

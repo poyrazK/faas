@@ -15,8 +15,8 @@ class EnableEdgeAttackModeRequest:
     """Switches attack mode on for a duration, or moves the end of an active one."""
 
     duration_seconds: int | Unset = 3600
-    """ How long attack mode stays on from now. Switching it on while it is on restarts the clock with this
-    duration. """
+    """How long attack mode stays on from now. Switching it on while it is on restarts the clock with this
+    duration."""
 
     def to_dict(self) -> dict[str, Any]:
         duration_seconds = self.duration_seconds

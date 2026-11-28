@@ -41,52 +41,52 @@ class OperationWorkflowObligationEvent:
     at: datetime.datetime
     explanation: str
     fulfillment_review_escalation: OperationWorkflowFulfillmentReviewEscalation | Unset = UNSET
-    """ Immutable destination delivery receipt for an unresolved review after its actual overdue reminder and
+    """Immutable destination delivery receipt for an unresolved review after its actual overdue reminder and
     configured grace period. Reassignment after that reminder cancels escalation for that deadline, including
     reverting an owner change; a new deadline starts a new window. Reaffirmation, reopening, supersession and
     changed policy/deadline suppress stale delivery. Delivery preserves review ownership and original fulfillment
-    and does not execute application work. """
+    and does not execute application work."""
     fulfillment_review_reminder: OperationWorkflowFulfillmentReviewReminder | Unset = UNSET
-    """ Immutable atomic inbox-delivery receipt for one review work-item and deadline. Includes the saved owner,
+    """Immutable atomic inbox-delivery receipt for one review work-item and deadline. Includes the saved owner,
     reasons, case and evidence context. Identical deadlines do not repeat within the same review cycle; a new
     deadline or review cycle is independently eligible. Delivery does not complete or reopen the original work,
-    change its owner, or assert fresh application evidence. """
+    change its owner, or assert fresh application evidence."""
     review_coordination: OperationWorkflowFulfillmentReviewCoordinationChange | Unset = UNSET
-    """ Immutable explicit ownership/deadline change for one exact pending review cycle, including prior values and
-    authenticated actor/reason. Does not modify original work or execute an application transition. """
+    """Immutable explicit ownership/deadline change for one exact pending review cycle, including prior values and
+    authenticated actor/reason. Does not modify original work or execute an application transition."""
     fulfillment_review: OperationWorkflowObligationFulfillmentReview | Unset = UNSET
-    """ Bounded independent observation of the latest fulfilled case/cycle and its original or reaffirmed proof.
+    """Bounded independent observation of the latest fulfilled case/cycle and its original or reaffirmed proof.
     Flags remain latched until explicit reaffirmation or reopening; normal workflow progress is not invalidation.
     Reasons describe retained coverage, not inferred business failure. Identical semantic observations suppress
-    owner notices. """
+    owner notices."""
     reaffirmation: OperationWorkflowObligationReaffirmation | Unset = UNSET
-    """ Immutable human review receipt with a fresh retained application state report. Original fulfillment and
+    """Immutable human review receipt with a fresh retained application state report. Original fulfillment and
     evidence remain intact; subsequent monitoring uses this proof as its basis. Does not authorize application
-    execution or establish current business success. Each retained exact-case lookup scans at most 1000 reports. """
+    execution or establish current business success. Each retained exact-case lookup scans at most 1000 reports."""
     reopening: OperationWorkflowObligationReopening | Unset = UNSET
-    """ Immutable human decision to restore one current-source case/cycle to work, retaining the original
+    """Immutable human decision to restore one current-source case/cycle to work, retaining the original
     fulfillment and its application evidence. Owner notices are delivered by the worker, with durable duplicate
-    suppression. A subsequent fulfillment requires a report published after this reopening. """
+    suppression. A subsequent fulfillment requires a report published after this reopening."""
     fulfillment: OperationWorkflowObligationFulfillment | Unset = UNSET
-    """ Immutable human fulfillment receipt for one exact case and obligation cycle, linked to a retained
+    """Immutable human fulfillment receipt for one exact case and obligation cycle, linked to a retained
     application transition report. Does not close a shared source plan or assert business success or execution
-    authority. Retained transition lookup scans at most 1000 exact-case reports. """
+    authority. Retained transition lookup scans at most 1000 exact-case reports."""
     target_binding: OperationWorkflowObligationTargetBinding | Unset = UNSET
-    """ One obligation-cycle and exact-case target binding, recorded with an authenticated actor and reason.
-    Unrelated edits preserve it; a new cycle never inherits it. Current readiness is independently reassessed. """
+    """One obligation-cycle and exact-case target binding, recorded with an authenticated actor and reason.
+    Unrelated edits preserve it; a new cycle never inherits it. Current readiness is independently reassessed."""
     replacement: OperationWorkflowObligationReplacement | Unset = UNSET
-    """ Same-source obligation succession recorded atomically with a source change. Links require overlapping saved
+    """Same-source obligation succession recorded atomically with a source change. Links require overlapping saved
     case coverage and removed/new cycles or explicit transition references; a retained terminal same-kind
     predecessor may link a later cycle. Generic new-cycle reasons describe succession rather than business
     causation. Reinstated known identities, unrelated cases and missing history are not linked. These edges do not
-    prove fulfillment. """
+    prove fulfillment."""
     cases: list[OperationWorkflowNextActionCase] | Unset = UNSET
-    """ Affected case identities captured at the source change. Legacy receipts may omit them; case views exclude
-    unscoped receipts. """
+    """Affected case identities captured at the source change. Legacy receipts may omit them; case views exclude
+    unscoped receipts."""
     action_kind: str | Unset = UNSET
     shared_plan: bool | Unset = UNSET
     obligation_id: str | Unset = UNSET
-    """ Exact obligation identity for mutation-time receipts; older inferred observations may omit it. """
+    """Exact obligation identity for mutation-time receipts; older inferred observations may omit it."""
     actor: str | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:

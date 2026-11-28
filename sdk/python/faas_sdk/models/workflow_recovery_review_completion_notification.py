@@ -32,8 +32,8 @@ class WorkflowRecoveryReviewCompletionNotification:
     captured_at: datetime.datetime
     receiver_webhook_ids: list[UUID]
     result: WorkflowRecoveryReviewStatus
-    """ Application status and aggregate execution outcome. Complete requires final proof for every action; retained
-    completion snapshots take precedence over later generations and pruned execution rows. """
+    """Application status and aggregate execution outcome. Complete requires final proof for every action; retained
+    completion snapshots take precedence over later generations and pruned execution rows."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

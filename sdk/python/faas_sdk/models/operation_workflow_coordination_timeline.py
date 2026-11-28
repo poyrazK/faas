@@ -24,43 +24,42 @@ class OperationWorkflowCoordinationTimeline:
     """OperationWorkflowCoordinationTimeline. Retained inbox coordination projection metadata."""
 
     items: list[OperationWorkflowCoordinationTimelineEvent]
-    """ OperationWorkflowCoordinationTimeline.items. Chronological page ordered by retained server clock then stable
-    event identity. """
+    """OperationWorkflowCoordinationTimeline.items. Chronological page ordered by retained server clock then stable
+    event identity."""
     sources: list[OperationWorkflowCoordinationTimelineSource]
-    """ OperationWorkflowCoordinationTimeline.sources. Coverage of current subscriptions within the authenticated
-    role, app and environment. """
+    """OperationWorkflowCoordinationTimeline.sources. Coverage of current subscriptions within the authenticated
+    role, app and environment."""
     subject: OperationSubject
-    """ Immutable public business correlation metadata. Captured at admission and preserved through recovery and
-    redeploy. Never an ownership or authorization claim. """
+    """Immutable public business correlation metadata. Captured at admission and preserved through recovery and
+    redeploy. Never an ownership or authorization claim."""
     workflow: str
-    """ OperationWorkflowCoordinationTimeline.workflow. Exact requested workflow name. """
+    """OperationWorkflowCoordinationTimeline.workflow. Exact requested workflow name."""
     instance_id: str
-    """ OperationWorkflowCoordinationTimeline.instance_id. Exact requested workflow instance. """
+    """OperationWorkflowCoordinationTimeline.instance_id. Exact requested workflow instance."""
     scope: str
-    """ OperationWorkflowCoordinationTimeline.scope. Application environment. """
+    """OperationWorkflowCoordinationTimeline.scope. Application environment."""
     evaluated_at: datetime.datetime
-    """ OperationWorkflowCoordinationTimeline.evaluated_at. Server clock after independent source reads. """
+    """OperationWorkflowCoordinationTimeline.evaluated_at. Server clock after independent source reads."""
     total_count: int
-    """ OperationWorkflowCoordinationTimeline.total_count. Matching retained event count before live pagination. """
+    """OperationWorkflowCoordinationTimeline.total_count. Matching retained event count before live pagination."""
     next_offset: int
-    """ OperationWorkflowCoordinationTimeline.next_offset. Offset for the next live page. """
+    """OperationWorkflowCoordinationTimeline.next_offset. Offset for the next live page."""
     has_more: bool
-    """ OperationWorkflowCoordinationTimeline.has_more. More events existed at evaluation. """
+    """OperationWorkflowCoordinationTimeline.has_more. More events existed at evaluation."""
     retention_limited: bool
-    """ OperationWorkflowCoordinationTimeline.retention_limited. Always true: deleted sources and pruned records
-    cannot be reconstructed. """
+    """OperationWorkflowCoordinationTimeline.retention_limited. Always true: deleted sources and pruned records
+    cannot be reconstructed."""
     sources_truncated: bool
-    """ OperationWorkflowCoordinationTimeline.sources_truncated. Current source list exceeded the bounded
-    projection. """
+    """OperationWorkflowCoordinationTimeline.sources_truncated. Current source list exceeded the bounded
+    projection."""
     history_truncated: bool
-    """ OperationWorkflowCoordinationTimeline.history_truncated. A matching response target lost older assignment
-    history. """
+    """OperationWorkflowCoordinationTimeline.history_truncated. A matching response target lost older assignment
+    history."""
     limitations: list[str]
-    """ OperationWorkflowCoordinationTimeline.limitations. Explicit retention, snapshot and pagination limitations.
-    """
+    """OperationWorkflowCoordinationTimeline.limitations. Explicit retention, snapshot and pagination limitations."""
     platform_tenant_id: UUID | Unset = UNSET
-    """ OperationWorkflowCoordinationTimeline.platform_tenant_id. Operator-only exact customer selection; omitted
-    for account-owned workflows. """
+    """OperationWorkflowCoordinationTimeline.platform_tenant_id. Operator-only exact customer selection; omitted
+    for account-owned workflows."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

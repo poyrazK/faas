@@ -61,12 +61,12 @@ class EdgeRuleValidateAction:
     """
 
     schema: EdgeRuleValidateActionSchema | Unset = UNSET
-    """ Inline JSON Schema document (Draft 2020-12). The schema
+    """Inline JSON Schema document (Draft 2020-12). The schema
     is preserved byte-exact across the API↔the gateway round-trips
     so the SHA-256 cache key is stable.
-     """
+    """
     parameters: EdgeRuleValidateParameters | Unset = UNSET
-    """ Path, query, and header validation for a kind=validate rule
+    """Path, query, and header validation for a kind=validate rule
     (request parameters). Each schema is a JSON
     Schema object whose properties are parameter names; property types
     must be string, integer, number, boolean, or an array of those.
@@ -75,27 +75,27 @@ class EdgeRuleValidateAction:
     the schema reports it. All three are checked before the body is
     read, in the rule's validate_mode; errors name the location
     (`path/id`, `query/limit`, `headers/x-tenant`).
-     """
+    """
     content_types: list[str] | Unset = UNSET
-    """ Optional media-type allowlist. Every entry must start
+    """Optional media-type allowlist. Every entry must start
     with `application/`. Empty array = match any Content-Type.
-     """
+    """
     apply_while_streaming: bool | Unset = UNSET
-    """ Whether validation fires on the streaming response path. Default false; set true per-rule to opt the
+    """Whether validation fires on the streaming response path. Default false; set true per-rule to opt the
     SSE / chunked response path into body validation.
-     """
+    """
     reject_on_unknown_fields: bool | Unset = UNSET
-    """ Toggles `additionalProperties: false` on the compiled
+    """Toggles `additionalProperties: false` on the compiled
     schema. Default false so a body with stray fields does
     not silently fail; opt in per-rule for strict schemas.
-     """
+    """
     max_body_bytes: int | Unset = UNSET
-    """ Per-rule inbound body cap. 0 (default) inherits the
+    """Per-rule inbound body cap. 0 (default) inherits the
     platform cap (`api.MaxRequestBodyBytes`). When set, must
     be > 0 and <= the platform cap.
-     """
+    """
     validate_mode: EdgeRuleValidateActionValidateMode | Unset = "block"
-    """ DEPRECATED. Moved to top-level
+    """DEPRECATED. Moved to top-level
     `EdgeRuleResponse.validate_mode` /
     `CreateEdgeRuleRequest.validate_mode` /
     `UpdateEdgeRuleRequest.validate_mode`. Retained on
@@ -107,7 +107,7 @@ class EdgeRuleValidateAction:
     `X-Validation-Warning: <rule_id>` on the response.
     An empty / omitted value is coerced to `block` at the
     gateway-side handler.
-     """
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -26,20 +26,20 @@ class WorkflowStepResponse:
     attempt: int
     created_at: datetime.datetime
     retry_base: int | Unset = UNSET
-    """ Attempt number at the latest resume; attempts since this number consume the current retry budget. """
+    """Attempt number at the latest resume; attempts since this number consume the current retry budget."""
     for_each_parent: str | Unset = UNSET
-    """ Parent step name for a persisted iteration item. """
+    """Parent step name for a persisted iteration item."""
     for_each_index: int | Unset = UNSET
-    """ Stable zero-based index within the snapshotted list. """
+    """Stable zero-based index within the snapshotted list."""
     for_each_count: int | Unset = UNSET
-    """ Snapshotted item count on an initialized parent; zero is an empty batch. """
+    """Snapshotted item count on an initialized parent; zero is an empty batch."""
     input_: Any | Unset = UNSET
     output: Any | Unset = UNSET
     when_matched: bool | Unset = UNSET
-    """ Persisted guard decision; absent when the guard has not run or a dependency was skipped. """
+    """Persisted guard decision; absent when the guard has not run or a dependency was skipped."""
     when_evaluated_at: datetime.datetime | Unset = UNSET
     skip_reason: WorkflowStepResponseSkipReason | Unset = UNSET
-    """ Why a pending step was skipped; contains no referenced customer values. """
+    """Why a pending step was skipped; contains no referenced customer values."""
     started_at: datetime.datetime | None | Unset = UNSET
     next_check_at: datetime.datetime | None | Unset = UNSET
     next_retry_at: datetime.datetime | None | Unset = UNSET

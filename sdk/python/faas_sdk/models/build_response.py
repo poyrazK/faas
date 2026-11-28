@@ -51,15 +51,15 @@ class BuildResponse:
     started_at: datetime.datetime | Unset = UNSET
     finished_at: datetime.datetime | Unset = UNSET
     cancelled_at: datetime.datetime | Unset = UNSET
-    """ Terminal cancellation timestamp. A queued cancellation can have cancelled_at without started_at or
-    duration_seconds. """
+    """Terminal cancellation timestamp. A queued cancellation can have cancelled_at without started_at or
+    duration_seconds."""
     duration_seconds: int | Unset = UNSET
-    """ Server-computed terminal timestamp (finished_at or cancelled_at) minus started_at in whole seconds. Absent
-    when the build never started. """
+    """Server-computed terminal timestamp (finished_at or cancelled_at) minus started_at in whole seconds. Absent
+    when the build never started."""
     cache_status: BuildResponseCacheStatus | Unset = UNSET
-    """ Builderd cache decision for this build. """
+    """Builderd cache decision for this build."""
     cache_key_sha256: str | Unset = UNSET
-    """ SHA-256 digest of the versioned BuildCacheRecipe. """
+    """SHA-256 digest of the versioned BuildCacheRecipe."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

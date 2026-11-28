@@ -16,7 +16,7 @@ class ProjectRollbackResumeRequest:
     """Require a reviewed plan when resuming a paused project rollback or undo."""
 
     expected_plan_hash: str | Unset = UNSET
-    """ Resume plan hash from a runnable preview of the same paused operation. """
+    """Resume plan hash from a runnable preview of the same paused operation."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

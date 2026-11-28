@@ -39,16 +39,16 @@ class BindingVerificationRun:
     queue_publish: bool
     review_digest: str
     policy: BindingReleasePolicy
-    """ Stored binding verification requirements and revision for an app deployment scope; unconfigured scopes
-    default to off. """
+    """Stored binding verification requirements and revision for an app deployment scope; unconfigured scopes
+    default to off."""
     inventory: AppBindingInventory
-    """ Best-effort app binding metadata with explicit completeness and sanitized section issues. """
+    """Best-effort app binding metadata with explicit completeness and sanitized section issues."""
     steps: list[BindingVerificationRunStep]
     qualification: BindingVerificationQualification | Unset = UNSET
-    """ Server-confirmed temporary qualification conditions for the original receipt. No admission or release
-    authority; wait within its original expiry and recheck. """
+    """Server-confirmed temporary qualification conditions for the original receipt. No admission or release
+    authority; wait within its original expiry and recheck."""
     max_concurrency: int | Unset = 2
-    """ Frozen shared admission budget; omitted values use two. Graph members share the root budget. """
+    """Frozen shared admission budget; omitted values use two. Graph members share the root budget."""
     graph_run_id: UUID | Unset = UNSET
     reason: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

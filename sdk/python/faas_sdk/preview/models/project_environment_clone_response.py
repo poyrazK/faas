@@ -1,0 +1,146 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any, TypeVar
+
+from attrs import define as _attrs_define
+from attrs import field as _attrs_field
+
+from ..models.project_environment_clone_response_shared_resources_item import (
+    ProjectEnvironmentCloneResponseSharedResourcesItem,
+    check_project_environment_clone_response_shared_resources_item,
+)
+from ..types import UNSET, Unset
+
+T = TypeVar("T", bound="ProjectEnvironmentCloneResponse")
+
+
+@_attrs_define
+class ProjectEnvironmentCloneResponse:
+    """Non-secret copy counts for an environment clone. Managed database or bucket data appears as shared only after
+    explicit opt-in.
+
+    """
+
+    configuration_copied: bool
+    variables_copied: int
+    secrets_copied: int
+    workloads_copied: int
+    bindings_copied: int
+    routes_copied: int
+    policies_copied: int
+    shared_resources: list[ProjectEnvironmentCloneResponseSharedResourcesItem]
+    secret_references_copied: int | Unset = UNSET
+    """Destination-to-source references copied under the new catalog environment identity. Git source bindings,
+    ownership, overrides and runtime receipts are not copied."""
+    project_secrets_copied: int | Unset = UNSET
+    """Secrets the source environment shares with every service, copied to the new environment. Values are never
+    returned."""
+    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        configuration_copied = self.configuration_copied
+
+        variables_copied = self.variables_copied
+
+        secrets_copied = self.secrets_copied
+
+        workloads_copied = self.workloads_copied
+
+        bindings_copied = self.bindings_copied
+
+        routes_copied = self.routes_copied
+
+        policies_copied = self.policies_copied
+
+        shared_resources = []
+        for shared_resources_item_data in self.shared_resources:
+            shared_resources_item: str = shared_resources_item_data
+            shared_resources.append(shared_resources_item)
+
+        secret_references_copied = self.secret_references_copied
+
+        project_secrets_copied = self.project_secrets_copied
+
+        field_dict: dict[str, Any] = {}
+        field_dict.update(self.additional_properties)
+        field_dict.update(
+            {
+                "configuration_copied": configuration_copied,
+                "variables_copied": variables_copied,
+                "secrets_copied": secrets_copied,
+                "workloads_copied": workloads_copied,
+                "bindings_copied": bindings_copied,
+                "routes_copied": routes_copied,
+                "policies_copied": policies_copied,
+                "shared_resources": shared_resources,
+            }
+        )
+        if secret_references_copied is not UNSET:
+            field_dict["secret_references_copied"] = secret_references_copied
+        if project_secrets_copied is not UNSET:
+            field_dict["project_secrets_copied"] = project_secrets_copied
+
+        return field_dict
+
+    @classmethod
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        d = dict(src_dict)
+        configuration_copied = d.pop("configuration_copied")
+
+        variables_copied = d.pop("variables_copied")
+
+        secrets_copied = d.pop("secrets_copied")
+
+        workloads_copied = d.pop("workloads_copied")
+
+        bindings_copied = d.pop("bindings_copied")
+
+        routes_copied = d.pop("routes_copied")
+
+        policies_copied = d.pop("policies_copied")
+
+        shared_resources = []
+        _shared_resources = d.pop("shared_resources")
+        for shared_resources_item_data in _shared_resources:
+            shared_resources_item = check_project_environment_clone_response_shared_resources_item(
+                shared_resources_item_data
+            )
+
+            shared_resources.append(shared_resources_item)
+
+        secret_references_copied = d.pop("secret_references_copied", UNSET)
+
+        project_secrets_copied = d.pop("project_secrets_copied", UNSET)
+
+        project_environment_clone_response = cls(
+            configuration_copied=configuration_copied,
+            variables_copied=variables_copied,
+            secrets_copied=secrets_copied,
+            workloads_copied=workloads_copied,
+            bindings_copied=bindings_copied,
+            routes_copied=routes_copied,
+            policies_copied=policies_copied,
+            shared_resources=shared_resources,
+            secret_references_copied=secret_references_copied,
+            project_secrets_copied=project_secrets_copied,
+        )
+
+        project_environment_clone_response.additional_properties = d
+        return project_environment_clone_response
+
+    @property
+    def additional_keys(self) -> list[str]:
+        return list(self.additional_properties.keys())
+
+    def __getitem__(self, key: str) -> Any:
+        return self.additional_properties[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        self.additional_properties[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del self.additional_properties[key]
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.additional_properties

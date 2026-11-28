@@ -39,19 +39,19 @@ class WorkflowRunDiagnosticsResponse:
     observed_at: datetime.datetime
     legacy_unpinned: bool
     state_reason: WorkflowRunDiagnosticsResponseStateReason
-    """ Durable state or dispatch admission reason at observation. Ready does not imply immediate execution or
-    runtime availability. Inspect step kinds for parked wait details. """
+    """Durable state or dispatch admission reason at observation. Ready does not imply immediate execution or
+    runtime availability. Inspect step kinds for parked wait details."""
     due_age_seconds: float
-    """ Age since eligibility including capacity-blocked work and expired leases; zero for future waits and live
-    claims. """
+    """Age since eligibility including capacity-blocked work and expired leases; zero for future waits and live
+    claims."""
     stale_lease: bool
     steps: list[WorkflowDiagnosticStep]
     resume: WorkflowResumePreview
-    """ A continuation plan based on the current run generation and recovery admission checks. """
+    """A continuation plan based on the current run generation and recovery admission checks."""
     deployment_id: UUID | Unset = UNSET
-    """ Original code pin retained across continuation. Omitted for legacy unpinned runs. """
+    """Original code pin retained across continuation. Omitted for legacy unpinned runs."""
     next_wake_at: datetime.datetime | Unset = UNSET
-    """ Next intentional wake or scheduling deadline when it is in the future. """
+    """Next intentional wake or scheduling deadline when it is in the future."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

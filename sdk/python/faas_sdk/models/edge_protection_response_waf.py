@@ -22,21 +22,21 @@ class EdgeProtectionResponseWaf:
     """
 
     inspected: int
-    """ Requests scored by the OWASP CRS. """
+    """Requests scored by the OWASP CRS."""
     detected: int
-    """ Inspected requests at or above the rule's anomaly threshold. """
+    """Inspected requests at or above the rule's anomaly threshold."""
     not_inspected: int
-    """ Matched requests skipped to protect the node (budget, full queue, or error). """
+    """Matched requests skipped to protect the node (budget, full queue, or error)."""
     warned: int
-    """ Requests a warn rule detected in-path and tagged with X-WAF-Warning. """
+    """Requests a warn rule detected in-path and tagged with X-WAF-Warning."""
     blocked: int
-    """ Requests a block rule detected in-path and answered with 403. """
+    """Requests a block rule detected in-path and answered with 403."""
     inline_skipped: int
-    """ Requests that passed a warn or block rule unchecked because the in-path budget was exhausted. """
+    """Requests that passed a warn or block rule unchecked because the in-path budget was exhausted."""
     categories: list[EdgeProtectionResponseWafCategoriesItem]
-    """ Detections by CRS attack category, largest first; one detection may count several. """
+    """Detections by CRS attack category, largest first; one detection may count several."""
     top_rules: list[EdgeProtectionResponseWafTopRulesItem]
-    """ CRS rule IDs that scored most, largest first, for tuning exclude_rule_ids. """
+    """CRS rule IDs that scored most, largest first, for tuning exclude_rule_ids."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

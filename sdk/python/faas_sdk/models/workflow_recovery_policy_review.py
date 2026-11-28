@@ -39,30 +39,30 @@ class WorkflowRecoveryPolicyReview:
     job_id: UUID
     policy_version: int
     policy: WorkflowRecoveryPolicy
-    """ Explicit app recovery policy. Preview prepares parent-job plans and worker-discovered initial-failure
+    """Explicit app recovery policy. Preview prepares parent-job plans and worker-discovered initial-failure
     reviews. initial_failure requires explicit failure statuses. Opt-in automatic_retry requires saved_failure only;
     automatic_initial requires initial_failure only. Both require explicit workflow and failure-status filters and
     execution limits. Resume count caps the absolute generation; preparation and execution budgets are separate.
-    Cancellation remains manual. """
+    Cancellation remains manual."""
     observed_at: datetime.datetime
     decisions: list[WorkflowRecoveryPolicyDecision]
     parent_evidence_repairs: WorkflowRecoveryPolicyReviewParentEvidenceRepairs | Unset = UNSET
     evidence_repairs: WorkflowRecoveryPolicyReviewEvidenceRepairs | Unset = UNSET
     automatic_execution: WorkflowRecoveryReviewAutomaticExecution | Unset = UNSET
-    """ Automatic retry execution records for the frozen review plan. Manual application is recorded through the
-    existing keyed child receipts and is not charged to automatic execution budgets. """
+    """Automatic retry execution records for the frozen review plan. Manual application is recorded through the
+    existing keyed child receipts and is not charged to automatic execution budgets."""
     plan: WorkflowRecoveryResponsePlan | Unset = UNSET
-    """ Saved reviewed actions pinned to an app and parent recovery job. Explicit apply uses stable per-action
-    identifiers. Actions commit independently. """
+    """Saved reviewed actions pinned to an app and parent recovery job. Explicit apply uses stable per-action
+    identifiers. Actions commit independently."""
     review_decision: WorkflowRecoveryReviewDecision | Unset = UNSET
-    """ Immutable review decision with trusted authenticated actor identity. """
+    """Immutable review decision with trusted authenticated actor identity."""
     notification: WorkflowRecoveryReviewNotification | Unset = UNSET
-    """ One durable review notification capture. Delivery outcomes are in the webhook delivery ledger; queued
+    """One durable review notification capture. Delivery outcomes are in the webhook delivery ledger; queued
     capture does not prove HTTP acknowledgement. Frozen receiver identifiers prevent replay to newly configured
-    subscriptions. """
+    subscriptions."""
     completion_notification: WorkflowRecoveryReviewCompletionNotification | Unset = UNSET
-    """ Immutable final plan result and completion receiver capture. Queued means a durable event was prepared; HTTP
-    acknowledgement is recorded separately in the delivery ledger. """
+    """Immutable final plan result and completion receiver capture. Queued means a durable event was prepared; HTTP
+    acknowledgement is recorded separately in the delivery ledger."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

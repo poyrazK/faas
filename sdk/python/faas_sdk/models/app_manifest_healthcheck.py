@@ -27,33 +27,33 @@ class AppManifestHealthcheck:
     """
 
     image_timing: OCIHealthcheckTiming | Unset = UNSET
-    """ Exact OCI image healthcheck durations in nanoseconds, preserved without rounding to whole seconds. """
+    """Exact OCI image healthcheck durations in nanoseconds, preserved without rounding to whole seconds."""
     test: list[str] | Unset = UNSET
-    """ Argv of the check command, prefixed by "CMD", "CMD-SHELL", or "NONE" per Docker semantics. """
+    """Argv of the check command, prefixed by "CMD", "CMD-SHELL", or "NONE" per Docker semantics."""
     exec_: SidecarExecProbe | Unset = UNSET
-    """ Exec probe command passed as argv inside the container; no shell is implied. """
+    """Exec probe command passed as argv inside the container; no shell is implied."""
     http_get: SidecarHTTPGetProbe | Unset = UNSET
-    """ HTTP GET probe sent from inside the container. """
+    """HTTP GET probe sent from inside the container."""
     tcp_socket: SidecarTCPSocketProbe | Unset = UNSET
-    """ TCP connection probe opened from inside the container. """
+    """TCP connection probe opened from inside the container."""
     grpc: SidecarGRPCProbe | Unset = UNSET
-    """ Standard gRPC health Check RPC sent to the companion's loopback listener. """
+    """Standard gRPC health Check RPC sent to the companion's loopback listener."""
     period_s: int | Unset = UNSET
-    """ Typed sidecar probe cadence in seconds; defaults to 10, or 30 for legacy OCI checks. """
+    """Typed sidecar probe cadence in seconds; defaults to 10, or 30 for legacy OCI checks."""
     interval_s: int | None | Unset = UNSET
-    """ Poll cadence after StartPeriodS elapses (Docker default 30s). """
+    """Poll cadence after StartPeriodS elapses (Docker default 30s)."""
     timeout_s: int | None | Unset = UNSET
-    """ Per-probe exec timeout (Docker default 30s). """
+    """Per-probe exec timeout (Docker default 30s)."""
     retries: int | None | Unset = UNSET
-    """ Consecutive failure count to mark unhealthy (Docker default 3). """
+    """Consecutive failure count to mark unhealthy (Docker default 3)."""
     failure_threshold: int | Unset = UNSET
-    """ Failure count that marks a startup probe failed or restarts a liveness workload; defaults to 3. """
+    """Failure count that marks a startup probe failed or restarts a liveness workload; defaults to 3."""
     success_threshold: int | Unset = UNSET
-    """ Consecutive passes required before the probe reports healthy; defaults to 1. """
+    """Consecutive passes required before the probe reports healthy; defaults to 1."""
     initial_delay_s: int | Unset = UNSET
-    """ Seconds to wait before the first typed sidecar probe. """
+    """Seconds to wait before the first typed sidecar probe."""
     start_period_s: int | None | Unset = UNSET
-    """ Startup grace during which failures don't count (Docker 17.05+, default 0s). """
+    """Startup grace during which failures don't count (Docker 17.05+, default 0s)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

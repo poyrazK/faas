@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 import pytest
+
 from faas_sdk.preview import (
     PIPELINE_TASK_MANIFEST_URI,
     JobContract,

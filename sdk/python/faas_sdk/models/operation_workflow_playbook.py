@@ -33,47 +33,47 @@ class OperationWorkflowPlaybook:
     """
 
     id: str
-    """ OperationWorkflowPlaybook.id. Unique bounded lowercase identifier within the workflow contract. """
+    """OperationWorkflowPlaybook.id. Unique bounded lowercase identifier within the workflow contract."""
     version: int
-    """ OperationWorkflowPlaybook.version. Explicit playbook revision, pinned alongside the workflow contract
-    version. """
+    """OperationWorkflowPlaybook.version. Explicit playbook revision, pinned alongside the workflow contract
+    version."""
     match_kind: OperationWorkflowPlaybookMatchKind
-    """ OperationWorkflowPlaybook.match_kind. Exact observed fact category. """
+    """OperationWorkflowPlaybook.match_kind. Exact observed fact category."""
     match_code: str
-    """ OperationWorkflowPlaybook.match_code. Exact blocker code, milestone, dependency workflow, verification
-    blocker code or readiness reason code. """
+    """OperationWorkflowPlaybook.match_code. Exact blocker code, milestone, dependency workflow, verification
+    blocker code or readiness reason code."""
     summary: str
-    """ OperationWorkflowPlaybook.summary. Application-authored guidance without control characters or surrounding
-    whitespace. """
+    """OperationWorkflowPlaybook.summary. Application-authored guidance without control characters or surrounding
+    whitespace."""
     outcome_guidance: list[OperationWorkflowPlaybookOutcomeGuidance] | Unset = UNSET
-    """ OperationWorkflowPlaybook.outcome_guidance. Optional pinned descriptions and suggested follow-up for the
-    expected outcome and explicitly allowed alternatives; unique by outcome code. """
+    """OperationWorkflowPlaybook.outcome_guidance. Optional pinned descriptions and suggested follow-up for the
+    expected outcome and explicitly allowed alternatives; unique by outcome code."""
     outcome_acceptance: OperationWorkflowPlaybookOutcomeAcceptancePolicy | Unset = UNSET
-    """ OperationWorkflowPlaybookOutcomeAcceptancePolicy. Explicit business acceptance rules pinned with the
+    """OperationWorkflowPlaybookOutcomeAcceptancePolicy. Explicit business acceptance rules pinned with the
     playbook. Requires an expected outcome; an empty list permits no alternatives. Omission preserves legacy
-    reviewer acceptance. """
+    reviewer acceptance."""
     outcome_deadline: OperationWorkflowPlaybookOutcomeDeadlinePolicy | Unset = UNSET
-    """ OperationWorkflowPlaybookOutcomeDeadlinePolicy. Application-defined business attention policy. Requires an
+    """OperationWorkflowPlaybookOutcomeDeadlinePolicy. Application-defined business attention policy. Requires an
     expected terminal outcome; all durations are whole seconds and the owner is a coordination label, not an
-    external destination. """
+    external destination."""
     expected_outcome_code: str | Unset = UNSET
-    """ OperationWorkflowPlaybook.expected_outcome_code. Optional expected application terminal outcome, frozen with
-    guidance; does not infer causation or close coordination. """
+    """OperationWorkflowPlaybook.expected_outcome_code. Optional expected application terminal outcome, frozen with
+    guidance; does not infer causation or close coordination."""
     owner: str | Unset = UNSET
-    """ OperationWorkflowPlaybook.owner. Suggested responsible team; does not assign or override coordination
-    ownership. """
+    """OperationWorkflowPlaybook.owner. Suggested responsible team; does not assign or override coordination
+    ownership."""
     evidence_requirements: list[OperationWorkflowPlaybookEvidenceRequirement] | Unset = UNSET
-    """ OperationWorkflowPlaybook.evidence_requirements. Optional unique live selectors for declared checklist
-    labels. Frozen with guidance; human reviews remain independent. """
+    """OperationWorkflowPlaybook.evidence_requirements. Optional unique live selectors for declared checklist
+    labels. Frozen with guidance; human reviews remain independent."""
     required_evidence: list[str] | Unset = UNSET
-    """ OperationWorkflowPlaybook.required_evidence. Human checklist labels with optional live application-evidence
-    selectors. """
+    """OperationWorkflowPlaybook.required_evidence. Human checklist labels with optional live application-evidence
+    selectors."""
     runbook_url: str | Unset = UNSET
-    """ OperationWorkflowPlaybook.runbook_url. Absolute HTTPS runbook link without user credentials; never fetched
-    automatically. """
+    """OperationWorkflowPlaybook.runbook_url. Absolute HTTPS runbook link without user credentials; never fetched
+    automatically."""
     action_url: str | Unset = UNSET
-    """ OperationWorkflowPlaybook.action_url. Absolute HTTPS application action link without user credentials;
-    application handles authorization and execution. """
+    """OperationWorkflowPlaybook.action_url. Absolute HTTPS application action link without user credentials;
+    application handles authorization and execution."""
 
     def to_dict(self) -> dict[str, Any]:
         id = self.id

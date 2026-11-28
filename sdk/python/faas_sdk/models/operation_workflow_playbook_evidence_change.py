@@ -20,13 +20,13 @@ class OperationWorkflowPlaybookEvidenceChange:
     """
 
     before_status: str
-    """ OperationWorkflowPlaybookEvidenceChange.before_status. Pinned case identity or retained watch metadata. """
+    """OperationWorkflowPlaybookEvidenceChange.before_status. Pinned case identity or retained watch metadata."""
     before_reason: str
-    """ OperationWorkflowPlaybookEvidenceChange.before_reason. Pinned case identity or retained watch metadata. """
+    """OperationWorkflowPlaybookEvidenceChange.before_reason. Pinned case identity or retained watch metadata."""
     after: OperationWorkflowPlaybookEvidenceCheck
-    """ OperationWorkflowPlaybookEvidenceCheck. Ephemeral case-read observation of a pinned requirement, separate
+    """OperationWorkflowPlaybookEvidenceCheck. Ephemeral case-read observation of a pinned requirement, separate
     from human review and attachment validity. Contract or guidance changes, missing declarations and incomplete
-    coverage remain unavailable. Does not change progress or authorize execution. """
+    coverage remain unavailable. Does not change progress or authorize execution."""
 
     def to_dict(self) -> dict[str, Any]:
         before_status = self.before_status

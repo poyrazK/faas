@@ -27,11 +27,11 @@ class PreAuthEnforcementSuggestion:
     status: PreAuthEnforcementSuggestionStatus
     reason: str
     requests: int
-    """ Every gateway request to the app in the range. """
+    """Every gateway request to the app in the range."""
     would_block: int
-    """ Sum over the app and route policies. """
+    """Sum over the app and route policies."""
     would_block_succeeded: int
-    """ Would-block requests whose final response was 2xx or 3xx. """
+    """Would-block requests whose final response was 2xx or 3xx."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

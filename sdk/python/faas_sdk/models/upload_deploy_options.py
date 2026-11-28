@@ -26,7 +26,7 @@ class UploadDeployOptions:
     """Deployment metadata persisted with the upload session and applied at commit."""
 
     healthcheck: DeploymentHealthcheck | Unset = UNSET
-    """ Startup healthcheck shape on the deploy-time override object. Exactly one of `path` (HTTP) or `grpc`
+    """Startup healthcheck shape on the deploy-time override object. Exactly one of `path` (HTTP) or `grpc`
     (standard gRPC health
     Check) selects the startup admission action. The gRPC probe uses the
     app's published port; an empty service checks overall server health.
@@ -41,54 +41,54 @@ class UploadDeployOptions:
 
     OCI `test` argv and `start_period_s` remain deploy metadata; the host
     readiness gate uses only the selected HTTP path or gRPC health RPC.
-     """
+    """
     runtime: str | Unset = UNSET
     handler: str | Unset = UNSET
     dockerfile: bool | Unset = UNSET
     source_root: str | Unset = UNSET
-    """ Build directory saved for this resumable upload. Empty or omitted inherits the app's configured root; '.'
-    selects the archive root. """
+    """Build directory saved for this resumable upload. Empty or omitted inherits the app's configured root; '.'
+    selects the archive root."""
     source_format: UploadDeployOptionsSourceFormat | Unset = UNSET
-    """ What the uploaded bytes are. Omitted means a source tarball. oci_image_archive is a single-image linux/amd64
+    """What the uploaded bytes are. Omitted means a source tarball. oci_image_archive is a single-image linux/amd64
     OCI image layout tar that deploys without a build; it is capped at the plan's app layer size and refused for
-    function apps and apps that require signed images. """
+    function apps and apps that require signed images."""
     image_name: str | Unset = UNSET
-    """ Informational name of the uploaded image, such as its local tag. Only valid with source_format
-    oci_image_archive. """
+    """Informational name of the uploaded image, such as its local tag. Only valid with source_format
+    oci_image_archive."""
     scope: str | Unset = UNSET
-    """ Named environment scope applied when the upload is committed; omitted uses default. """
+    """Named environment scope applied when the upload is committed; omitted uses default."""
     source_url: str | Unset = UNSET
-    """ Informational repository provenance URL; never fetched by the API. """
+    """Informational repository provenance URL; never fetched by the API."""
     commit_sha: str | Unset = UNSET
-    """ Lowercase hexadecimal Git commit identifier. """
+    """Lowercase hexadecimal Git commit identifier."""
     environment: str | Unset = UNSET
-    """ Registered project environment to resolve at upload commit. """
+    """Registered project environment to resolve at upload commit."""
     reason: str | Unset = UNSET
     tag: str | Unset = UNSET
     deployed_by: str | Unset = UNSET
     pr_number: int | Unset = UNSET
     workflows: list[WorkflowSpec] | Unset = UNSET
     companions: list[Sidecar] | Unset = UNSET
-    """ Preferred field for up to five helpers carried across the resumable upload session (one init helper and up
-    to four long-running companions). """
+    """Preferred field for up to five helpers carried across the resumable upload session (one init helper and up
+    to four long-running companions)."""
     sidecars: list[Sidecar] | Unset = UNSET
-    """ Deprecated spelling of companions. """
+    """Deprecated spelling of companions."""
     rollback_on_5xx: bool | None | Unset = UNSET
-    """ Resumable deploy policy persisted with deploy_options; Pro/Scale may enable first-wake 5xx auto-rollback,
-    while omitted or null keeps the default false. """
+    """Resumable deploy policy persisted with deploy_options; Pro/Scale may enable first-wake 5xx auto-rollback,
+    while omitted or null keeps the default false."""
     disable_startup_cpu_boost: bool | None | Unset = UNSET
-    """ Create this deployment without temporary startup CPU headroom; omitted or null keeps the default boost. """
+    """Create this deployment without temporary startup CPU headroom; omitted or null keeps the default boost."""
     no_triggers: bool | Unset = UNSET
-    """ Skip reconciling trigger declarations from the uploaded gregale manifest at commit time. """
+    """Skip reconciling trigger declarations from the uploaded gregale manifest at commit time."""
     override_freeze: str | Unset = UNSET
-    """ Commit this upload to production while a deploy freeze is active; the reason is audited with the freezes it
-    overrode. """
+    """Commit this upload to production while a deploy freeze is active; the reason is audited with the freezes it
+    overrode."""
     release_at: datetime.datetime | Unset = UNSET
-    """ Build this upload now, keep it live without traffic, and start its production rollout at this time; deploy
-    freezes are checked at that time. """
+    """Build this upload now, keep it live without traffic, and start its production rollout at this time; deploy
+    freezes are checked at that time."""
     release_notify: list[str] | Unset = UNSET
-    """ Slack or email notification channels told when this upload, scheduled with release_at, starts or cannot
-    start. """
+    """Slack or email notification channels told when this upload, scheduled with release_at, starts or cannot
+    start."""
 
     def to_dict(self) -> dict[str, Any]:
         healthcheck: dict[str, Any] | Unset = UNSET

@@ -31,10 +31,10 @@ class InstallBindRequest:
     installation_id: int
     repo_full_name: str
     csrf_token: str | Unset = UNSET
-    """ Action-bound CSRF token required by the browser bind mutation; not required for repository listing. """
+    """Action-bound CSRF token required by the browser bind mutation; not required for repository listing."""
     production_branch: str | Unset = UNSET
     deploy_branches: InstallBindRequestDeployBranches | Unset = UNSET
-    """ GitHub branch names mapped to deployment environment scopes. An empty object clears existing rules. """
+    """GitHub branch names mapped to deployment environment scopes. An empty object clears existing rules."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

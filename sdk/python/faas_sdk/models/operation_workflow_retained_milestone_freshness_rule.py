@@ -20,8 +20,8 @@ class OperationWorkflowRetainedMilestoneFreshnessRule:
     """
 
     prerequisite: OperationWorkflowRetainedMilestoneRequirement
-    """ Source operation and milestone bound to a declared transaction-backed step of the selected workflow
-    contract. """
+    """Source operation and milestone bound to a declared transaction-backed step of the selected workflow
+    contract."""
     max_age_seconds: int
 
     def to_dict(self) -> dict[str, Any]:

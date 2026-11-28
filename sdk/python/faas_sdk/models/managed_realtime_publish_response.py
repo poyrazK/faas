@@ -19,23 +19,23 @@ class ManagedRealtimePublishResponse:
     """
 
     queued: int
-    """ Number of live subscriber output queues or retained-resume wake-ups that accepted delivery work. """
+    """Number of live subscriber output queues or retained-resume wake-ups that accepted delivery work."""
     subscribers: int | Unset = UNSET
-    """ Live and resumable subscribers targeted across reachable nodes. """
+    """Live and resumable subscribers targeted across reachable nodes."""
     queue_full: int | Unset = UNSET
-    """ Subscribers whose bounded output queues were full. """
+    """Subscribers whose bounded output queues were full."""
     failed: int | Unset = UNSET
-    """ Target subscribers that could not be queued for another per-connection reason. """
+    """Target subscribers that could not be queued for another per-connection reason."""
     partial: bool | Unset = UNSET
-    """ Whether a node or any target subscriber did not accept the publish. """
+    """Whether a node or any target subscriber did not accept the publish."""
     nodes_queried: int | Unset = UNSET
-    """ Active realtime nodes that accepted the publish request. """
+    """Active realtime nodes that accepted the publish request."""
     nodes_unavailable: int | Unset = UNSET
-    """ Active realtime nodes that did not accept the publish request. """
+    """Active realtime nodes that did not accept the publish request."""
     sequence: int | Unset = UNSET
-    """ Committed channel sequence; present when durable is true. """
+    """Committed channel sequence; present when durable is true."""
     durable: bool | Unset = UNSET
-    """ Whether this publish was committed to retained channel history before fan-out. """
+    """Whether this publish was committed to retained channel history before fan-out."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

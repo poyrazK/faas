@@ -22,7 +22,7 @@ class OperationWorkflowReconciliation:
     instance_id: str
     authoritative_state: str
     source_revision: str
-    """ Opaque application business revision; distinct from the SDK report counter. UTF-8 byte bound. """
+    """Opaque application business revision; distinct from the SDK report counter. UTF-8 byte bound."""
     expected_report_revision: int
     contract_version: int
     observed_report_revision: int

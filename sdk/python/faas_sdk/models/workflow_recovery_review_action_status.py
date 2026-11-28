@@ -32,7 +32,7 @@ class WorkflowRecoveryReviewActionStatus:
     complete: bool
     run_id: UUID
     resume_count: int
-    """ Exact execution generation; retry targets the next admitted generation. """
+    """Exact execution generation; retry targets the next admitted generation."""
     run_url: str
     child_job_id: UUID | Unset = UNSET
     items_url: str | Unset = UNSET

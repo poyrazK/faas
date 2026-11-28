@@ -16,9 +16,9 @@ class CreatePreviewRequest:
     """Pull-request preview provisioning payload. Source is deployed separately after the preview app is created."""
 
     pr_number: int
-    """ Pull-request number used to derive the stable preview slug pr-{N}-{parent_slug}. """
+    """Pull-request number used to derive the stable preview slug pr-{N}-{parent_slug}."""
     ttl_hours: int | Unset = 168
-    """ Preview lease duration. The server defaults to 168 hours and caps it at 30 days. """
+    """Preview lease duration. The server defaults to 168 hours and caps it at 30 days."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

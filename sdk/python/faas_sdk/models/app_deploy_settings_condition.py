@@ -23,12 +23,12 @@ class AppDeploySettingsCondition:
     """
 
     expected_app_id: str
-    """ Exact app ID returned by the app read. """
+    """Exact app ID returned by the app read."""
     expected_deployment_id: str
-    """ Exact accepted deployment being recovered. """
+    """Exact accepted deployment being recovered."""
     expected_settings: AppDeploySettingsConditionExpectedSettings
-    """ Observed values from the app read; null represents an unset optional policy. Must cover every mutated
-    setting. """
+    """Observed values from the app read; null represents an unset optional policy. Must cover every mutated
+    setting."""
 
     def to_dict(self) -> dict[str, Any]:
         expected_app_id = self.expected_app_id

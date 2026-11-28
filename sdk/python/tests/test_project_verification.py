@@ -8,7 +8,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-from faas_sdk.preview import FaaSClient as PreviewClient
 
 from faas_sdk import (
     FaaSClient,
@@ -17,6 +16,7 @@ from faas_sdk import (
     VerificationCheck,
     VerificationCheckResult,
 )
+from faas_sdk.preview import FaaSClient as PreviewClient
 
 CONTRACT = Path(__file__).resolve().parents[1] / "request-contracts/project-verification.json"
 if not CONTRACT.exists():

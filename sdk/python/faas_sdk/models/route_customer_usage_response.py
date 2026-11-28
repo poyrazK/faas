@@ -25,27 +25,27 @@ class RouteCustomerUsageResponse:
     """Bounded observed customer usage for one app, deployment and half-open retained telemetry window."""
 
     slug: str
-    """ App whose deployment and telemetry were read. """
+    """App whose deployment and telemetry were read."""
     deployment_id: UUID
-    """ Selected immutable deployment owned by this app. """
+    """Selected immutable deployment owned by this app."""
     from_: datetime.datetime
-    """ Effective inclusive lower bound after retention clamping. """
+    """Effective inclusive lower bound after retention clamping."""
     until: datetime.datetime
-    """ Exclusive upper bound of the observation window. """
+    """Exclusive upper bound of the observation window."""
     as_of: datetime.datetime
-    """ UTC time at which the read window was assembled. """
+    """UTC time at which the read window was assembled."""
     window_clamped: bool
-    """ Requested start was older than current retained telemetry. """
+    """Requested start was older than current retained telemetry."""
     coverage: RouteCustomerUsageResponseCoverage
-    """ Complete capture cannot be established from retained telemetry. """
+    """Complete capture cannot be established from retained telemetry."""
     routes: list[RouteCustomerUsage]
-    """ Top route/method observations ordered by weighted requests, route, then method. """
+    """Top route/method observations ordered by weighted requests, route, then method."""
     routes_limit: int
-    """ Maximum route observations returned. """
+    """Maximum route observations returned."""
     routes_truncated: bool
-    """ More route observations matched than the route limit; missing routes remain unknown. """
+    """More route observations matched than the route limit; missing routes remain unknown."""
     customers_limit: int
-    """ Maximum identity groups returned per route; aggregate counts precede this cap. """
+    """Maximum identity groups returned per route; aggregate counts precede this cap."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

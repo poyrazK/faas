@@ -26,7 +26,7 @@ class DebugReplayComparison:
     body_diff: bool | Unset = UNSET
     crashed: bool | Unset = UNSET
     comparison_incomplete: bool | Unset = UNSET
-    """ True when neither source status nor source body hash was supplied, or the mirror produced no response. """
+    """True when neither source status nor source body hash was supplied, or the mirror produced no response."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

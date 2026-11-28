@@ -29,13 +29,13 @@ class ObjectStorageComputeBinding:
     scope: str
     prefix: str
     credential: ObjectS3Credential
-    """ Bucket-scoped Gregale S3 credential metadata. The secret access key is never included in this shape. """
+    """Bucket-scoped Gregale S3 credential metadata. The secret access key is never included in this shape."""
     secret_keys: ObjectStorageComputeBindingSecretKeys
-    """ Names of sealed app secrets written for a compute binding; values are never returned. """
+    """Names of sealed app secrets written for a compute binding; values are never returned."""
     key_prefix: str | Unset = UNSET
-    """ Object keys this binding is limited to; absent for a whole-bucket binding. """
+    """Object keys this binding is limited to; absent for a whole-bucket binding."""
     rotation_pending: bool | Unset = UNSET
-    """ Previous key is still valid until the rolling refresh has drained old instances. """
+    """Previous key is still valid until the rolling refresh has drained old instances."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

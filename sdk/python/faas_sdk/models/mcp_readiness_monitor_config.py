@@ -23,12 +23,12 @@ class MCPReadinessMonitorConfig:
     interval_seconds: int
     failure_threshold: int
     oauth_connections: MCPReadinessMonitorConfigOauthConnections | Unset = UNSET
-    """ Environment scope to pinned connection. Mutually exclusive with oauth_connection and secret_ref. Missing
-    environments fail closed. """
+    """Environment scope to pinned connection. Mutually exclusive with oauth_connection and secret_ref. Missing
+    environments fail closed."""
     oauth_connection: MCPReadinessOAuthConnection | Unset = UNSET
-    """ App-local managed OAuth connection in the default environment scope, pinned to its current revision. """
+    """App-local managed OAuth connection in the default environment scope, pinned to its current revision."""
     secret_ref: str | Unset = UNSET
-    """ Scoped app-secret reference; no plaintext credentials. """
+    """Scoped app-secret reference; no plaintext credentials."""
 
     def to_dict(self) -> dict[str, Any]:
         enabled = self.enabled

@@ -27,22 +27,22 @@ class DelayedTaskAtRequest:
     scheduled_at: datetime.datetime
     payload: DelayedTaskAtRequestPayload | Unset = UNSET
     work: InvokeWork | Unset = UNSET
-    """ Named policy and typed application key for one durable invocation. """
+    """Named policy and typed application key for one durable invocation."""
     headers: DelayedTaskAtRequestHeaders | Unset = UNSET
     method: str | Unset = "POST"
     path: str | Unset = "/"
     retry_policy: RetryPolicyDTO | Unset = UNSET
-    """ Wire shape for dispatch.RetryPolicy. max_attempts
+    """Wire shape for dispatch.RetryPolicy. max_attempts
     is a requested total-attempt count; zero inherits the applicable
     account plan and never means unlimited. Durable invocation
     producers materialize the effective plan-capped value, and the
     scheduler re-clamps it at dispatch time to account for later plan
     downgrades.
-     """
+    """
     retention_seconds: int | Unset = UNSET
     destinations: InvocationDestinations | Unset = UNSET
-    """ EPIC #1278. Optional terminal callbacks for an async invocation. Values are app webhook subscription IDs
-    owned by the invoking app. """
+    """EPIC #1278. Optional terminal callbacks for an async invocation. Values are app webhook subscription IDs
+    owned by the invoking app."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

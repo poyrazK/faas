@@ -25,7 +25,7 @@ class WorkflowRecoveryHistory:
     created_before: datetime.datetime
     entries: list[WorkflowRecoveryHistoryEntry]
     retained_observations: bool
-    """ True indicates retained evidence rather than a complete immutable audit log. """
+    """True indicates retained evidence rather than a complete immutable audit log."""
     next_after: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

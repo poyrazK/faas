@@ -24,7 +24,7 @@ class EventExecutionLineageRetryJobControlFilters:
 
     action: EventExecutionLineageRetryJobControlFiltersAction | Unset = UNSET
     actor_id: str | Unset = UNSET
-    """ Exact actor UUID in hyphenated form or store for an internal caller. Empty means no filter. """
+    """Exact actor UUID in hyphenated form or store for an internal caller. Empty means no filter."""
     credential_type: EventExecutionLineageRetryJobControlFiltersCredentialType | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:

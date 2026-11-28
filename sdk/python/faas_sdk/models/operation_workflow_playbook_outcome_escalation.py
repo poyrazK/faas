@@ -26,25 +26,24 @@ class OperationWorkflowPlaybookOutcomeEscalation:
     """
 
     watch_id: UUID
-    """ OperationWorkflowPlaybookOutcomeEscalation.watch_id. Exact durable watch identity for fenced evidence
-    refresh. """
+    """OperationWorkflowPlaybookOutcomeEscalation.watch_id. Exact durable watch identity for fenced evidence
+    refresh."""
     progress_id: UUID
-    """ OperationWorkflowPlaybookOutcomeEscalation.progress_id. Exact pinned checklist that originally missed its
-    observed deadline. """
+    """OperationWorkflowPlaybookOutcomeEscalation.progress_id. Exact pinned checklist that originally missed its
+    observed deadline."""
     deadline_at: datetime.datetime
-    """ OperationWorkflowPlaybookOutcomeEscalation.deadline_at. Original outcome deadline, unchanged after delivery.
-    """
+    """OperationWorkflowPlaybookOutcomeEscalation.deadline_at. Original outcome deadline, unchanged after delivery."""
     current: OperationWorkflowPlaybookBusinessOutcome
-    """ OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen
+    """OperationWorkflowPlaybookBusinessOutcome. Exact-case application business result compared with a frozen
     playbook expectation. Independent of human completion and evidence satisfaction; changed guidance never silently
-    changes the expected outcome. """
+    changes the expected outcome."""
     response: OperationWorkflowReadinessEscalationResponse | Unset = UNSET
-    """ Optional acknowledgment response target on a retained assigned escalation. Human acknowledgment fulfills it;
+    """Optional acknowledgment response target on a retained assigned escalation. Human acknowledgment fulfills it;
     completion or follow-up clearing stops it. A missed target emits one notice and optional guarded fallback.
-    Assignment history retains the latest 16 changes. """
+    Assignment history retains the latest 16 changes."""
     success_observed_at: datetime.datetime | Unset = UNSET
-    """ OperationWorkflowPlaybookOutcomeEscalation.success_observed_at. First subsequent achieved observation,
-    retained through corrections or evidence loss; does not prove when the business result occurred. """
+    """OperationWorkflowPlaybookOutcomeEscalation.success_observed_at. First subsequent achieved observation,
+    retained through corrections or evidence loss; does not prove when the business result occurred."""
 
     def to_dict(self) -> dict[str, Any]:
         watch_id = str(self.watch_id)

@@ -22,7 +22,7 @@ class EdgeRuleRespondAction:
 
     status_code: int
     body: Any | Unset = UNSET
-    """ Arbitrary JSON response body. Omit for an empty response. """
+    """Arbitrary JSON response body. Omit for an empty response."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

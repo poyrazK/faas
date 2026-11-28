@@ -17,18 +17,18 @@ class OperationWorkflowCaseAction:
     """OperationWorkflowCaseAction. Current evidence and advisory coordination for an exact scoped business workflow."""
 
     kind: str
-    """ OperationWorkflowCaseAction.kind. Advisory suggestion category; never an execution command. """
+    """OperationWorkflowCaseAction.kind. Advisory suggestion category; never an execution command."""
     summary: str
-    """ OperationWorkflowCaseAction.summary. Evidence-based human next step. """
+    """OperationWorkflowCaseAction.summary. Evidence-based human next step."""
     owner: str | Unset = UNSET
-    """ OperationWorkflowCaseAction.owner. Application blocker owner, verification owner or separate human
-    coordination owner depending on kind. """
+    """OperationWorkflowCaseAction.owner. Application blocker owner, verification owner or separate human
+    coordination owner depending on kind."""
     operation_id: UUID | Unset = UNSET
-    """ OperationWorkflowCaseAction.operation_id. Retained reporting operation evidence link. """
+    """OperationWorkflowCaseAction.operation_id. Retained reporting operation evidence link."""
     subscription_id: UUID | Unset = UNSET
-    """ OperationWorkflowCaseAction.subscription_id. Source readiness inbox for a follow-up suggestion. """
+    """OperationWorkflowCaseAction.subscription_id. Source readiness inbox for a follow-up suggestion."""
     sequence: int | Unset = UNSET
-    """ OperationWorkflowCaseAction.sequence. Retained source notification sequence. """
+    """OperationWorkflowCaseAction.sequence. Retained source notification sequence."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

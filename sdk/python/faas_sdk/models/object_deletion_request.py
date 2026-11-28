@@ -19,7 +19,7 @@ class ObjectDeletionRequest:
     id: UUID
     key: str
     version_id: str | Unset = UNSET
-    """ Omit for ordinary deletion; use null or an owned public version UUID for permanent deletion. """
+    """Omit for ordinary deletion; use null or an owned public version UUID for permanent deletion."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

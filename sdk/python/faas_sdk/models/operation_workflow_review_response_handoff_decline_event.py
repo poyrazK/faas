@@ -23,14 +23,13 @@ class OperationWorkflowReviewResponseHandoffDeclineEvent:
     """
 
     source_notification_id: UUID
-    """ OperationWorkflowReviewResponseHandoffDeclineEvent.source_notification_id. Original response alert identity.
-    """
+    """OperationWorkflowReviewResponseHandoffDeclineEvent.source_notification_id. Original response alert identity."""
     source_sequence: int
-    """ OperationWorkflowReviewResponseHandoffDeclineEvent.source_sequence. Original response sequence within this
-    inbox. """
+    """OperationWorkflowReviewResponseHandoffDeclineEvent.source_sequence. Original response sequence within this
+    inbox."""
     decline: OperationWorkflowReviewResponseHandoffDecline
-    """ Immutable decline for a responsible team recorded by an authenticated authorized operator, without proof of
-    team membership. Retained history carries its one-time notification intent. """
+    """Immutable decline for a responsible team recorded by an authenticated authorized operator, without proof of
+    team membership. Retained history carries its one-time notification intent."""
 
     def to_dict(self) -> dict[str, Any]:
         source_notification_id = str(self.source_notification_id)

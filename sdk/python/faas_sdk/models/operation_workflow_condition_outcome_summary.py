@@ -22,26 +22,26 @@ class OperationWorkflowConditionOutcomeSummary:
     """
 
     matching_workflow_count: int
-    """ All completed matching workflows before bounded sampling. """
+    """All completed matching workflows before bounded sampling."""
     sampled_workflow_count: int
     linked_workflow_count: int
-    """ Eligible sampled workflows with reported condition evidence; includes workflows whose groups are omitted by
-    the display cap. """
+    """Eligible sampled workflows with reported condition evidence; includes workflows whose groups are omitted by
+    the display cap."""
     changing_result_workflow_count: int
-    """ Eligible linked workflows reporting multiple results for at least one exact condition and rule identity;
-    counted once per workflow. """
+    """Eligible linked workflows reporting multiple results for at least one exact condition and rule identity;
+    counted once per workflow."""
     excluded_incomplete_workflow_count: int
     missing_outcome_workflow_count: int
     unclassified_workflow_count: int
-    """ Complete sampled workflows with an outcome but no reported conditions; omission is not unknown. """
+    """Complete sampled workflows with an outcome but no reported conditions; omission is not unknown."""
     excluded_condition_evidence_workflow_count: int
-    """ Complete workflows with an outcome exceeding 256 exact condition identities; excluded entirely before group
-    display limits. """
+    """Complete workflows with an outcome exceeding 256 exact condition identities; excluded entirely before group
+    display limits."""
     cohort_truncated: bool
     groups_truncated: bool
     groups: list[OperationWorkflowConditionOutcomeGroup]
-    """ First 64 identities in contract/decision/rule/version/condition ID/description/result/outcome lexical order.
-    Counts of overlapping groups must not be summed. """
+    """First 64 identities in contract/decision/rule/version/condition ID/description/result/outcome lexical order.
+    Counts of overlapping groups must not be summed."""
 
     def to_dict(self) -> dict[str, Any]:
         matching_workflow_count = self.matching_workflow_count

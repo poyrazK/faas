@@ -26,8 +26,7 @@ class OperationBusinessDecisionPayload:
 
     kind: OperationBusinessDecisionPayloadKind
     decision: OperationBusinessDecision
-    """ Application-reported business decision with a public explanation and optional exact policy rule identity.
-    """
+    """Application-reported business decision with a public explanation and optional exact policy rule identity."""
 
     def to_dict(self) -> dict[str, Any]:
         kind: str = self.kind

@@ -37,56 +37,56 @@ class OperationWorkflowReadinessCoordinationRequest:
     """
 
     revision: int
-    """ OperationWorkflowReadinessCoordinationRequest.revision. Shared coordination value; does not alter
-    application evidence. """
+    """OperationWorkflowReadinessCoordinationRequest.revision. Shared coordination value; does not alter
+    application evidence."""
     status: OperationWorkflowReadinessCoordinationRequestStatus
-    """ OperationWorkflowReadinessCoordinationRequest.status. Shared coordination value; does not alter application
-    evidence. """
+    """OperationWorkflowReadinessCoordinationRequest.status. Shared coordination value; does not alter application
+    evidence."""
     owner: str
-    """ OperationWorkflowReadinessCoordinationRequest.owner. Shared coordination value; does not alter application
-    evidence. """
+    """OperationWorkflowReadinessCoordinationRequest.owner. Shared coordination value; does not alter application
+    evidence."""
     note: str
-    """ OperationWorkflowReadinessCoordinationRequest.note. Shared coordination value; does not alter application
-    evidence. """
+    """OperationWorkflowReadinessCoordinationRequest.note. Shared coordination value; does not alter application
+    evidence."""
     review_coordination: OperationWorkflowFulfillmentReviewCoordinationRequest | Unset = UNSET
-    """ Assign and schedule one exact pending fulfillment-review cycle with a reason. Source revision and review
+    """Assign and schedule one exact pending fulfillment-review cycle with a reason. Source revision and review
     fingerprint fence stale edits. Preserve source status, owner, note and deadline; do not combine with other
     actions. Configure an optional escalation team/grace period; reassignment after an overdue reminder cancels
     escalation for that deadline, including reverted routing. Removing the deadline disables escalation when policy
     fields are omitted. Empty owner explicitly unassigns; omitted due_at clears the review deadline. Original
-    fulfillment remains intact. """
+    fulfillment remains intact."""
     reaffirmation: OperationWorkflowObligationReaffirmationRequest | Unset = UNSET
-    """ Explicitly reaffirm a flagged latest fulfillment without reopening work. Preserve source status, owner, note
+    """Explicitly reaffirm a flagged latest fulfillment without reopening work. Preserve source status, owner, note
     and deadline and do not combine with other actions. Source revision, binding, fulfillment time and review
     fingerprint fence stale decisions. Evidence must be a full application state report for the exact case under the
     fresh current contract and be published after review was required; current retained evidence is rechecked
-    independently before commit. """
+    independently before commit."""
     reopening: OperationWorkflowObligationReopeningRequest | Unset = UNSET
-    """ Explicitly reopen the latest fulfillment for an exact bound case and current source cycle, with a reason.
+    """Explicitly reopen the latest fulfillment for an exact bound case and current source cycle, with a reason.
     Preserve source status, owner, note and deadline; cannot combine with other action edits. Retired sources,
     superseded cycles and changed/cleared bindings cannot be reopened. Reopening does not execute an application
-    transition. """
+    transition."""
     fulfillment: OperationWorkflowObligationFulfillmentRequest | Unset = UNSET
-    """ Explicit fulfillment of one current bound case/cycle. Must preserve source status, owner, note and deadline
+    """Explicit fulfillment of one current bound case/cycle. Must preserve source status, owner, note and deadline
     and cannot combine with target binding, response or shared completion edits. The full binding fences replacement
     or rebinding. Evidence must be a retained application report of the exact target transition, published after
-    binding; current readiness is insufficient. """
+    binding; current readiness is insufficient."""
     target_binding: OperationWorkflowObligationTargetRequest | Unset = UNSET
-    """ Bind or clear one active free-form plan obligation for an exact case. Clear requires no transition; bind
+    """Bind or clear one active free-form plan obligation for an exact case. Clear requires no transition; bind
     requires a fresh declared current-state transition. Requires the current coordination revision and unchanged
     status, owner, note and deadline; cannot combine with completion or review-response edits. Customer cases omit
     tenant IDs; operators specify the exact customer. Source obligation identity is rechecked under its write lock;
-    evidence observation and persistence are independent. """
+    evidence observation and persistence are independent."""
     review_response: OperationWorkflowReviewResponseRequest | Unset = UNSET
-    """ OperationWorkflowReviewResponseRequest. Explicit follow-through on an original critical or overdue business-
-    impact alert. Saving acknowledges the alert and assigns queue attention to the response owner. """
+    """OperationWorkflowReviewResponseRequest. Explicit follow-through on an original critical or overdue business-
+    impact alert. Saving acknowledges the alert and assigns queue attention to the response owner."""
     completion: OperationWorkflowReadinessCompletionRequest | Unset = UNSET
-    """ An asserted coordination outcome. Generic completion requires a note and resolved requires retained
+    """An asserted coordination outcome. Generic completion requires a note and resolved requires retained
     evidence; playbook business completion captures its own current evidence. Closing does not prove business
-    resolution. """
+    resolution."""
     follow_up_at: datetime.datetime | Unset = UNSET
-    """ OperationWorkflowReadinessCoordinationRequest.follow_up_at. Shared coordination value; does not alter
-    application evidence. """
+    """OperationWorkflowReadinessCoordinationRequest.follow_up_at. Shared coordination value; does not alter
+    application evidence."""
 
     def to_dict(self) -> dict[str, Any]:
         revision = self.revision

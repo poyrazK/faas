@@ -38,9 +38,9 @@ class MCPReadinessMonitorStatus:
     state: MCPReadinessMonitorStatusState
     history: list[MCPReadinessMonitorObservation]
     scope: str | Unset = UNSET
-    """ Readiness environment. Omission selects default. """
+    """Readiness environment. Omission selects default."""
     oauth_connection: MCPReadinessOAuthConnection | Unset = UNSET
-    """ App-local managed OAuth connection in the default environment scope, pinned to its current revision. """
+    """App-local managed OAuth connection in the default environment scope, pinned to its current revision."""
     recovery_action: MCPReadinessMonitorStatusRecoveryAction | Unset = UNSET
     artifact_sha256: str | Unset = UNSET
     last_success_at: datetime.datetime | Unset = UNSET

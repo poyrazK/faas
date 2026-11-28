@@ -20,30 +20,30 @@ class MFAEnrollResponse:
     """
 
     otpauth_url: str
-    """ Standard `otpauth://totp/...` URL with the issuer = FaaS.
+    """Standard `otpauth://totp/...` URL with the issuer = FaaS.
     The customer's authenticator app ingests this on its own;
     the dashboard also embeds the QR for camera-based setup.
-     """
+    """
     secret: str
-    """ Base32-encoded TOTP secret, 32 chars (no padding). Same
+    """Base32-encoded TOTP secret, 32 chars (no padding). Same
     value embedded in the otpauth URL; surfaced here so the
     dashboard can render the secret directly for
     copy-paste into an authenticator app that doesn't read
     URLs.
-     """
+    """
     qr_code_png_base64: str
-    """ Base64-encoded PNG bytes of the QR code (256×256). The
+    """Base64-encoded PNG bytes of the QR code (256×256). The
     server base64-encodes the raw PNG for JSON transport;
     the dashboard decodes the string back to bytes before
     rendering it in an `<img>` tag. The authenticator scans
     the decoded PNG.
-     """
+    """
     recovery_codes: list[str]
-    """ Ten single-use 10-character base32 strings. The
+    """Ten single-use 10-character base32 strings. The
     dashboard renders them in the "save these somewhere"
     step. Each code is hashed (SHA-256) before storage;
     the plaintext never reappears.
-     """
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

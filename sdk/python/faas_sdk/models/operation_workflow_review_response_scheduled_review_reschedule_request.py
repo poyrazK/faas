@@ -27,7 +27,7 @@ class OperationWorkflowReviewResponseScheduledReviewRescheduleRequest:
     due_at: datetime.datetime
     new_due_at: datetime.datetime
     reason: str
-    """ Nonblank UTF-8 explanation for the schedule change, at most 1024 bytes; line breaks and tabs allowed. """
+    """Nonblank UTF-8 explanation for the schedule change, at most 1024 bytes; line breaks and tabs allowed."""
 
     def to_dict(self) -> dict[str, Any]:
         decision_at = self.decision_at.isoformat()

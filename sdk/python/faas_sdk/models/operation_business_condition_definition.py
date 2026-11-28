@@ -19,20 +19,20 @@ class OperationBusinessConditionDefinition:
 
     id: str
     description: str
-    """ Public UTF-8 explanation without control characters; byte bound. """
+    """Public UTF-8 explanation without control characters; byte bound."""
     expected_states: list[str] | Unset = UNSET
-    """ Optional states where this workflow step is expected to report the condition. Names must belong to its
+    """Optional states where this workflow step is expected to report the condition. Names must belong to its
     declared workflow states. Omission declares no expectation; this never gates transitions or evaluates business
-    truth. """
+    truth."""
     refresh_owner: str | Unset = UNSET
-    """ Optional public team or actor responsible for refreshing this condition report. UTF-8 byte bound; no
-    controls or surrounding whitespace. Omission is unassigned. """
+    """Optional public team or actor responsible for refreshing this condition report. UTF-8 byte bound; no
+    controls or surrounding whitespace. Omission is unassigned."""
     refresh_instructions: str | Unset = UNSET
-    """ Optional public application-declared refresh instructions. UTF-8 byte bound; no controls or surrounding
-    whitespace. Displayed as text and never executed. """
+    """Optional public application-declared refresh instructions. UTF-8 byte bound; no controls or surrounding
+    whitespace. Displayed as text and never executed."""
     evidence_max_age_seconds: int | Unset = UNSET
-    """ Optional pinned maximum condition report age in seconds. Zero or omission disables the budget; this measures
-    reporting freshness without changing the application result. """
+    """Optional pinned maximum condition report age in seconds. Zero or omission disables the budget; this measures
+    reporting freshness without changing the application result."""
 
     def to_dict(self) -> dict[str, Any]:
         id = self.id

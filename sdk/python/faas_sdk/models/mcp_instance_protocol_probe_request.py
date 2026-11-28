@@ -23,14 +23,14 @@ class MCPInstanceProtocolProbeRequest:
     """One bounded, read-only MCP JSON-RPC request to an exact replica."""
 
     host: str
-    """ Deployment preview hostname and optional port. """
+    """Deployment preview hostname and optional port."""
     endpoint: str
-    """ Literal absolute MCP endpoint path without query, fragment, escapes, empty interior segments, or route
-    patterns. """
+    """Literal absolute MCP endpoint path without query, fragment, escapes, empty interior segments, or route
+    patterns."""
     protocol_version: MCPInstanceProtocolProbeRequestProtocolVersion
     rpc_request: MCPProbeRPCRequest
-    """ Single MCP JSON-RPC initialize, initialized notification, discovery, or catalog-list request. Mutating and
-    data-reading methods are rejected. """
+    """Single MCP JSON-RPC initialize, initialized notification, discovery, or catalog-list request. Mutating and
+    data-reading methods are rejected."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

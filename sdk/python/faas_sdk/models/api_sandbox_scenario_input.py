@@ -26,13 +26,13 @@ class APISandboxScenarioInput:
     name: str
     requests: list[APISandboxExampleRequest]
     seed: APISandboxScenarioInputSeed
-    """ Synthetic fixture data of up to 8 KiB. Passed to the sandbox release as GREGALE_API_SANDBOX_SEED. """
+    """Synthetic fixture data of up to 8 KiB. Passed to the sandbox release as GREGALE_API_SANDBOX_SEED."""
     seeded_ids: APISandboxScenarioGuideSeededIds | Unset = UNSET
-    """ Synthetic IDs shown to invite recipients. """
+    """Synthetic IDs shown to invite recipients."""
     stripe_webhook: APISandboxStripeWebhook | Unset = UNSET
-    """ Owner-only synthetic Stripe event fixture for an automated run. """
+    """Owner-only synthetic Stripe event fixture for an automated run."""
     outbound_webhook: APISandboxOutboundWebhook | Unset = UNSET
-    """ Check a managed async job completion callback to a sandbox-owned receiver. """
+    """Check a managed async job completion callback to a sandbox-owned receiver."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

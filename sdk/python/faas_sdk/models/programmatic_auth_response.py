@@ -30,18 +30,18 @@ class ProgrammaticAuthResponse:
     """
 
     account_id: str
-    """ Account UUID. """
+    """Account UUID."""
     email: str
-    """ Email the client sent in the POST body. Echoed back so the CLI can render the success line without a Whoami
-    round-trip. """
+    """Email the client sent in the POST body. Echoed back so the CLI can render the success line without a Whoami
+    round-trip."""
     plan: ProgrammaticAuthResponsePlan
     api_key: ProgrammaticAPIKey
-    """ Freshly minted API key returned on the first
+    """Freshly minted API key returned on the first
     request. The `plaintext` field is the only copy the
     caller will ever see — store it in `~/.config/faas/auth.json`
     immediately. The `id` is the row's UUID for later
     list/delete via `/v1/keys`.
-     """
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

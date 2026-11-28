@@ -32,7 +32,7 @@ class ObjectCapacityReconciliation:
     bucket_id: UUID
     state: ObjectCapacityReconciliationState
     inventory_scope: ObjectCapacityReconciliationInventoryScope
-    """ Verified inventory scope; retained versions require all_versions. """
+    """Verified inventory scope; retained versions require all_versions."""
     scanned_pages: int
     scanned_bytes: int
     scanned_versions: int

@@ -13,7 +13,7 @@ from ...types import UNSET, Response
 
 def _get_kwargs(
     *,
-    body: PasswordLoginRequest | PasswordLoginRequest | Unset = UNSET,
+    body: PasswordLoginRequest | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
@@ -77,7 +77,7 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
-    body: PasswordLoginRequest | PasswordLoginRequest | Unset = UNSET,
+    body: PasswordLoginRequest | Unset = UNSET,
 ) -> Response[PasswordLoginResponse | Problem]:
     """Email + password sign-in.
 
@@ -122,7 +122,7 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient | Client,
-    body: PasswordLoginRequest | PasswordLoginRequest | Unset = UNSET,
+    body: PasswordLoginRequest | Unset = UNSET,
 ) -> PasswordLoginResponse | Problem | None:
     """Email + password sign-in.
 
@@ -162,7 +162,7 @@ def sync(
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
-    body: PasswordLoginRequest | PasswordLoginRequest | Unset = UNSET,
+    body: PasswordLoginRequest | Unset = UNSET,
 ) -> Response[PasswordLoginResponse | Problem]:
     """Email + password sign-in.
 
@@ -205,7 +205,7 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
-    body: PasswordLoginRequest | PasswordLoginRequest | Unset = UNSET,
+    body: PasswordLoginRequest | Unset = UNSET,
 ) -> PasswordLoginResponse | Problem | None:
     """Email + password sign-in.
 

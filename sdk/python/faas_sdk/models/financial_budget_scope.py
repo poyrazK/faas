@@ -19,7 +19,7 @@ class FinancialBudgetScope:
 
     kind: FinancialBudgetScopeKind
     id: UUID | Unset = UNSET
-    """ Omitted for account scope and required for resource scopes. """
+    """Omitted for account scope and required for resource scopes."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

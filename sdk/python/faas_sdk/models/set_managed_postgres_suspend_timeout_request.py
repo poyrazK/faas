@@ -13,7 +13,7 @@ class SetManagedPostgresSuspendTimeoutRequest:
     """How long a scale-to-zero database stays up after its last activity before it suspends."""
 
     seconds: int | None
-    """ Seconds of inactivity before the database suspends; null returns it to the platform default. """
+    """Seconds of inactivity before the database suspends; null returns it to the platform default."""
 
     def to_dict(self) -> dict[str, Any]:
         seconds: int | None

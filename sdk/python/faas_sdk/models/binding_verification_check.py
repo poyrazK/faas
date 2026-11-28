@@ -15,7 +15,7 @@ class BindingVerificationCheck:
 
     name: str
     status: str
-    """ passed, failed or not_checked. """
+    """passed, failed or not_checked."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

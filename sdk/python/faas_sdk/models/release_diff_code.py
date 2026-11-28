@@ -20,7 +20,7 @@ class ReleaseDiffCode:
     from_commit: str | Unset = UNSET
     to_commit: str | Unset = UNSET
     compare_url: str | Unset = UNSET
-    """ GitHub's compare page when both releases came from the same GitHub repository. """
+    """GitHub's compare page when both releases came from the same GitHub repository."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

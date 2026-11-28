@@ -28,29 +28,29 @@ class OperationWorkflowReadinessEscalationResponse:
     """
 
     deadline_at: datetime.datetime
-    """ OperationWorkflowReadinessEscalationResponse.deadline_at. Retained acknowledgment target or assignment
-    observation; never modifies application business reports. """
+    """OperationWorkflowReadinessEscalationResponse.deadline_at. Retained acknowledgment target or assignment
+    observation; never modifies application business reports."""
     initial_owner: str
-    """ OperationWorkflowReadinessEscalationResponse.initial_owner. Retained acknowledgment target or assignment
-    observation; never modifies application business reports. """
+    """OperationWorkflowReadinessEscalationResponse.initial_owner. Retained acknowledgment target or assignment
+    observation; never modifies application business reports."""
     status: OperationWorkflowReadinessEscalationResponseStatus
-    """ OperationWorkflowReadinessEscalationResponse.status. Retained acknowledgment target or assignment
-    observation; never modifies application business reports. """
+    """OperationWorkflowReadinessEscalationResponse.status. Retained acknowledgment target or assignment
+    observation; never modifies application business reports."""
     history: list[OperationWorkflowReadinessAssignmentChange]
-    """ OperationWorkflowReadinessEscalationResponse.history. Latest retained manual or automatic assignment
-    changes. """
+    """OperationWorkflowReadinessEscalationResponse.history. Latest retained manual or automatic assignment
+    changes."""
     history_truncated: bool
-    """ OperationWorkflowReadinessEscalationResponse.history_truncated. Retained acknowledgment target or assignment
-    observation; never modifies application business reports. """
+    """OperationWorkflowReadinessEscalationResponse.history_truncated. Retained acknowledgment target or assignment
+    observation; never modifies application business reports."""
     fallback_owner: str | Unset = UNSET
-    """ OperationWorkflowReadinessEscalationResponse.fallback_owner. Retained acknowledgment target or assignment
-    observation; never modifies application business reports. """
+    """OperationWorkflowReadinessEscalationResponse.fallback_owner. Retained acknowledgment target or assignment
+    observation; never modifies application business reports."""
     first_acknowledged_at: datetime.datetime | Unset = UNSET
-    """ OperationWorkflowReadinessEscalationResponse.first_acknowledged_at. Retained acknowledgment target or
-    assignment observation; never modifies application business reports. """
+    """OperationWorkflowReadinessEscalationResponse.first_acknowledged_at. Retained acknowledgment target or
+    assignment observation; never modifies application business reports."""
     deadline_notified_at: datetime.datetime | Unset = UNSET
-    """ OperationWorkflowReadinessEscalationResponse.deadline_notified_at. Retained acknowledgment target or
-    assignment observation; never modifies application business reports. """
+    """OperationWorkflowReadinessEscalationResponse.deadline_notified_at. Retained acknowledgment target or
+    assignment observation; never modifies application business reports."""
 
     def to_dict(self) -> dict[str, Any]:
         deadline_at = self.deadline_at.isoformat()

@@ -13,7 +13,7 @@ class AppHealthCapacity:
     """Measured serving replica counts, with explicit evidence availability."""
 
     known: bool
-    """ False when instance evidence is unavailable or truncated. """
+    """False when instance evidence is unavailable or truncated."""
     required: int
     ready: int
     starting: int

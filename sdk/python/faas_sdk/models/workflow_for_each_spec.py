@@ -37,21 +37,21 @@ class WorkflowForEachSpec:
     """
 
     items: str
-    """ Array reference without delimiters, such as input.invoices or steps.lookup.output.items. """
+    """Array reference without delimiters, such as input.invoices or steps.lookup.output.items."""
     action: WorkflowForEachActionSpec
-    """ Exactly one of run, path or outbound. No nested iteration, dependencies,
+    """Exactly one of run, path or outbound. No nested iteration, dependencies,
     waits, joins or exception routes. An optional when guard is evaluated once
     for each item using input.item, input.index and input.input, plus outputs of
     the parent's declared dependencies. Omitted input sends the item itself.
     Explicit input templates use the same item context. Inputs and guard decisions
     are snapshotted before dispatch and never reevaluated on retry. Mutating
     outbound retries require provider idempotency support.
-     """
+    """
     max_parallel: int | Unset = UNSET
-    """ Maximum active items for this batch. Omit or set 0 for sequential execution. """
+    """Maximum active items for this batch. Omit or set 0 for sequential execution."""
     on_item_failure: WorkflowForEachSpecOnItemFailure | Unset = UNSET
-    """ Continue after failed or dead items and mark the parent unsuccessful after all items are attempted. Omit to
-    stop at the first failure. """
+    """Continue after failed or dead items and mark the parent unsuccessful after all items are attempted. Omit to
+    stop at the first failure."""
 
     def to_dict(self) -> dict[str, Any]:
         items = self.items

@@ -18,17 +18,17 @@ class AccountHealthRestriction:
     """One account restriction in customer wording, with the next step when there is one."""
 
     kind: AccountHealthRestrictionKind
-    """ Stable restriction identifier. """
+    """Stable restriction identifier."""
     title: str
-    """ Short headline for the restriction. """
+    """Short headline for the restriction."""
     detail: str
-    """ What the restriction does to the account. """
+    """What the restriction does to the account."""
     action: str | Unset = UNSET
-    """ Label of the next step. """
+    """Label of the next step."""
     action_url: str | Unset = UNSET
-    """ Dashboard path for the next step. """
+    """Dashboard path for the next step."""
     since: datetime.datetime | Unset = UNSET
-    """ When the restriction started, when known. """
+    """When the restriction started, when known."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

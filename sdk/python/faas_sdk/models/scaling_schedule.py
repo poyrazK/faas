@@ -18,14 +18,13 @@ class ScalingSchedule:
     """
 
     cron: str
-    """ Five-field cron expression (minute hour day-of-month month day-of-week), evaluated in the policy timezone.
-    """
+    """Five-field cron expression (minute hour day-of-month month day-of-week), evaluated in the policy timezone."""
     duration_s: int
-    """ How long the window stays open after each fire, in seconds. Between 60 and 604800 (7 days). The floor of 60
+    """How long the window stays open after each fire, in seconds. Between 60 and 604800 (7 days). The floor of 60
     s exists because the scheduler sweep is coarser than that, so a shorter window could close before any tick
-    observed it — billing a floor that never produced an instance. """
+    observed it — billing a floor that never produced an instance."""
     min_instances: int
-    """ Warm floor while the window is open. Must be > 0: a schedule raises the floor and cannot lower it. """
+    """Warm floor while the window is open. Must be > 0: a schedule raises the floor and cannot lower it."""
 
     def to_dict(self) -> dict[str, Any]:
         cron = self.cron

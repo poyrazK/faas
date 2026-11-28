@@ -16,9 +16,9 @@ class SidecarGRPCProbe:
     """Standard gRPC health Check RPC sent to the companion's loopback listener."""
 
     port: int | Unset = UNSET
-    """ gRPC container port; 0/omitted inherits the workload port. """
+    """gRPC container port; 0/omitted inherits the workload port."""
     service: str | Unset = UNSET
-    """ Optional gRPC health service name; empty checks overall server health. """
+    """Optional gRPC health service name; empty checks overall server health."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

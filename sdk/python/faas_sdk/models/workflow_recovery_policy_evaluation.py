@@ -26,18 +26,18 @@ class WorkflowRecoveryPolicyEvaluation:
     """
 
     failure_coverage: WorkflowRecoveryFailureCoverage
-    """ Coverage of the bounded policy-independent terminal-failure sample in the requested workflow/time window,
+    """Coverage of the bounded policy-independent terminal-failure sample in the requested workflow/time window,
     before policy filters. Counts are sample counts; partial capture and pruning never establish that no other
-    failures occurred. Review correlation uses the sampled reviews. """
+    failures occurred. Review correlation uses the sampled reviews."""
     current: WorkflowRecoveryPolicyResponse
-    """ Current recovery policy with trusted update actor and scheduler status. A versioned policy replacement
-    resets its automatic failure pause and suppresses older pending automatic actions. """
+    """Current recovery policy with trusted update actor and scheduler status. A versioned policy replacement
+    resets its automatic failure pause and suppresses older pending automatic actions."""
     proposed: WorkflowRecoveryPolicy
-    """ Explicit app recovery policy. Preview prepares parent-job plans and worker-discovered initial-failure
+    """Explicit app recovery policy. Preview prepares parent-job plans and worker-discovered initial-failure
     reviews. initial_failure requires explicit failure statuses. Opt-in automatic_retry requires saved_failure only;
     automatic_initial requires initial_failure only. Both require explicit workflow and failure-status filters and
     execution limits. Resume count caps the absolute generation; preparation and execution budgets are separate.
-    Cancellation remains manual. """
+    Cancellation remains manual."""
     observed_at: datetime.datetime
     created_after: datetime.datetime
     created_before: datetime.datetime
@@ -47,11 +47,9 @@ class WorkflowRecoveryPolicyEvaluation:
     executions_truncated: bool
     observed_executions: int
     current_totals: WorkflowRecoveryPolicyEvaluationTotals
-    """ Counts of conditional preparation decisions and observed application pressure for the sampled candidates.
-    """
+    """Counts of conditional preparation decisions and observed application pressure for the sampled candidates."""
     proposed_totals: WorkflowRecoveryPolicyEvaluationTotals
-    """ Counts of conditional preparation decisions and observed application pressure for the sampled candidates.
-    """
+    """Counts of conditional preparation decisions and observed application pressure for the sampled candidates."""
     candidates: list[WorkflowRecoveryPolicyEvaluationCandidate]
     coverage_notes: list[str]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

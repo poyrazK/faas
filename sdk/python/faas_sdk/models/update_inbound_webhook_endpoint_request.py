@@ -19,7 +19,7 @@ class UpdateInboundWebhookEndpointRequest:
     """
 
     signing_secret: str | Unset = UNSET
-    """ Generic provider secrets must contain at least 32 bytes. """
+    """Generic provider secrets must contain at least 32 bytes."""
     delivery_path: str | Unset = UNSET
     enabled: bool | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

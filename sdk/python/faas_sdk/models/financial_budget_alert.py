@@ -35,14 +35,14 @@ class FinancialBudgetAlert:
     policy_revision: int
     threshold_millicents: int
     evaluation: FinancialBudgetEvaluation
-    """ Retained evidence boundary; an absent known_millicents means evaluation unavailable, never zero. Partial
-    known costs can trigger labelled notifications; stale observations cannot create new alerts. """
+    """Retained evidence boundary; an absent known_millicents means evaluation unavailable, never zero. Partial
+    known costs can trigger labelled notifications; stale observations cannot create new alerts."""
     state: FinancialBudgetAlertState
     attempts: int
     next_attempt_at: datetime.datetime
     kind: FinancialBudgetAlertKind | Unset = UNSET
-    """ Absent for a crossed threshold. projection marks a projected-overrun alert, whose threshold_millicents is
-    the limit. """
+    """Absent for a crossed threshold. projection marks a projected-overrun alert, whose threshold_millicents is
+    the limit."""
     delivered_at: datetime.datetime | Unset = UNSET
     last_error: FinancialBudgetAlertLastError | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

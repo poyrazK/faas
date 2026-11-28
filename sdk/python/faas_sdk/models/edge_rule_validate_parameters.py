@@ -32,22 +32,22 @@ class EdgeRuleValidateParameters:
     """
 
     path_template: str | Unset = UNSET
-    """ OpenAPI path template, such as `/users/{id}`. Required with
+    """OpenAPI path template, such as `/users/{id}`. Required with
     `path`. The rule's `match_path` must equal the template with
     each placeholder replaced by `?*` (`/users/?*`), and each
     segment may hold at most one placeholder.
-     """
+    """
     path: EdgeRuleValidateParametersPath | Unset = UNSET
-    """ Object schema whose properties are exactly the template's placeholders. """
+    """Object schema whose properties are exactly the template's placeholders."""
     query: EdgeRuleValidateParametersQuery | Unset = UNSET
-    """ Object schema over every query parameter; a repeated name
+    """Object schema over every query parameter; a repeated name
     becomes an array, and `additionalProperties: false` rejects
     unknown parameters.
-     """
+    """
     headers: EdgeRuleValidateParametersHeaders | Unset = UNSET
-    """ Object schema over the headers it declares, named in lowercase.
+    """Object schema over the headers it declares, named in lowercase.
     Comma-separated values become an array for array properties.
-     """
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

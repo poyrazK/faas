@@ -30,33 +30,33 @@ class AgentConnectionResponse:
     """
 
     id: str
-    """ The agent's API key id. """
+    """The agent's API key id."""
     kind: AgentConnectionResponseKind
-    """ `hosted_mcp` for a browser sign-in through the hosted MCP server; `agent_key` for an API key with the
-    `agent` scope. """
+    """`hosted_mcp` for a browser sign-in through the hosted MCP server; `agent_key` for an API key with the
+    `agent` scope."""
     prefix: str
-    """ The key's display prefix. """
+    """The key's display prefix."""
     scopes: list[str]
     created_at: datetime.datetime
     app_id: str | Unset = UNSET
-    """ Immutable app boundary of an app_agent connection. """
+    """Immutable app boundary of an app_agent connection."""
     client_name: str | Unset = UNSET
-    """ The client name a hosted sign-in's consent page showed. """
+    """The client name a hosted sign-in's consent page showed."""
     client_site: str | Unset = UNSET
-    """ The host the client was verified at: the site serving its metadata document, or its HTTPS redirect host.
-    Empty for a local client. """
+    """The host the client was verified at: the site serving its metadata document, or its HTTPS redirect host.
+    Empty for a local client."""
     label: str | Unset = UNSET
-    """ The key label. """
+    """The key label."""
     last_used_at: datetime.datetime | Unset = UNSET
     expires_at: datetime.datetime | Unset = UNSET
     org_id: UUID | Unset = UNSET
-    """ The organization the agent acts in. """
+    """The organization the agent acts in."""
     member: str | Unset = UNSET
-    """ Email of the member who connected the agent, in an organization's list. """
+    """Email of the member who connected the agent, in an organization's list."""
     projects: list[str] | Unset = UNSET
-    """ Slugs of the projects the agent is limited to; absent when it reaches every project. """
+    """Slugs of the projects the agent is limited to; absent when it reaches every project."""
     approvals: list[AgentConnectionResponseApprovalsItem] | Unset = UNSET
-    """ Kinds of action the agent must have a person approve, including its organization's floor. """
+    """Kinds of action the agent must have a person approve, including its organization's floor."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

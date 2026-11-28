@@ -36,9 +36,9 @@ class WorkflowScheduleResponse:
     overlap: WorkflowScheduleResponseOverlap
     enabled: bool
     catch_up: WorkflowScheduleResponseCatchUp | Unset = UNSET
-    """ Effective missed-fire policy; defaults to skip. """
+    """Effective missed-fire policy; defaults to skip."""
     catch_up_window: str | Unset = UNSET
-    """ Effective recovery duration, present only for latest. """
+    """Effective recovery duration, present only for latest."""
     next_fire_at: datetime.datetime | Unset = UNSET
     last_evaluated_at: datetime.datetime | Unset = UNSET
     last_scheduled_for: datetime.datetime | Unset = UNSET

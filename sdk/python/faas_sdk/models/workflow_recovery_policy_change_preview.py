@@ -32,14 +32,14 @@ class WorkflowRecoveryPolicyChangePreview:
     """
 
     current: WorkflowRecoveryPolicyResponse
-    """ Current recovery policy with trusted update actor and scheduler status. A versioned policy replacement
-    resets its automatic failure pause and suppresses older pending automatic actions. """
+    """Current recovery policy with trusted update actor and scheduler status. A versioned policy replacement
+    resets its automatic failure pause and suppresses older pending automatic actions."""
     proposed: WorkflowRecoveryPolicy
-    """ Explicit app recovery policy. Preview prepares parent-job plans and worker-discovered initial-failure
+    """Explicit app recovery policy. Preview prepares parent-job plans and worker-discovered initial-failure
     reviews. initial_failure requires explicit failure statuses. Opt-in automatic_retry requires saved_failure only;
     automatic_initial requires initial_failure only. Both require explicit workflow and failure-status filters and
     execution limits. Resume count caps the absolute generation; preparation and execution budgets are separate.
-    Cancellation remains manual. """
+    Cancellation remains manual."""
     observed_at: datetime.datetime
     next_version: int
     pending_suppressed: int
@@ -56,14 +56,14 @@ class WorkflowRecoveryPolicyChangePreview:
     candidates: list[WorkflowRecoveryPolicyChangeCandidate]
     candidates_truncated: bool
     initial_failures: WorkflowRecoveryInitialPolicyChangePreview | Unset = UNSET
-    """ Bounded read-only sample of retained generation-zero failures, present for preview policies with
+    """Bounded read-only sample of retained generation-zero failures, present for preview policies with
     initial_failure and automatic_initial proposals. Matching workflow and failure-status filters sort first, then
     ascending failure ID; at most five are inspected. Coverage is always partial and counts describe only this
     sample. Candidate preparation and submission simulate processing the sample in order, after sampled parent-job
     preparations; later candidates can hit simulated cooldown or slot pressure. Quota and unresolved fields report
     the current snapshot before simulation. Applying the proposal clears the current pause but retains charges and
     unresolved work. Actual workers rescan and repeat admission checks. No policy, review, cursor, evidence, job or
-    notification is written or pruned. """
+    notification is written or pruned."""
     execution_cooldown_until: datetime.datetime | Unset = UNSET
     preparation_cooldown_until: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

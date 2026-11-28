@@ -35,25 +35,25 @@ class OperationWorkflowInstanceTransition:
     from_: str
     to: str
     operation: str
-    """ Manifest operation name that may report this transition. """
+    """Manifest operation name that may report this transition."""
     retained_milestone_groups: list[OperationWorkflowRetainedMilestoneGroup] | Unset = UNSET
     retained_milestone_freshness: list[OperationWorkflowRetainedMilestoneFreshnessRule] | Unset = UNSET
-    """ Freshness limits required for this selected transition. """
+    """Freshness limits required for this selected transition."""
     retained_milestone_invalidations: list[OperationWorkflowRetainedMilestoneInvalidationRule] | Unset = UNSET
-    """ Rules for this selected edge linking retained prerequisites to invalidating facts from declared workflow
-    steps. Business occurrence time determines order; an invalidating fact wins equal timestamps. """
+    """Rules for this selected edge linking retained prerequisites to invalidating facts from declared workflow
+    steps. Business occurrence time determines order; an invalidating fact wins equal timestamps."""
     required_retained_milestones: list[OperationWorkflowRetainedMilestoneRequirement] | Unset = UNSET
-    """ For this selected edge, previously reported transaction-backed workflow facts required within the same
-    ownership, subject, instance, and contract version; proposed evidence does not satisfy these prerequisites. """
+    """For this selected edge, previously reported transaction-backed workflow facts required within the same
+    ownership, subject, instance, and contract version; proposed evidence does not satisfy these prerequisites."""
     required_effects: list[OperationWorkflowEffectRequirement] | Unset = UNSET
     required_invariants: list[OperationWorkflowInvariantRequirement] | Unset = UNSET
     required_dependency_workflows: list[str] | Unset = UNSET
-    """ For this selected contract edge, omitted means all reported dependencies; an empty array means none. Named
-    workflows require at least one reported link and every matching link must meet its outcome requirement. """
+    """For this selected contract edge, omitted means all reported dependencies; an empty array means none. Named
+    workflows require at least one reported link and every matching link must meet its outcome requirement."""
     required_policies: list[OperationWorkflowPolicyRequirement] | Unset = UNSET
     required_milestones: list[str] | Unset = UNSET
-    """ For this selected contract edge, milestone names that must be committed in the same application transaction
-    as this transition. """
+    """For this selected contract edge, milestone names that must be committed in the same application transaction
+    as this transition."""
 
     def to_dict(self) -> dict[str, Any]:
         from_ = self.from_

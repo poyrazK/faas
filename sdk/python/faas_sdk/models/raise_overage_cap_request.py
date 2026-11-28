@@ -20,7 +20,7 @@ class RaiseOverageCapRequest:
     """
 
     overage_cap_cents: int | None
-    """ Cents-per-month ceiling, or null to clear. """
+    """Cents-per-month ceiling, or null to clear."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

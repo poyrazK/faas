@@ -31,19 +31,19 @@ class BindingReleasePolicy:
     mode: BindingReleasePolicyMode
     revision: int
     max_verification_age: str
-    """ Canonical Go duration between 1s and 24h; default 10m0s. """
+    """Canonical Go duration between 1s and 24h; default 10m0s."""
     require_application_ack: bool
     queue_requirements: QueueReleaseRequirements | Unset = UNSET
-    """ Binding name to explicit required queue evidence. Names match ^[a-z][a-z0-9-]{0,62}$. consumer_readiness
+    """Binding name to explicit required queue evidence. Names match ^[a-z][a-z0-9-]{0,62}$. consumer_readiness
     requires one enabled push consumer with a healthy poll no older than thirty seconds; connectivity coverage
-    remains partial. """
+    remains partial."""
     object_storage_requirements: ObjectStorageReleaseRequirements | Unset = UNSET
-    """ Managed environment prefix to required canary mode in the selected scope. Prefixes match
+    """Managed environment prefix to required canary mode in the selected scope. Prefixes match
     ^[A-Z][A-Z0-9_]{0,47}$. read covers listing; read_write requires byte transfer; write and read_write require
-    successful cleanup. No implicit probes or writes. """
+    successful cleanup. No implicit probes or writes."""
     updated_at: datetime.datetime | Unset = UNSET
     reason: str | Unset = UNSET
-    """ Recorded single-line change reason, at most 256 UTF-8 bytes. """
+    """Recorded single-line change reason, at most 256 UTF-8 bytes."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

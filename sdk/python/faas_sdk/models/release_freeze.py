@@ -30,28 +30,28 @@ class ReleaseFreeze:
     kind: ReleaseFreezeKind
     reason: str
     source: ReleaseFreezeSource
-    """ automatic_rollback for the window an after-rollback policy created. """
+    """automatic_rollback for the window an after-rollback policy created."""
     created_by: str
     created_at: datetime.datetime
     active: bool
-    """ Whether the freeze withholds production releases now. """
+    """Whether the freeze withholds production releases now."""
     app: str | Unset = UNSET
-    """ The covered app's slug; omitted for a freeze on all of the owner's apps. """
+    """The covered app's slug; omitted for a freeze on all of the owner's apps."""
     org: str | Unset = UNSET
-    """ Slug of the company organization that owns the freeze; omitted for an account's freeze. """
+    """Slug of the company organization that owns the freeze; omitted for an account's freeze."""
     starts_at: datetime.datetime | Unset = UNSET
-    """ Window start. """
+    """Window start."""
     ends_at: datetime.datetime | Unset = UNSET
-    """ Window end; omitted for a window that lasts until lifted. """
+    """Window end; omitted for a window that lasts until lifted."""
     weekly: ReleaseFreezeWeekly | Unset = UNSET
-    """ A weekly freeze window: it opens on each listed day at `start` in `time_zone` and lasts `duration_minutes`,
-    so it may run past midnight or into the next week. """
+    """A weekly freeze window: it opens on each listed day at `start` in `time_zone` and lasts `duration_minutes`,
+    so it may run past midnight or into the next week."""
     after_rollback_minutes: int | Unset = UNSET
-    """ How long an after-rollback policy freezes an app Gregale rolled back automatically. """
+    """How long an after-rollback policy freezes an app Gregale rolled back automatically."""
     source_deployment_id: UUID | Unset = UNSET
-    """ The rolled-back deployment behind an automatic freeze. """
+    """The rolled-back deployment behind an automatic freeze."""
     next_starts_at: datetime.datetime | Unset = UNSET
-    """ When an inactive window or weekly freeze next starts, within a week. """
+    """When an inactive window or weekly freeze next starts, within a week."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

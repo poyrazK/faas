@@ -32,17 +32,17 @@ class APISandboxResponse:
     openapi_url: str
     expires_at: datetime.datetime
     partner_step_count: int | Unset = UNSET
-    """ The leading requests executed by the partner before the platform checks final state. """
+    """The leading requests executed by the partner before the platform checks final state."""
     deployment_id: UUID | Unset = UNSET
     smoke_path: str | Unset = UNSET
     failure: APISandboxFailure | Unset = UNSET
-    """ Setup failure code and guidance for recovering with a new sandbox. """
+    """Setup failure code and guidance for recovering with a new sandbox."""
     verification: APISandboxVerification | Unset = UNSET
-    """ Readiness evidence from probing the sandbox API and its OpenAPI document. """
+    """Readiness evidence from probing the sandbox API and its OpenAPI document."""
     scenario: APISandboxScenarioReceipt | Unset = UNSET
-    """ Shareable scenario guide and revision without its database seed. """
+    """Shareable scenario guide and revision without its database seed."""
     partner: APISandboxPartnerResponse | Unset = UNSET
-    """ Owner-only partner progress. """
+    """Owner-only partner progress."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

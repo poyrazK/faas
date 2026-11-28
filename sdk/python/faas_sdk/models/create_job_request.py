@@ -27,22 +27,22 @@ class CreateJobRequest:
     command: list[str]
     kind: CreateJobRequestKind | Unset = "batch"
     schedule: str | Unset = UNSET
-    """ Optional five-field cron expression. When present, the job becomes recurring and the scheduler creates one
-    single-task run per occurrence. """
+    """Optional five-field cron expression. When present, the job becomes recurring and the scheduler creates one
+    single-task run per occurrence."""
     timezone: str | Unset = UNSET
-    """ IANA timezone for schedule; defaults to UTC. """
+    """IANA timezone for schedule; defaults to UTC."""
     env_overrides: CreateJobRequestEnvOverrides | Unset = UNSET
     ram_mb: int | Unset = UNSET
     task_timeout_sec: int | Unset = UNSET
     max_parallelism: int | Unset = UNSET
     retry_max: int | Unset = UNSET
     schedule_policy: SchedulePolicy | Unset = UNSET
-    """ Versioned recurring-work scheduling policy for Jobs and both HTTP and command Crons. HTTP replace waits for
+    """Versioned recurring-work scheduling policy for Jobs and both HTTP and command Crons. HTTP replace waits for
     a prior dispatched request to complete because the scheduler has no stop acknowledgement for a request already
-    delivered to the app. """
+    delivered to the app."""
     failure_rules: FailureRules | Unset = UNSET
-    """ Versioned explicit classification policy for failed Job partitions, command-Cron executions, and HTTP Cron
-    outcome codes. HTTP status is not a business outcome matcher. """
+    """Versioned explicit classification policy for failed Job partitions, command-Cron executions, and HTTP Cron
+    outcome codes. HTTP status is not a business outcome matcher."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -22,7 +22,7 @@ class RequestAnalyticsRoute:
     """Aggregated request analytics for one route and HTTP method. Counts include collapsed telemetry row weights."""
 
     route: str
-    """ Route template, not an expanded URL. """
+    """Route template, not an expanded URL."""
     method: RequestAnalyticsRouteMethod
     requests: int
     error_requests: int
@@ -32,49 +32,47 @@ class RequestAnalyticsRoute:
     p95_ms: int
     p99_ms: int
     cold_request_p95_ms: int | None | Unset = UNSET
-    """ Weighted p95 gateway-observed request duration among requests that woke a cold instance. Includes handler
-    time; not an isolated wake-phase duration. """
+    """Weighted p95 gateway-observed request duration among requests that woke a cold instance. Includes handler
+    time; not an isolated wake-phase duration."""
     wake_boot_p95_ms: int | None | Unset = UNSET
-    """ p95 from the scheduler wake.boot_started to wake.boot_completed (instance RUNNING) for distinct wake IDs
-    correlated to this route; null when event pairs are unavailable. """
+    """p95 from the scheduler wake.boot_started to wake.boot_completed (instance RUNNING) for distinct wake IDs
+    correlated to this route; null when event pairs are unavailable."""
     guest_execution_p50_ms: int | None | Unset = UNSET
-    """ Weighted p50 wall time from platform-runner execution evidence; not CPU time. Null when runtime evidence is
-    unavailable. """
+    """Weighted p50 wall time from platform-runner execution evidence; not CPU time. Null when runtime evidence is
+    unavailable."""
     guest_execution_p95_ms: int | None | Unset = UNSET
-    """ Weighted p95 wall time from platform-runner execution evidence; not CPU time. Null when runtime evidence is
-    unavailable. """
+    """Weighted p95 wall time from platform-runner execution evidence; not CPU time. Null when runtime evidence is
+    unavailable."""
     guest_cpu_avg_ms: int | None | Unset = UNSET
-    """ Request-weighted average child-process user+system CPU time for Linux one-shot invocations. Includes runtime
-    startup and uses bounded upward buckets; null for persistent workers and arbitrary HTTP containers. """
+    """Request-weighted average child-process user+system CPU time for Linux one-shot invocations. Includes runtime
+    startup and uses bounded upward buckets; null for persistent workers and arbitrary HTTP containers."""
     guest_cpu_p95_ms: int | None | Unset = UNSET
-    """ Weighted p95 child-process CPU time from Linux one-shot invocations, using bounded upward buckets; null when
-    process usage is unavailable. """
+    """Weighted p95 child-process CPU time from Linux one-shot invocations, using bounded upward buckets; null when
+    process usage is unavailable."""
     guest_peak_rss_max_mb: int | None | Unset = UNSET
-    """ Maximum process high-water RSS across measured invocations, rounded into an upper MiB bucket; null when
-    process usage is unavailable. """
+    """Maximum process high-water RSS across measured invocations, rounded into an upper MiB bucket; null when
+    process usage is unavailable."""
     dependency_samples: int | Unset = UNSET
-    """ Count of retained, platform-classified dependency span samples for this route; not a complete call count.
-    """
+    """Count of retained, platform-classified dependency span samples for this route; not a complete call count."""
     dependency_requests: int | Unset = UNSET
-    """ Collapsed request weight represented by rows with at least one classified dependency span. """
+    """Collapsed request weight represented by rows with at least one classified dependency span."""
     dependencies: list[RequestAnalyticsDependency] | Unset = UNSET
-    """ Top classified dependencies ranked by sampled exclusive p95. Values are bounded and sample-based. """
+    """Top classified dependencies ranked by sampled exclusive p95. Values are bounded and sample-based."""
     deployment_observations: list[RequestAnalyticsRouteDeploymentObservation] | Unset = UNSET
-    """ At most the five highest-request deployments for this route/method, with request-share compute estimates and
-    measured guest CPU comparisons against the preceding comparable revision. """
+    """At most the five highest-request deployments for this route/method, with request-share compute estimates and
+    measured guest CPU comparisons against the preceding comparable revision."""
     other_deployment_requests: int | Unset = UNSET
-    """ Route requests from deployments outside the top-five list. """
+    """Route requests from deployments outside the top-five list."""
     other_deployment_estimated_compute_cost_millicents: int | Unset = UNSET
-    """ This route's estimated compute value allocated to deployments outside the top-five list by request share.
-    """
+    """This route's estimated compute value allocated to deployments outside the top-five list by request share."""
     estimated_compute_cost_millicents: int | Unset = UNSET
-    """ Estimated raw RAM-hour value allocated to this route by its share of observed request time, or by request
-    share when no timing exists; excludes account-level included allowance and egress. """
+    """Estimated raw RAM-hour value allocated to this route by its share of observed request time, or by request
+    share when no timing exists; excludes account-level included allowance and egress."""
     request_share_pct: float | Unset = UNSET
     request_time_ms: int | Unset = UNSET
-    """ Total gateway-observed request time for this route in the window, in milliseconds. """
+    """Total gateway-observed request time for this route in the window, in milliseconds."""
     request_time_share_pct: float | Unset = UNSET
-    """ This route's share of all observed app request time in the window. """
+    """This route's share of all observed app request time in the window."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

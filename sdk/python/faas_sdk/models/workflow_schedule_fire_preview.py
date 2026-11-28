@@ -21,11 +21,11 @@ class WorkflowScheduleFirePreview:
     """One canonical fire time with its offset-bearing local representation."""
 
     scheduled_for: datetime.datetime
-    """ UTC instant used by the scheduler. """
+    """UTC instant used by the scheduler."""
     local_time: datetime.datetime
-    """ Local wall time including the UTC offset. """
+    """Local wall time including the UTC offset."""
     dst_adjustment: WorkflowScheduleFirePreviewDstAdjustment | Unset = UNSET
-    """ Present when a spring gap moves the configured wall time to the first valid minute. """
+    """Present when a spring gap moves the configured wall time to the first valid minute."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

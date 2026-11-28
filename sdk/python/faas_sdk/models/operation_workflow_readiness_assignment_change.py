@@ -22,20 +22,20 @@ class OperationWorkflowReadinessAssignmentChange:
     """
 
     from_owner: str
-    """ OperationWorkflowReadinessAssignmentChange.from_owner. Retained acknowledgment target or assignment
-    observation; never modifies application business reports. """
+    """OperationWorkflowReadinessAssignmentChange.from_owner. Retained acknowledgment target or assignment
+    observation; never modifies application business reports."""
     to_owner: str
-    """ OperationWorkflowReadinessAssignmentChange.to_owner. Retained acknowledgment target or assignment
-    observation; never modifies application business reports. """
+    """OperationWorkflowReadinessAssignmentChange.to_owner. Retained acknowledgment target or assignment
+    observation; never modifies application business reports."""
     at: datetime.datetime
-    """ OperationWorkflowReadinessAssignmentChange.at. Retained acknowledgment target or assignment observation;
-    never modifies application business reports. """
+    """OperationWorkflowReadinessAssignmentChange.at. Retained acknowledgment target or assignment observation;
+    never modifies application business reports."""
     actor: str
-    """ OperationWorkflowReadinessAssignmentChange.actor. Retained acknowledgment target or assignment observation;
-    never modifies application business reports. """
+    """OperationWorkflowReadinessAssignmentChange.actor. Retained acknowledgment target or assignment observation;
+    never modifies application business reports."""
     reason: OperationWorkflowReadinessAssignmentChangeReason
-    """ OperationWorkflowReadinessAssignmentChange.reason. Retained acknowledgment target or assignment observation;
-    never modifies application business reports. """
+    """OperationWorkflowReadinessAssignmentChange.reason. Retained acknowledgment target or assignment observation;
+    never modifies application business reports."""
 
     def to_dict(self) -> dict[str, Any]:
         from_owner = self.from_owner

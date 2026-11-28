@@ -49,32 +49,32 @@ class SecretRuntimeReloadObservation:
     """
 
     instance_id: str
-    """ Authorized active runtime instance ID. """
+    """Authorized active runtime instance ID."""
     runtime_state: SecretRuntimeReloadObservationRuntimeState
-    """ Current active instance state. """
+    """Current active instance state."""
     reload_support: SecretRuntimeReloadObservationReloadSupport
-    """ Whether this deployment can participate in live reload; unknown means its image opt-in predates persisted
-    metadata. """
+    """Whether this deployment can participate in live reload; unknown means its image opt-in predates persisted
+    metadata."""
     reported: bool
-    """ Whether this runtime has reported a guest-init outcome. False is unknown, never success. """
+    """Whether this runtime has reported a guest-init outcome. False is unknown, never success."""
     workload_name: str | Unset = UNSET
-    """ Sidecar workload name. Omitted for the main workload. """
+    """Sidecar workload name. Omitted for the main workload."""
     version: int | Unset = UNSET
-    """ Secret version observed by guest-init; compare with delivery_version to detect stale status. Present only
-    when reported is true. """
+    """Secret version observed by guest-init; compare with delivery_version to detect stale status. Present only
+    when reported is true."""
     projection: SecretRuntimeReloadObservationProjection | Unset = UNSET
     signal: SecretRuntimeReloadObservationSignal | Unset = UNSET
     observed_at: datetime.datetime | Unset = UNSET
     error_code: SecretRuntimeReloadObservationErrorCode | Unset = UNSET
     application_ack_version: int | Unset = UNSET
-    """ Secret version the application claims to have applied; compare with delivery_version, independently of the
-    guest-init report version. """
+    """Secret version the application claims to have applied; compare with delivery_version, independently of the
+    guest-init report version."""
     application_ack: SecretRuntimeReloadObservationApplicationAck | Unset = UNSET
-    """ Explicit application-owned outcome after rereading and applying FAAS_SECRETS_FILE. Missing means unknown,
-    not failed. """
+    """Explicit application-owned outcome after rereading and applying FAAS_SECRETS_FILE. Missing means unknown,
+    not failed."""
     application_ack_at: datetime.datetime | Unset = UNSET
     application_ack_error_code: SecretRuntimeReloadObservationApplicationAckErrorCode | Unset = UNSET
-    """ Closed, non-sensitive application-reported failure code. """
+    """Closed, non-sensitive application-reported failure code."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

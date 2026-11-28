@@ -36,10 +36,10 @@ class EdgeRuleGeoAction:
     """
 
     allow: list[str] | Unset = UNSET
-    """ ISO 3166-1 alpha-2 country allowlist. Empty + deny non-empty = deny-only. Empty + deny empty = no-op
-    (create-time 422). """
+    """ISO 3166-1 alpha-2 country allowlist. Empty + deny non-empty = deny-only. Empty + deny empty = no-op
+    (create-time 422)."""
     deny: list[str] | Unset = UNSET
-    """ ISO 3166-1 alpha-2 country denylist. Evaluated AFTER allow; single-country deny wins. """
+    """ISO 3166-1 alpha-2 country denylist. Evaluated AFTER allow; single-country deny wins."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

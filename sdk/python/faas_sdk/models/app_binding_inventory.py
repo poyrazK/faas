@@ -31,31 +31,31 @@ class AppBindingInventory:
     app: str
     generated_at: datetime.datetime
     complete: bool
-    """ All binding sections could be read; this does not mean that bindings are healthy or verified. """
+    """All binding sections could be read; this does not mean that bindings are healthy or verified."""
     bindings: list[AppBindingInventoryItem]
     service_binding_source: AppBindingInventoryServiceBindingSource | Unset = UNSET
-    """ Source used for the service namespace. Managed empty or unreadable namespaces never fall back to app
-    settings. """
+    """Source used for the service namespace. Managed empty or unreadable namespaces never fall back to app
+    settings."""
     service_targets: AppBindingInventoryServiceTargets | Unset = UNSET
-    """ Applied exact service target selectors; absent for ordinary evidence selection. """
+    """Applied exact service target selectors; absent for ordinary evidence selection."""
     scope: str | Unset = UNSET
-    """ Resource scope filter. Absent means all scopes. """
+    """Resource scope filter. Absent means all scopes."""
     requested_deployment_id: UUID | Unset = UNSET
-    """ Confirms that the explicit deployment_id selector was applied. Absent for default selection. """
+    """Confirms that the explicit deployment_id selector was applied. Absent for default selection."""
     verification_deployment_id: UUID | Unset = UNSET
-    """ Deployment selected for evidence: explicit selector or current manual-task deployment. """
+    """Deployment selected for evidence: explicit selector or current manual-task deployment."""
     verification_scope: str | Unset = UNSET
-    """ Scope of the selected verification deployment. """
+    """Scope of the selected verification deployment."""
     verification_probes_available: bool | Unset = UNSET
-    """ Whether this control-plane host can run bindings verify probes (deployment-attached app tasks). False means
-    probe evidence cannot be produced here; absent from older servers. """
+    """Whether this control-plane host can run bindings verify probes (deployment-attached app tasks). False means
+    probe evidence cannot be produced here; absent from older servers."""
     runtime_freshness: BindingRuntimeFreshness | Unset = UNSET
-    """ App-wide timestamp-based configuration freshness, independent of canary verification. This is not guest
+    """App-wide timestamp-based configuration freshness, independent of canary verification. This is not guest
     acknowledgement, readiness or proof of credential use. Scope filtering selects deployments; task guests, jobs
-    and mirrors are excluded. """
+    and mirrors are excluded."""
     issues: list[BindingInventoryIssue] | Unset = UNSET
     warnings: list[str] | Unset = UNSET
-    """ Human-readable, sanitized messages for each issue. """
+    """Human-readable, sanitized messages for each issue."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

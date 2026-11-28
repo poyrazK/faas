@@ -20,7 +20,7 @@ class ReleaseDiffConfig:
     """How the configuration each release started with differs, by key."""
 
     known: bool
-    """ False when the retained config history no longer reaches one of the releases. """
+    """False when the retained config history no longer reaches one of the releases."""
     variables: list[ReleaseDiffKey]
     secrets: list[ReleaseDiffKey]
     note: str | Unset = UNSET

@@ -33,14 +33,13 @@ class EventRecoveryExecution:
     state: EventRecoveryExecutionState
     source: EventRecoveryExecutionSource
     attempts: int
-    """ Recorded dispatch attempt count for the tracked invocation generation; zero for workflow-run observations.
-    """
+    """Recorded dispatch attempt count for the tracked invocation generation; zero for workflow-run observations."""
     recorded_at: datetime.datetime | Unset = UNSET
-    """ When terminal evidence was saved; present only for recovery_result. """
+    """When terminal evidence was saved; present only for recovery_result."""
     evidence_source: EventRecoveryExecutionEvidenceSource | Unset = UNSET
-    """ Original source of a saved terminal result; present only for recovery_result. """
+    """Original source of a saved terminal result; present only for recovery_result."""
     completed_at: datetime.datetime | Unset = UNSET
-    """ Recorded terminal completion time when available. """
+    """Recorded terminal completion time when available."""
 
     def to_dict(self) -> dict[str, Any]:
         observed_at = self.observed_at.isoformat()

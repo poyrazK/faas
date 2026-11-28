@@ -30,47 +30,46 @@ class CustomDomainResponse:
     app_id: str
     verified: bool
     readiness: DomainReadiness | Unset = UNSET
-    """ Independent ownership, DNS routing, and TLS activation state. """
+    """Independent ownership, DNS routing, and TLS activation state."""
     verification_next_check_at: datetime.datetime | Unset = UNSET
-    """ Next scheduled automatic ownership check; omitted after verification. """
+    """Next scheduled automatic ownership check; omitted after verification."""
     verification_attempts: int | Unset = UNSET
     cert_retry_at: datetime.datetime | Unset = UNSET
-    """ Next permitted legacy certificate attempt, when a durable cooldown is active. Caddy manages its own retry
-    schedule. """
+    """Next permitted legacy certificate attempt, when a durable cooldown is active. Caddy manages its own retry
+    schedule."""
     checks: list[DomainDoctorCheck] | Unset = UNSET
-    """ Fresh checks for this claim, including observed values and remediation. Stale observations are omitted. """
+    """Fresh checks for this claim, including observed values and remediation. Stale observations are omitted."""
     environment: str | Unset = UNSET
-    """ Project environment that owns the route; omitted for legacy application-wide domains. """
+    """Project environment that owns the route; omitted for legacy application-wide domains."""
     challenge_token: None | str | Unset = UNSET
     verified_at: datetime.datetime | None | Unset = UNSET
     verification_expires_at: datetime.datetime | Unset = UNSET
-    """ Hard deadline for an unverified claim. An expired claim requires a fresh create request and a new TXT proof.
-    """
+    """Hard deadline for an unverified claim. An expired claim requires a fresh create request and a new TXT proof."""
     verification_expired: bool | Unset = UNSET
-    """ True when the unverified claim has expired. Obsolete challenge_token, txt_record, and verification DNS
-    instructions are omitted; resume domain setup to recreate the claim. """
+    """True when the unverified claim has expired. Obsolete challenge_token, txt_record, and verification DNS
+    instructions are omitted; resume domain setup to recreate the claim."""
     txt_record: None | str | Unset = UNSET
     default: bool | Unset = UNSET
-    """ True when this domain is the app's default. Set via `gregale domains set-default`. """
+    """True when this domain is the app's default. Set via `gregale domains set-default`."""
     cert_not_after: datetime.datetime | None | Unset = UNSET
-    """ Issued cert NotAfter (RFC3339 UTC). Populated on verified domains; the `gregale domains show` line below the
-    cert expiry renders against this field. """
+    """Issued cert NotAfter (RFC3339 UTC). Populated on verified domains; the `gregale domains show` line below the
+    cert expiry renders against this field."""
     cert_sans: list[str] | Unset = UNSET
-    """ Cert subject alt names (DNSNames). Useful for the `gregale domains show` listing — if the customer's CNAME
-    points at a CDN, the SANs reveal which CDN. """
+    """Cert subject alt names (DNSNames). Useful for the `gregale domains show` listing — if the customer's CNAME
+    points at a CDN, the SANs reveal which CDN."""
     cert_status: None | str | Unset = UNSET
-    """ Durable TLS lifecycle for the legacy custom domain (pending, issued, renewing, failed, or dns_drifted). The
+    """Durable TLS lifecycle for the legacy custom domain (pending, issued, renewing, failed, or dns_drifted). The
     show endpoint may temporarily return a live `dial_failed:<reason>` value when the probe cannot reach the edge.
-    """
+   """
     cert_expires_at: datetime.datetime | None | Unset = UNSET
-    """ Durable certificate expiry timestamp recorded by the cert observer. """
+    """Durable certificate expiry timestamp recorded by the cert observer."""
     cert_last_error: None | str | Unset = UNSET
-    """ Most recent certificate issuance/renewal error, when cert_status is failed. """
+    """Most recent certificate issuance/renewal error, when cert_status is failed."""
     dns_last_checked_at: datetime.datetime | None | Unset = UNSET
-    """ Timestamp of the most recent DNS verification/doctor probe. """
+    """Timestamp of the most recent DNS verification/doctor probe."""
     dns_records: list[DNSRecordInstruction] | Unset = UNSET
-    """ DNS records to publish: the TXT ownership proof and the routing CNAME, plus A/AAAA alternatives for a zone
-    apex when the platform publishes edge addresses. """
+    """DNS records to publish: the TXT ownership proof and the routing CNAME, plus A/AAAA alternatives for a zone
+    apex when the platform publishes edge addresses."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

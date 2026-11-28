@@ -32,10 +32,10 @@ class OperationWorkflowFulfillmentReviewEscalation:
     notified_at: datetime.datetime
     escalation_owner: str
     review: OperationWorkflowObligationFulfillmentReview
-    """ Bounded independent observation of the latest fulfilled case/cycle and its original or reaffirmed proof.
+    """Bounded independent observation of the latest fulfilled case/cycle and its original or reaffirmed proof.
     Flags remain latched until explicit reaffirmation or reopening; normal workflow progress is not invalidation.
     Reasons describe retained coverage, not inferred business failure. Identical semantic observations suppress
-    owner notices. """
+    owner notices."""
 
     def to_dict(self) -> dict[str, Any]:
         review_id = self.review_id

@@ -12,7 +12,7 @@ T = TypeVar("T", bound="UpdateDeploymentMinInstancesBody")
 @_attrs_define
 class UpdateDeploymentMinInstancesBody:
     min_instances: int
-    """ Per-deployment cold-wake floor override. 0 = inherit from parent app. """
+    """Per-deployment cold-wake floor override. 0 = inherit from parent app."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

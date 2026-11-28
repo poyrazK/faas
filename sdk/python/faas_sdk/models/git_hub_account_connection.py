@@ -29,7 +29,7 @@ class GitHubAccountConnection:
     health: GitHubAccountConnectionHealth
     repository_count: int
     access: GitHubConnectionVerification | Unset = UNSET
-    """ Live GitHub installation permissions, repository selection and verification time. """
+    """Live GitHub installation permissions, repository selection and verification time."""
     last_verified_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

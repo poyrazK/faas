@@ -20,38 +20,38 @@ class OperationWorkflowReadinessQueueResponse:
     """Bounded live readiness queue; counts describe the evaluated sample and filters."""
 
     snapshot: OperationWorkflowReadinessSnapshot
-    """ Caller-held compact readiness observations for at most 100 returned transitions. No historical
-    authentication or execution authority is implied. """
+    """Caller-held compact readiness observations for at most 100 returned transitions. No historical
+    authentication or execution authority is implied."""
     items: list[OperationWorkflowReadinessQueueEntry]
-    """ Matching transitions with unmet rows first. """
+    """Matching transitions with unmet rows first."""
     sampled_at: datetime.datetime
-    """ Time used to select recently updated ongoing workflows. """
+    """Time used to select recently updated ongoing workflows."""
     evaluated_at: datetime.datetime
-    """ Time evaluation completed; reads are live rather than atomic. """
+    """Time evaluation completed; reads are live rather than atomic."""
     matching_workflow_count: int
-    """ Retained ongoing workflows matching app customer and workflow selectors before sampling. """
+    """Retained ongoing workflows matching app customer and workflow selectors before sampling."""
     sampled_workflow_count: int
-    """ Ongoing workflows selected up to the workflow cap. """
+    """Ongoing workflows selected up to the workflow cap."""
     excluded_changed_workflow_count: int
-    """ Sampled workflows excluded after their current report or contract changed. """
+    """Sampled workflows excluded after their current report or contract changed."""
     no_transition_workflow_count: int
-    """ Unchanged sampled workflows without a matching current-state edge. """
+    """Unchanged sampled workflows without a matching current-state edge."""
     declared_transition_count: int
-    """ Matching current-state edges before per-workflow edge sampling. """
+    """Matching current-state edges before per-workflow edge sampling."""
     evaluated_transition_count: int
-    """ Current-state edges evaluated before owner and requirement filtering. """
+    """Current-state edges evaluated before owner and requirement filtering."""
     matching_transition_count: int
-    """ Evaluated transitions matching filters before the row limit. """
+    """Evaluated transitions matching filters before the row limit."""
     ready_transition_count: int
-    """ Matching evaluated transitions with all declared requirements met. """
+    """Matching evaluated transitions with all declared requirements met."""
     unmet_transition_count: int
-    """ Matching evaluated transitions with unmet declared requirements. """
+    """Matching evaluated transitions with unmet declared requirements."""
     workflow_sample_truncated: bool
-    """ More matching ongoing workflows exist than were sampled. """
+    """More matching ongoing workflows exist than were sampled."""
     transition_sample_truncated: bool
-    """ At least one workflow has more matching edges than the per-workflow cap. """
+    """At least one workflow has more matching edges than the per-workflow cap."""
     has_more: bool
-    """ More matching evaluated rows exist than the response row limit. """
+    """More matching evaluated rows exist than the response row limit."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

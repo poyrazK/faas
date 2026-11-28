@@ -18,7 +18,7 @@ class PutOutboundRequestPolicyRequest:
     """Replace admission policy values for a customer-owned integration."""
 
     request_policy: OutboundRequestPolicy
-    """ Effective customer-selected per-integration policy, bounded by the account plan. """
+    """Effective customer-selected per-integration policy, bounded by the account plan."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

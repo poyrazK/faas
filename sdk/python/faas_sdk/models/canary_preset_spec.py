@@ -32,11 +32,11 @@ class CanaryPresetSpec:
     """
 
     preset: CanaryPresetSpecPreset
-    """ Catalog preset name. 'none' = no canary (server stamps canary_preset='none', canary_total_steps=0). 'custom'
-    requires Stages to be non-empty. """
+    """Catalog preset name. 'none' = no canary (server stamps canary_preset='none', canary_total_steps=0). 'custom'
+    requires Stages to be non-empty."""
     stages: list[CustomStage] | Unset = UNSET
-    """ Per-stage ladder. Required when preset='custom' (the API handler 422s otherwise); ignored for catalog
-    presets (the catalog resolution runs server-side). """
+    """Per-stage ladder. Required when preset='custom' (the API handler 422s otherwise); ignored for catalog
+    presets (the catalog resolution runs server-side)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

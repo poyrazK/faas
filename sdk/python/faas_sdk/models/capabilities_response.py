@@ -21,16 +21,16 @@ class CapabilitiesResponse:
     """Account-scoped capability registry with resolved entitlement and existing runtime availability gates."""
 
     registry_version: int
-    """ Version of the embedded product capability catalog. """
+    """Version of the embedded product capability catalog."""
     plan: CapabilitiesResponsePlan
     capabilities: list[CapabilityStatus]
     conditional_parking: bool | Unset = False
-    """ The serving control plane and state backend support atomic deployment-guarded parking. Older servers omit
+    """The serving control plane and state backend support atomic deployment-guarded parking. Older servers omit
     this field, which means unsupported. This is a preflight signal, not a cluster-wide health guarantee; always use
-    the conditional parking endpoint, including in mixed-version fleets. """
+    the conditional parking endpoint, including in mixed-version fleets."""
     hidden_capabilities: list[str] | Unset = UNSET
-    """ Catalog capabilities, internal ones included, whose platform flag is off for this account. Clients hide
-    their commands and links. Omitted when nothing is hidden and by servers without the capability gate. """
+    """Catalog capabilities, internal ones included, whose platform flag is off for this account. Clients hide
+    their commands and links. Omitted when nothing is hidden and by servers without the capability gate."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

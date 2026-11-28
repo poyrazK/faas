@@ -18,7 +18,7 @@ class GraceWindowResponse:
 
     days: int | None
     plan_default: int
-    """ Platform default grace window in days (api.DefaultAPIKeyGraceWindowDays = 7). """
+    """Platform default grace window in days (api.DefaultAPIKeyGraceWindowDays = 7)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

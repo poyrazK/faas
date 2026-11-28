@@ -22,10 +22,10 @@ class MFAVerifyRequest:
 
     totp: str
     csrf_token: str | Unset = UNSET
-    """ Dashboard CSRF token (absorbed from the body for
+    """Dashboard CSRF token (absorbed from the body for
     parity with /confirm; /verify is not token-gated
     because the TOTP code itself IS the second factor).
-     """
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

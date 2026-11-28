@@ -18,7 +18,7 @@ class ProjectRollbackProtection:
     deploy_group_id: UUID
     expires_at: datetime.datetime
     layer_bytes: int
-    """ Bytes of unique root filesystem and sidecar layers held for this deploy. """
+    """Bytes of unique root filesystem and sidecar layers held for this deploy."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

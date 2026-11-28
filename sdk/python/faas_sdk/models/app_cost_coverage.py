@@ -18,7 +18,7 @@ class AppCostCoverage:
     expected_minutes: int
     complete_minutes: int
     quantity_coverage_known: bool
-    """ False; account-wide unpriced and nonbillable quantities are not exposed. """
+    """False; account-wide unpriced and nonbillable quantities are not exposed."""
     reasons: list[str]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

@@ -32,7 +32,7 @@ class InboundWebhookReceiptResponse:
     receipt_id: UUID
     status: InboundWebhookReceiptResponseStatus
     duplicate: bool
-    """ True when this endpoint already accepted the same provider event ID. """
+    """True when this endpoint already accepted the same provider event ID."""
     accepted_at: datetime.datetime
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

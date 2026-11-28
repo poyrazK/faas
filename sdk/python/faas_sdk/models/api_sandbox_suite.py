@@ -19,7 +19,7 @@ class APISandboxSuite:
     revision: UUID
     scenario_ids: list[UUID]
     run_before_approval: bool | Unset = UNSET
-    """ Automatically queue an advisory suite when an eligible build reaches approval. """
+    """Automatically queue an advisory suite when an eligible build reaches approval."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

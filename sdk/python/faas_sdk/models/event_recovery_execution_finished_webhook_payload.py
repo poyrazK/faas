@@ -59,16 +59,16 @@ class EventRecoveryExecutionFinishedWebhookPayload:
     expires_at: datetime.datetime
     completed_at: datetime.datetime
     execution: EventRecoveryExecutionSummary
-    """ Observations of admitted execution- or workflow-mode items. Both modes prefer the first saved terminal
+    """Observations of admitted execution- or workflow-mode items. Both modes prefer the first saved terminal
     result, then live evidence of the exact admitted generation. Later native resumes report superseded only without
     an earlier saved terminal result. Missing evidence without a saved result is unknown. Native failed/dead runs
     count as failed. Counts sum to tracked_count and are separate from job admission state. Omitted for routing
-    recovery. Saved results in both modes share recovery job retention. """
+    recovery. Saved results in both modes share recovery job retention."""
     execution_finished_at: datetime.datetime
     unresolved_count: EventRecoveryExecutionFinishedWebhookPayloadUnresolvedCount
-    """ Unknown or nonterminal queued deliveries; capture requires zero. """
+    """Unknown or nonterminal queued deliveries; capture requires zero."""
     items_url: str | Unset = UNSET
-    """ Authenticated relative API link to paginated recovery items and their invocation/run identifiers. """
+    """Authenticated relative API link to paginated recovery items and their invocation/run identifiers."""
 
     def to_dict(self) -> dict[str, Any]:
         event_id = str(self.event_id)

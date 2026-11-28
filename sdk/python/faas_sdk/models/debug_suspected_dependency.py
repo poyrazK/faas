@@ -32,13 +32,13 @@ class DebugSuspectedDependency:
     regression_factor: float
     kind: str | Unset = UNSET
     reason: DebugSuspectedDependencyReason | Unset = UNSET
-    """ latency when the dependency's p95 regressed; failures when its error rate rose. Absent on suspects recorded
-    before failure attribution, which are latency suspects. """
+    """latency when the dependency's p95 regressed; failures when its error rate rose. Absent on suspects recorded
+    before failure attribution, which are latency suspects."""
     baseline_error_rate_pct: float | Unset = UNSET
     error_rate_pct: float | Unset = UNSET
     error_type: str | Unset = UNSET
     query: str | Unset = UNSET
-    """ Normalized pattern of the database query that regressed within the dependency, when one did. """
+    """Normalized pattern of the database query that regressed within the dependency, when one did."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

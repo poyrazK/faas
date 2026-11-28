@@ -37,32 +37,32 @@ class TrafficRuntimeStatus:
     stale_gateways: int
     missing_gateways: int
     public_retry: TrafficRuntimeFeatureStatus
-    """ Observed wiring mode when every serving member has a fresh report. Disagreement reports mixed, including
-    shared retry backend endpoint disagreement. Missing or stale members leave the feature unverified. """
+    """Observed wiring mode when every serving member has a fresh report. Disagreement reports mixed, including
+    shared retry backend endpoint disagreement. Missing or stale members leave the feature unverified."""
     rate_counter: TrafficRuntimeFeatureStatus
-    """ Observed wiring mode when every serving member has a fresh report. Disagreement reports mixed, including
-    shared retry backend endpoint disagreement. Missing or stale members leave the feature unverified. """
+    """Observed wiring mode when every serving member has a fresh report. Disagreement reports mixed, including
+    shared retry backend endpoint disagreement. Missing or stale members leave the feature unverified."""
     retry_counter: TrafficRuntimeFeatureStatus
-    """ Observed wiring mode when every serving member has a fresh report. Disagreement reports mixed, including
-    shared retry backend endpoint disagreement. Missing or stale members leave the feature unverified. """
+    """Observed wiring mode when every serving member has a fresh report. Disagreement reports mixed, including
+    shared retry backend endpoint disagreement. Missing or stale members leave the feature unverified."""
     deadline_signing: TrafficRuntimeFeatureStatus
-    """ Observed wiring mode when every serving member has a fresh report. Disagreement reports mixed, including
-    shared retry backend endpoint disagreement. Missing or stale members leave the feature unverified. """
+    """Observed wiring mode when every serving member has a fresh report. Disagreement reports mixed, including
+    shared retry backend endpoint disagreement. Missing or stale members leave the feature unverified."""
     policy_snapshot: TrafficRuntimeFeatureStatus
-    """ Observed wiring mode when every serving member has a fresh report. Disagreement reports mixed, including
-    shared retry backend endpoint disagreement. Missing or stale members leave the feature unverified. """
+    """Observed wiring mode when every serving member has a fresh report. Disagreement reports mixed, including
+    shared retry backend endpoint disagreement. Missing or stale members leave the feature unverified."""
     security_revocation: TrafficRuntimeFeatureStatus
-    """ Observed wiring mode when every serving member has a fresh report. Disagreement reports mixed, including
-    shared retry backend endpoint disagreement. Missing or stale members leave the feature unverified. """
+    """Observed wiring mode when every serving member has a fresh report. Disagreement reports mixed, including
+    shared retry backend endpoint disagreement. Missing or stale members leave the feature unverified."""
     managed_http: TrafficRuntimeFeatureStatus
-    """ Observed wiring mode when every serving member has a fresh report. Disagreement reports mixed, including
-    shared retry backend endpoint disagreement. Missing or stale members leave the feature unverified. """
+    """Observed wiring mode when every serving member has a fresh report. Disagreement reports mixed, including
+    shared retry backend endpoint disagreement. Missing or stale members leave the feature unverified."""
     managed_circuit: TrafficRuntimeFeatureStatus
-    """ Observed wiring mode when every serving member has a fresh report. Disagreement reports mixed, including
-    shared retry backend endpoint disagreement. Missing or stale members leave the feature unverified. """
+    """Observed wiring mode when every serving member has a fresh report. Disagreement reports mixed, including
+    shared retry backend endpoint disagreement. Missing or stale members leave the feature unverified."""
     edge_header_secrets: TrafficRuntimeFeatureStatus | Unset = UNSET
-    """ Observed wiring mode when every serving member has a fresh report. Disagreement reports mixed, including
-    shared retry backend endpoint disagreement. Missing or stale members leave the feature unverified. """
+    """Observed wiring mode when every serving member has a fresh report. Disagreement reports mixed, including
+    shared retry backend endpoint disagreement. Missing or stale members leave the feature unverified."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

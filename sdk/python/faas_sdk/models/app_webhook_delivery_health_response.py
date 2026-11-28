@@ -27,19 +27,19 @@ class AppWebhookDeliveryHealthResponse:
     in_flight_count: int
     dead_count: int
     receiver_state: AppWebhookDeliveryHealthResponseReceiverState
-    """ Claim gate at snapshot_at; probing requires a live recovery delivery lease. """
+    """Claim gate at snapshot_at; probing requires a live recovery delivery lease."""
     recent_succeeded_count: int
     recent_dead_count: int
     receiver_cooldown_until: datetime.datetime | Unset = UNSET
-    """ Active receiver pause deadline; after it expires, one recovery delivery probes before normal capacity
-    resumes. """
+    """Active receiver pause deadline; after it expires, one recovery delivery probes before normal capacity
+    resumes."""
     oldest_overdue_at: datetime.datetime | Unset = UNSET
-    """ Earliest due time among claimable pending or expired in-flight deliveries; omitted while the subscription
-    has no claim capacity. """
+    """Earliest due time among claimable pending or expired in-flight deliveries; omitted while the subscription
+    has no claim capacity."""
     oldest_overdue_seconds: int | Unset = UNSET
-    """ Age of the oldest overdue delivery at snapshot_at. """
+    """Age of the oldest overdue delivery at snapshot_at."""
     recent_success_rate: float | Unset = UNSET
-    """ Recent succeeded divided by recent succeeded plus dead; omitted when there are no terminal deliveries. """
+    """Recent succeeded divided by recent succeeded plus dead; omitted when there are no terminal deliveries."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

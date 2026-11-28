@@ -28,27 +28,27 @@ class OperationWorkflowPlaybookReview:
     """
 
     revision: int
-    """ OperationWorkflowPlaybookReview.revision. Expected current source revision for requests, committed new
-    shared revision for retained decisions. """
+    """OperationWorkflowPlaybookReview.revision. Expected current source revision for requests, committed new
+    shared revision for retained decisions."""
     decision: OperationWorkflowPlaybookReviewDecision
-    """ OperationWorkflowPlaybookReview.decision. Human coordination choice; retire and replace permanently close
-    this source checklist. """
+    """OperationWorkflowPlaybookReview.decision. Human coordination choice; retire and replace permanently close
+    this source checklist."""
     reason: str
-    """ OperationWorkflowPlaybookReview.reason. Required nonempty UTF-8 review reason, at most 1024 bytes and
-    without control characters. """
+    """OperationWorkflowPlaybookReview.reason. Required nonempty UTF-8 review reason, at most 1024 bytes and
+    without control characters."""
     actor: str
-    """ OperationWorkflowPlaybookReview.actor. Authenticated account or API-key reviewer assigned by the server. """
+    """OperationWorkflowPlaybookReview.actor. Authenticated account or API-key reviewer assigned by the server."""
     at: datetime.datetime
-    """ OperationWorkflowPlaybookReview.at. Server decision clock; application evidence was independently read. """
+    """OperationWorkflowPlaybookReview.at. Server decision clock; application evidence was independently read."""
     applicability: OperationWorkflowPlaybookApplicability
-    """ OperationWorkflowPlaybookApplicability. Ephemeral applicability of a durable pinned checklist against
-    current exact-case evidence. No progress, review history, readiness or outcome is mutated. """
+    """OperationWorkflowPlaybookApplicability. Ephemeral applicability of a durable pinned checklist against
+    current exact-case evidence. No progress, review history, readiness or outcome is mutated."""
     replacement_progress_id: UUID | Unset = UNSET
-    """ OperationWorkflowPlaybookReview.replacement_progress_id. Only for replace: distinct already-started active
-    applicable checklist in the exact same case. """
+    """OperationWorkflowPlaybookReview.replacement_progress_id. Only for replace: distinct already-started active
+    applicable checklist in the exact same case."""
     replacement_revision: int | Unset = UNSET
-    """ OperationWorkflowPlaybookReview.replacement_revision. Only for replace: expected target revision, rechecked
-    with its active disposition under the writer lock. """
+    """OperationWorkflowPlaybookReview.replacement_revision. Only for replace: expected target revision, rechecked
+    with its active disposition under the writer lock."""
 
     def to_dict(self) -> dict[str, Any]:
         revision = self.revision

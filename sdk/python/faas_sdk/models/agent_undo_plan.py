@@ -19,12 +19,12 @@ class AgentUndoPlan:
     """An agent's changes, newest first, and what undoing them will do."""
 
     since: datetime.datetime
-    """ The oldest change time the plan covers. """
+    """The oldest change time the plan covers."""
     items: list[AgentUndoItem]
     undoable: int
-    """ How many changes applying the plan will undo. """
+    """How many changes applying the plan will undo."""
     plan_digest: str
-    """ Binds an apply to this plan. """
+    """Binds an apply to this plan."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

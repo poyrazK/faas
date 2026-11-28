@@ -22,7 +22,7 @@ class MCPReadinessSnapshot:
     """Environment readiness policy together with retained evidence and overrides."""
 
     policy: MCPReadinessPolicy
-    """ Saved environment readiness requirements with revision and audit context. """
+    """Saved environment readiness requirements with revision and audit context."""
     evidence: list[MCPReadinessEvidence]
     overrides: list[MCPReadinessOverride]
     monitoring: list[MCPReadinessMonitorStatus] | Unset = UNSET

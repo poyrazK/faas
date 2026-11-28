@@ -20,7 +20,7 @@ class MCPReadinessPolicyHistory:
 
     policies: list[MCPReadinessPolicy]
     next_before_revision: str | Unset = UNSET
-    """ Use as before_revision for the next page; absent on the last page """
+    """Use as before_revision for the next page; absent on the last page"""
 
     def to_dict(self) -> dict[str, Any]:
         policies = []

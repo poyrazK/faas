@@ -28,9 +28,9 @@ class OrgAppSummary:
     status: str
     created_at: datetime.datetime
     runtime: str | Unset = UNSET
-    """ Runtime identifier for functions when configured. """
+    """Runtime identifier for functions when configured."""
     project_id: UUID | Unset = UNSET
-    """ Parent project as a canonical hyphenated UUID. Omitted when the app is standalone. """
+    """Parent project as a canonical hyphenated UUID. Omitted when the app is standalone."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

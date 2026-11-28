@@ -24,8 +24,8 @@ class OperationWorkflowFulfillmentReviewCoordinationChange:
 
     review_id: str
     binding: OperationWorkflowObligationTargetBinding
-    """ One obligation-cycle and exact-case target binding, recorded with an authenticated actor and reason.
-    Unrelated edits preserve it; a new cycle never inherits it. Current readiness is independently reassessed. """
+    """One obligation-cycle and exact-case target binding, recorded with an authenticated actor and reason.
+    Unrelated edits preserve it; a new cycle never inherits it. Current readiness is independently reassessed."""
     fulfilled_at: datetime.datetime
     from_owner: str
     owner: str
@@ -35,11 +35,11 @@ class OperationWorkflowFulfillmentReviewCoordinationChange:
     from_escalation_owner: str | Unset = UNSET
     previous_escalate_after_seconds: int | Unset = UNSET
     escalation_owner: str | Unset = UNSET
-    """ New escalation team recorded by this review coordination change; empty or absent means escalation is
-    disabled. """
+    """New escalation team recorded by this review coordination change; empty or absent means escalation is
+    disabled."""
     escalate_after_seconds: int | Unset = UNSET
-    """ New grace period in seconds recorded by this review coordination change; zero or absent means escalation is
-    disabled. """
+    """New grace period in seconds recorded by this review coordination change; zero or absent means escalation is
+    disabled."""
     previous_due_at: datetime.datetime | Unset = UNSET
     due_at: datetime.datetime | Unset = UNSET
 

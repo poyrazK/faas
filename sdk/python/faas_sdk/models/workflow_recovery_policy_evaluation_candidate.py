@@ -27,7 +27,7 @@ class WorkflowRecoveryPolicyEvaluationCandidate:
     """One retained historical decision with current and proposed settings applied to the same captured evidence."""
 
     evidence_source: WorkflowRecoveryPolicyEvaluationCandidateEvidenceSource
-    """ Source of historical candidate facts. """
+    """Source of historical candidate facts."""
     run_id: UUID
     workflow: str
     observed_at: datetime.datetime
@@ -35,25 +35,25 @@ class WorkflowRecoveryPolicyEvaluationCandidate:
     trigger: str
     recorded_outcome: str
     historical_failure_statuses: list[str]
-    """ Exact observed status as a singleton when captured; otherwise the legacy policy filter represents a possible
-    status set. Empty means unrestricted and unrecorded. """
+    """Exact observed status as a singleton when captured; otherwise the legacy policy filter represents a possible
+    status set. Empty means unrestricted and unrecorded."""
     observed_hourly_executions: int
     execution_evidence_ids: list[str]
-    """ Bounded application proof identifiers from recovery history, including last known cooldown evidence when
-    older than one hour. """
+    """Bounded application proof identifiers from recovery history, including last known cooldown evidence when
+    older than one hour."""
     current: WorkflowRecoveryPolicyAssessment
-    """ Eligibility from preserved facts, conditional preparation result and lower-bound pressure from observed
-    applications. """
+    """Eligibility from preserved facts, conditional preparation result and lower-bound pressure from observed
+    applications."""
     proposed: WorkflowRecoveryPolicyAssessment
-    """ Eligibility from preserved facts, conditional preparation result and lower-bound pressure from observed
-    applications. """
+    """Eligibility from preserved facts, conditional preparation result and lower-bound pressure from observed
+    applications."""
     later_eligibility: WorkflowRecoveryFailureEligibilityAssessment | Unset = UNSET
-    """ Policy filters applied to a separately timed later observation. Checks expire after 15 minutes; preparation
-    and execution remain unproven. Historical totals never consume these observations. """
+    """Policy filters applied to a separately timed later observation. Checks expire after 15 minutes; preparation
+    and execution remain unproven. Historical totals never consume these observations."""
     failure_evidence_id: str | Unset = UNSET
-    """ Stable identifier for a captured policy-independent failure. """
+    """Stable identifier for a captured policy-independent failure."""
     candidate_evidence_id: str | Unset = UNSET
-    """ Durable history event containing the candidate facts when available. """
+    """Durable history event containing the candidate facts when available."""
     review_id: UUID | Unset = UNSET
     job_id: UUID | Unset = UNSET
     policy_version: int | Unset = UNSET

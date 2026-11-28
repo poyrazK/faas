@@ -38,7 +38,7 @@ class AppResourceInventoryItem:
     prefix: str | Unset = UNSET
     rotation_pending: bool | Unset = UNSET
     binding: AppResourceInventoryBinding | Unset = UNSET
-    """ Selected-app database linkage without provider identities or credential references. """
+    """Selected-app database linkage without provider identities or credential references."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

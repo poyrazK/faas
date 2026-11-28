@@ -31,7 +31,7 @@ class MCPPolicyConvergenceSnapshot:
     pending_gateways: int
     stale_gateways: int
     unconverged_gateways: int
-    """ Distinct gateways with stale/missing/future reports or pending replay. """
+    """Distinct gateways with stale/missing/future reports or pending replay."""
     deployment_id: UUID | Unset = UNSET
     admission_id: UUID | Unset = UNSET
     policy_status_path: str | Unset = UNSET

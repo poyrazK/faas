@@ -32,7 +32,7 @@ class MCPReadinessPagerDutyAcknowledgementHold:
     received_at: datetime.datetime
     policy_version: int
     release_sync_enabled: bool
-    """ False requires local release; includes acknowledgement-only bindings and ambiguous ownership. """
+    """False requires local release; includes acknowledgement-only bindings and ambiguous ownership."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

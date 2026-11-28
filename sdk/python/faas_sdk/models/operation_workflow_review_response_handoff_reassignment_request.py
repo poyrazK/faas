@@ -17,17 +17,15 @@ class OperationWorkflowReviewResponseHandoffReassignmentRequest:
     """
 
     decision_at: datetime.datetime
-    """ OperationWorkflowReviewResponseHandoffReassignmentRequest.decision_at. Exact reviewed decision timestamp.
-    """
+    """OperationWorkflowReviewResponseHandoffReassignmentRequest.decision_at. Exact reviewed decision timestamp."""
     required_at: datetime.datetime
-    """ OperationWorkflowReviewResponseHandoffReassignmentRequest.required_at. Exact review requirement timestamp.
-    """
+    """OperationWorkflowReviewResponseHandoffReassignmentRequest.required_at. Exact review requirement timestamp."""
     declined_at: datetime.datetime
-    """ OperationWorkflowReviewResponseHandoffReassignmentRequest.declined_at. Exact decline timestamp to route;
-    stale decline conflicts. """
+    """OperationWorkflowReviewResponseHandoffReassignmentRequest.declined_at. Exact decline timestamp to route;
+    stale decline conflicts."""
     reason: str
-    """ OperationWorkflowReviewResponseHandoffReassignmentRequest.reason. Nonblank UTF-8 explanation up to 1024
-    bytes; line breaks and tabs allowed. """
+    """OperationWorkflowReviewResponseHandoffReassignmentRequest.reason. Nonblank UTF-8 explanation up to 1024
+    bytes; line breaks and tabs allowed."""
 
     def to_dict(self) -> dict[str, Any]:
         decision_at = self.decision_at.isoformat()

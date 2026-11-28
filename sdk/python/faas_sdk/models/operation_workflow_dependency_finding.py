@@ -34,8 +34,7 @@ class OperationWorkflowDependencyFinding:
     path: list[OperationWorkflowDependency]
     explanation: str
     state: OperationWorkflowState | Unset = UNSET
-    """ Latest app-reported state for one declared workflow instance, including terminal and staleness indicators.
-    """
+    """Latest app-reported state for one declared workflow instance, including terminal and staleness indicators."""
     limit: OperationWorkflowDependencyFindingLimit | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:

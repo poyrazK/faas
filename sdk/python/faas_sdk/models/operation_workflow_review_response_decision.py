@@ -26,18 +26,18 @@ class OperationWorkflowReviewResponseDecision:
     """
 
     kind: OperationWorkflowReviewResponseDecisionKind
-    """ OperationWorkflowReviewResponseDecision.kind. Recorded human intent. """
+    """OperationWorkflowReviewResponseDecision.kind. Recorded human intent."""
     reason: str
-    """ OperationWorkflowReviewResponseDecision.reason. Operator explanation. """
+    """OperationWorkflowReviewResponseDecision.reason. Operator explanation."""
     owner: str
-    """ OperationWorkflowReviewResponseDecision.owner. Responsible team at decision time. """
+    """OperationWorkflowReviewResponseDecision.owner. Responsible team at decision time."""
     at: datetime.datetime
-    """ OperationWorkflowReviewResponseDecision.at. Server decision time. """
+    """OperationWorkflowReviewResponseDecision.at. Server decision time."""
     actor: str
-    """ OperationWorkflowReviewResponseDecision.actor. Authenticated operator who saved the decision. """
+    """OperationWorkflowReviewResponseDecision.actor. Authenticated operator who saved the decision."""
     health: OperationWorkflowReviewResponseHealth
-    """ Sampled advisory response-plan condition. Clear means no observed blockers or review obligations, not
-    business completion. Sampling stops on response resolution. """
+    """Sampled advisory response-plan condition. Clear means no observed blockers or review obligations, not
+    business completion. Sampling stops on response resolution."""
 
     def to_dict(self) -> dict[str, Any]:
         kind: str = self.kind

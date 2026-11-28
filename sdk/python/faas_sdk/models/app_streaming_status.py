@@ -57,10 +57,10 @@ class AppStreamingStatus:
     flag_enabled: bool
     plan_allowed: bool
     cap_kind: AppStreamingStatusCapKind | Unset = UNSET
-    """ `plan` is the plan-level fallback, `endpoint-rule` is a
+    """`plan` is the plan-level fallback, `endpoint-rule` is a
     matching compiled the gateway response cap, and `none` is
     reserved for a future explicit no-cap result.
-     """
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

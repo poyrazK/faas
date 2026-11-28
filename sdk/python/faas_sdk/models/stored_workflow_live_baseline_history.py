@@ -21,7 +21,7 @@ class StoredWorkflowLiveBaselineHistory:
 
     promotions: list[StoredWorkflowLiveBaseline]
     retirement: StoredWorkflowLiveBaselineRetirement | Unset = UNSET
-    """ Immutable attributed receipt recording permanent retirement and release of the baseline evidence pin. """
+    """Immutable attributed receipt recording permanent retirement and release of the baseline evidence pin."""
 
     def to_dict(self) -> dict[str, Any]:
         promotions = []

@@ -25,7 +25,7 @@ class OrgInvitationResponse:
     """
 
     id: str
-    """ 32-hex opaque invitation id (NOT canonical UUID). """
+    """32-hex opaque invitation id (NOT canonical UUID)."""
     org_id: str
     org_slug: str
     email: str

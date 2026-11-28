@@ -38,7 +38,7 @@ class ManagedExecutionWorkflowResponse:
     id: UUID | Unset = UNSET
     error: str | Unset = UNSET
     pipeline: ExecutionPipelineResponse | Unset = UNSET
-    """ Managed task pipeline state, steps and available completion details. """
+    """Managed task pipeline state, steps and available completion details."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

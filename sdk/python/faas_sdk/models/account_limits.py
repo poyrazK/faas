@@ -19,36 +19,36 @@ class AccountLimits:
     plan: AccountLimitsPlan
     ram_mb: int
     vcpu: int
-    """ Plan-derived guest vCPU topology. Free/Hobby/Pro use 2; Scale uses 4. This is informational on account
-    reads. """
+    """Plan-derived guest vCPU topology. Free/Hobby/Pro use 2; Scale uses 4. This is informational on account
+    reads."""
     max_concurrency: int
     deployed_apps: int
     preview_apps: int
-    """ Maximum open PR preview environments, separate from production apps. """
+    """Maximum open PR preview environments, separate from production apps."""
     deploys_per_hour: int
-    """ Account-wide deployment admissions per fixed one-hour window. """
+    """Account-wide deployment admissions per fixed one-hour window."""
     developer_apps: int
-    """ Maximum live `gregale dev` environments for this plan. """
+    """Maximum live `gregale dev` environments for this plan."""
     included_gb_hours: int
     app_layer_max_mb: int
     ephemeral_disk_max_mb: int
-    """ Total logical capacity of the writable ephemeral app filesystem per app, in MB, including application
+    """Total logical capacity of the writable ephemeral app filesystem per app, in MB, including application
     content and filesystem metadata. Free scratch space is this value minus deployed content and overhead. This is
-    the same physical drive1 cap historically named app_layer_max_mb. """
+    the same physical drive1 cap historically named app_layer_max_mb."""
     triggers_allowed: bool
-    """ Whether the plan permits external event triggers. """
+    """Whether the plan permits external event triggers."""
     trigger_kinds: list[TriggerKind]
-    """ External trigger kinds this plan may create. Cron schedules use the dedicated crons API and are not
-    included. """
+    """External trigger kinds this plan may create. Cron schedules use the dedicated crons API and are not
+    included."""
     trigger_limit_per_app: int
     trigger_limit_per_account: int
     trigger_batch_size_max: int
     trigger_batch_window_max_ms: int
-    """ Maximum batching window in milliseconds. """
+    """Maximum batching window in milliseconds."""
     trigger_max_attempts_max: int
     trigger_payload_max_bytes: int
     trigger_tls_skip_verify_allowed: bool
-    """ Whether Kafka tls.skip_verify=true is permitted. """
+    """Whether Kafka tls.skip_verify=true is permitted."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

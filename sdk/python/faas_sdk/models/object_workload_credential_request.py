@@ -16,7 +16,7 @@ class ObjectWorkloadCredentialRequest:
     """Body for POST /v1/workload/object-storage/credentials."""
 
     bucket: str | Unset = UNSET
-    """ Granted bucket name. Optional when the app holds exactly one bucket grant. """
+    """Granted bucket name. Optional when the app holds exactly one bucket grant."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

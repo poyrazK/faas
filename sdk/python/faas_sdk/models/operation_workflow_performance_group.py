@@ -37,10 +37,10 @@ class OperationWorkflowPerformanceGroup:
     dimension: OperationWorkflowPerformanceGroupDimension
     gap_status: OperationWorkflowPerformanceGroupGapStatus | Unset = UNSET
     condition_evidence_status: OperationWorkflowPerformanceGroupConditionEvidenceStatus | Unset = UNSET
-    """ Optional active-condition contributor filter; other dimensions reject this selector. """
+    """Optional active-condition contributor filter; other dimensions reject this selector."""
     condition_id: str | Unset = UNSET
     condition_description: str | Unset = UNSET
-    """ Exact public condition description in the returned group; UTF-8 byte bound without controls. """
+    """Exact public condition description in the returned group; UTF-8 byte bound without controls."""
     condition_result: OperationWorkflowPerformanceGroupConditionResult | Unset = UNSET
     kind: OperationWorkflowPerformanceGroupKind | Unset = UNSET
     decision_code: str | Unset = UNSET

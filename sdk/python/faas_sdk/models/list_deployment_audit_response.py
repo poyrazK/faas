@@ -26,7 +26,7 @@ class ListDeploymentAuditResponse:
 
     items: list[DeploymentAuditResponse]
     limit: int
-    """ Echo of the server-applied limit (query param ?limit= clamps here). """
+    """Echo of the server-applied limit (query param ?limit= clamps here)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

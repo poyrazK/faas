@@ -41,21 +41,21 @@ class OutboundAIContentPolicy:
     payment_card: OutboundAIContentPolicyPaymentCard
     iban: OutboundAIContentPolicyIban
     secret: OutboundAIContentPolicySecret
-    """ API keys, tokens and private keys. """
+    """API keys, tokens and private keys."""
     blocked_terms: list[str]
     moderation: OutboundAIModeration | Unset = UNSET
-    """ A model-based check of the request's user, tool and input text before the provider call. It runs through
+    """A model-based check of the request's user, tool and input text before the provider call. It runs through
     another of the account's AI integrations and is billed by that integration's provider: openai_moderation calls
     OpenAI's /v1/moderations on an OpenAI integration; classifier asks a chat model which categories apply. flag
     lets the call through and names the categories in X-Gregale-AI-Moderation; block refuses it with 400
     outbound_ai_content_flagged. on_error decides what a failed check does; block answers 503
-    outbound_ai_moderation_unavailable. """
+    outbound_ai_moderation_unavailable."""
     response: OutboundAIResponsePolicy | Unset = UNSET
-    """ Checks of the text a model sends back, before the caller sees it. The detectors redact or block as on
+    """Checks of the text a model sends back, before the caller sees it. The detectors redact or block as on
     requests; blocked_terms block refuses a response that contains one of the policy's blocked terms; moderation
     runs the policy's moderation check on the response, without prompt_injection, and flags or blocks it. A refused
     whole response answers 422 outbound_ai_response_blocked or outbound_ai_response_flagged; a refused stream ends
-    with an error event. Tool call arguments and reasoning text are not checked. """
+    with an error event. Tool call arguments and reasoning text are not checked."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

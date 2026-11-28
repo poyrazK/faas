@@ -28,34 +28,33 @@ class EdgeRuleCircuitBreakerAction:
     """
 
     failure_threshold: float | Unset = 0.5
-    """ Failure RATIO (not a count) at or above which a closed
+    """Failure RATIO (not a count) at or above which a closed
     breaker opens. Consulted only once `min_requests`
     observations exist inside the window. 0 applies the
     default (0.5).
-     """
+    """
     min_requests: int | Unset = 5
-    """ Minimum observations inside `window_seconds` before the
+    """Minimum observations inside `window_seconds` before the
     ratio is consulted at all. 0 applies the default (5).
 
     This is the field most likely to be set badly. At 1 a
     single transport blip opens the circuit, which on a route
     serving one request a minute reads as a 100% failure rate.
-     """
+    """
     window_seconds: int | Unset = 10
-    """ Rolling failure window. 0 applies the default (10s).
-     """
+    """Rolling failure window. 0 applies the default (10s)."""
     open_seconds: int | Unset = 5
-    """ First open interval before a half-open probe is offered. 0
+    """First open interval before a half-open probe is offered. 0
     applies the default (5s). Each failed probe doubles the
     interval up to `max_open_seconds`.
-     """
+    """
     max_open_seconds: int | Unset = 60
-    """ Ceiling the exponential backoff grows toward. 0 applies the
+    """Ceiling the exponential backoff grows toward. 0 applies the
     default (60s). Must be at least `open_seconds`. The cap is
     1 hour: a longer bench outlives most instances, so the
     breaker would be holding state about a target that no
     longer exists.
-     """
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

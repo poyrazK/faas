@@ -34,14 +34,14 @@ class ProjectReleaseCommand:
     exit_code: int | Unset = UNSET
     failure_code: str | Unset = UNSET
     verify_baseline: bool | Unset = UNSET
-    """ Require attributed production baseline probes after migration and before publication. """
+    """Require attributed production baseline probes after migration and before publication."""
     baseline_verification: ProjectMigrationBaselineVerification | Unset = UNSET
-    """ Durable post-expansion production probe checkpoint. Commands and database contents remain private. """
+    """Durable post-expansion production probe checkpoint. Commands and database contents remain private."""
     contract_command_hash: str | Unset = UNSET
-    """ Immutable hash of the source-declared cleanup command. """
+    """Immutable hash of the source-declared cleanup command."""
     contract: ProjectMigrationContract | Unset = UNSET
-    """ Guarded schema cleanup admission and durable task result. Cleanup command and task logs remain private to
-    their existing resources. """
+    """Guarded schema cleanup admission and durable task result. Cleanup command and task logs remain private to
+    their existing resources."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -24,7 +24,7 @@ class HostingRouteCheckResult:
     path: str
     status: HostingRouteCheckResultStatus
     verified_at: datetime.datetime
-    """ Zero time (0001-01-01T00:00:00Z) when the check did not run. """
+    """Zero time (0001-01-01T00:00:00Z) when the check did not run."""
     status_code: int | Unset = UNSET
     latency_ms: int | Unset = UNSET
     request_id: str | Unset = UNSET

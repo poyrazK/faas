@@ -23,11 +23,11 @@ class ManagedRealtimeConnectionListResponse:
     limit: int
     truncated: bool
     partial: bool
-    """ True when one or more active realtime nodes did not answer. """
+    """True when one or more active realtime nodes did not answer."""
     nodes_queried: int
     nodes_unavailable: int
     next_cursor: str | Unset = UNSET
-    """ Opaque cursor for the next page when truncated is true. """
+    """Opaque cursor for the next page when truncated is true."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

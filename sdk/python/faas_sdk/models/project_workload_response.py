@@ -21,10 +21,10 @@ class ProjectWorkloadResponse:
     deployment_status: str | Unset = UNSET
     rollout_state: str | Unset = UNSET
     traffic_percent: int | Unset = UNSET
-    """ The latest deployment's share of the service's traffic while it is live. Omitted when it serves none. """
+    """The latest deployment's share of the service's traffic while it is live. Omitted when it serves none."""
     build_status: str | Unset = UNSET
     depends_on: list[str] | Unset = UNSET
-    """ The project services this one declares it calls (Compose depends_on), sorted. Omitted when none. """
+    """The project services this one declares it calls (Compose depends_on), sorted. Omitted when none."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

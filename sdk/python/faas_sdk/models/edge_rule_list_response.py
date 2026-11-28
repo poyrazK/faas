@@ -22,12 +22,12 @@ class EdgeRuleListResponse:
     kind: EdgeRuleListResponseKind
     item_count: int
     referenced_by: list[str]
-    """ IDs of rules whose match conditions use the list. """
+    """IDs of rules whose match conditions use the list."""
     created_at: datetime.datetime
     updated_at: datetime.datetime
     description: str | Unset = UNSET
     items: list[str] | Unset = UNSET
-    """ Present when one list is fetched. """
+    """Present when one list is fetched."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

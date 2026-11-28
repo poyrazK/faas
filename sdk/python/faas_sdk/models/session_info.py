@@ -24,21 +24,21 @@ class SessionInfo:
     """
 
     id: UUID
-    """ Session id. Also stamped as `sid` in the cookie envelope. """
+    """Session id. Also stamped as `sid` in the cookie envelope."""
     account_id: UUID
     issued_at: datetime.datetime
-    """ When the session was minted (RFC 3339, UTC). """
+    """When the session was minted (RFC 3339, UTC)."""
     current_session: bool
-    """ True when this row's id matches the calling cookie's sid. Exactly one row per list response has this flag
-    set. """
+    """True when this row's id matches the calling cookie's sid. Exactly one row per list response has this flag
+    set."""
     issued_ip: str | Unset = UNSET
-    """ Client IP captured at login (host portion only; IPv4 or IPv6). Empty when the request's RemoteAddr was
-    unparseable. """
+    """Client IP captured at login (host portion only; IPv4 or IPv6). Empty when the request's RemoteAddr was
+    unparseable."""
     issued_ua: str | Unset = UNSET
-    """ User-Agent header captured at login. May be empty when the client suppressed the header. """
+    """User-Agent header captured at login. May be empty when the client suppressed the header."""
     last_seen_at: datetime.datetime | Unset = UNSET
-    """ Last time the cookie cross-validated this row. Updated with a 5-minute debounce; continues post-revoke
-    (operational signal only, not authorization). """
+    """Last time the cookie cross-validated this row. Updated with a 5-minute debounce; continues post-revoke
+    (operational signal only, not authorization)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

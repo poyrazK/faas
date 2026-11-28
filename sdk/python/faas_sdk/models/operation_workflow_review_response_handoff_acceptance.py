@@ -17,16 +17,16 @@ class OperationWorkflowReviewResponseHandoffAcceptance:
     """
 
     owner: str
-    """ OperationWorkflowReviewResponseHandoffAcceptance.owner. Responsible handed-off team at acceptance time. """
+    """OperationWorkflowReviewResponseHandoffAcceptance.owner. Responsible handed-off team at acceptance time."""
     actor: str
-    """ OperationWorkflowReviewResponseHandoffAcceptance.actor. Authenticated operator who recorded acceptance. """
+    """OperationWorkflowReviewResponseHandoffAcceptance.actor. Authenticated operator who recorded acceptance."""
     at: datetime.datetime
-    """ OperationWorkflowReviewResponseHandoffAcceptance.at. Server acceptance time. """
+    """OperationWorkflowReviewResponseHandoffAcceptance.at. Server acceptance time."""
     note: str
-    """ OperationWorkflowReviewResponseHandoffAcceptance.note. Operator acceptance note. """
+    """OperationWorkflowReviewResponseHandoffAcceptance.note. Operator acceptance note."""
     check_in_at: datetime.datetime
-    """ OperationWorkflowReviewResponseHandoffAcceptance.check_in_at. Future check-in committed at acceptance; later
-    edits do not rewrite this record. """
+    """OperationWorkflowReviewResponseHandoffAcceptance.check_in_at. Future check-in committed at acceptance; later
+    edits do not rewrite this record."""
 
     def to_dict(self) -> dict[str, Any]:
         owner = self.owner

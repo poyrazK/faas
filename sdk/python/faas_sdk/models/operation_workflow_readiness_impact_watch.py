@@ -27,29 +27,29 @@ class OperationWorkflowReadinessImpactWatch:
     """
 
     workflow: str
-    """ OperationWorkflowReadinessImpactWatch.workflow. Exact workflow identity. """
+    """OperationWorkflowReadinessImpactWatch.workflow. Exact workflow identity."""
     kind: OperationWorkflowReadinessImpactWatchKind
-    """ OperationWorkflowReadinessImpactWatch.kind. Protected result category. """
+    """OperationWorkflowReadinessImpactWatch.kind. Protected result category."""
     code: str
-    """ OperationWorkflowReadinessImpactWatch.code. Exact protected result slug. """
+    """OperationWorkflowReadinessImpactWatch.code. Exact protected result slug."""
     evaluated_at: datetime.datetime
-    """ OperationWorkflowReadinessImpactWatch.evaluated_at. Time of the last accepted baseline observation. """
+    """OperationWorkflowReadinessImpactWatch.evaluated_at. Time of the last accepted baseline observation."""
     coverage_incomplete: bool
-    """ OperationWorkflowReadinessImpactWatch.coverage_incomplete. Candidate-window or 64-obligation tracking limit,
-    missing source, or unresolved source after queue disappearance suppresses a clearance assertion. """
+    """OperationWorkflowReadinessImpactWatch.coverage_incomplete. Candidate-window or 64-obligation tracking limit,
+    missing source, or unresolved source after queue disappearance suppresses a clearance assertion."""
     acknowledge_after_seconds: int | Unset = UNSET
-    """ OperationWorkflowReadinessImpactWatch.acknowledge_after_seconds. Optional response window from delivery of
+    """OperationWorkflowReadinessImpactWatch.acknowledge_after_seconds. Optional response window from delivery of
     critical or overdue impact alerts, requires a nonempty owner. Zero omits the target; clearance notices have no
-    target. Acknowledgment is independent of resolving source review obligations. """
+    target. Acknowledgment is independent of resolving source review obligations."""
     fallback_owner: str | Unset = UNSET
-    """ OperationWorkflowReadinessImpactWatch.fallback_owner. Optional distinct fallback team, requires a positive
-    response window. Guarded handoff preserves manual assignment history and the original deadline. """
+    """OperationWorkflowReadinessImpactWatch.fallback_owner. Optional distinct fallback team, requires a positive
+    response window. Guarded handoff preserves manual assignment history and the original deadline."""
     owner: str | Unset = UNSET
-    """ OperationWorkflowReadinessImpactWatch.owner. Optional team assigned new impact notifications; does not
-    filter review queue source owners. """
+    """OperationWorkflowReadinessImpactWatch.owner. Optional team assigned new impact notifications; does not
+    filter review queue source owners."""
     current: OperationWorkflowReadinessImpactSummary | Unset = UNSET
-    """ OperationWorkflowReadinessImpactSummary. Retained unresolved review confidence by workflow and protected
-    business result, separate from reported business outcome. """
+    """OperationWorkflowReadinessImpactSummary. Retained unresolved review confidence by workflow and protected
+    business result, separate from reported business outcome."""
 
     def to_dict(self) -> dict[str, Any]:
         workflow = self.workflow

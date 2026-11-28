@@ -13,14 +13,14 @@ class AppPostgresBinding:
     """One live managed PostgreSQL binding of an app, without credential material."""
 
     id: str
-    """ The binding ID that revoking the binding takes. """
+    """The binding ID that revoking the binding takes."""
     database: str
-    """ The bound database's name. """
+    """The bound database's name."""
     scope: str
     environment_key: str
     access: str
     state: str
-    """ A binding in the deleting state no longer blocks deleting the app. """
+    """A binding in the deleting state no longer blocks deleting the app."""
 
     def to_dict(self) -> dict[str, Any]:
         id = self.id

@@ -30,43 +30,43 @@ class OperationWorkflowPlaybookProgressItem:
     """
 
     label: str
-    """ OperationWorkflowPlaybookProgressItem.label. Frozen application-authored evidence requirement. """
+    """OperationWorkflowPlaybookProgressItem.label. Frozen application-authored evidence requirement."""
     status: OperationWorkflowPlaybookProgressItemStatus
-    """ OperationWorkflowPlaybookProgressItem.status. Human checklist review state. """
+    """OperationWorkflowPlaybookProgressItem.status. Human checklist review state."""
     note: str
-    """ OperationWorkflowPlaybookProgressItem.note. Latest reviewer note. """
+    """OperationWorkflowPlaybookProgressItem.note. Latest reviewer note."""
     evidence: list[OperationWorkflowPlaybookEvidence]
-    """ OperationWorkflowPlaybookProgressItem.evidence. Scoped references checked when edited; future retention
-    availability is not guaranteed. """
+    """OperationWorkflowPlaybookProgressItem.evidence. Scoped references checked when edited; future retention
+    availability is not guaranteed."""
     review_impact: OperationWorkflowPlaybookReviewImpact | Unset = UNSET
-    """ OperationWorkflowPlaybookReviewImpact. Frozen application guidance explaining the business result protected
-    by human review; advisory confidence, independent of reported business state. """
+    """OperationWorkflowPlaybookReviewImpact. Frozen application guidance explaining the business result protected
+    by human review; advisory confidence, independent of reported business state."""
     dependency_review_due_at: datetime.datetime | Unset = UNSET
-    """ OperationWorkflowPlaybookProgressItem.dependency_review_due_at. Frozen review deadline calculated at
+    """OperationWorkflowPlaybookProgressItem.dependency_review_due_at. Frozen review deadline calculated at
     prerequisite reopening from the pinned assignment policy. Recovery and inbox rescheduling do not reset it; an
-    explicit review clears it with the obligation. """
+    explicit review clears it with the obligation."""
     dependency_review_revision: int | Unset = UNSET
-    """ OperationWorkflowPlaybookProgressItem.dependency_review_revision. Progress revision that reopened a
+    """OperationWorkflowPlaybookProgressItem.dependency_review_revision. Progress revision that reopened a
     prerequisite; persists until an explicit step review confirms completed work with evidence or requests redo by
-    marking it pending. Prerequisite recovery alone does not clear this obligation. """
+    marking it pending. Prerequisite recovery alone does not clear this obligation."""
     readiness: OperationWorkflowPlaybookStepReadiness | Unset = UNSET
-    """ OperationWorkflowPlaybookStepReadiness. Human review dependency status, not business state or execution
-    authority. """
+    """OperationWorkflowPlaybookStepReadiness. Human review dependency status, not business state or execution
+    authority."""
     owner: str | Unset = UNSET
-    """ OperationWorkflowPlaybookProgressItem.owner. Outcome follow-up team label; human reassignment is recorded
-    with the step review. """
+    """OperationWorkflowPlaybookProgressItem.owner. Outcome follow-up team label; human reassignment is recorded
+    with the step review."""
     due_at: datetime.datetime | Unset = UNSET
-    """ OperationWorkflowPlaybookProgressItem.due_at. Pinned completion deadline from first list review, independent
-    of business success. """
+    """OperationWorkflowPlaybookProgressItem.due_at. Pinned completion deadline from first list review, independent
+    of business success."""
     evidence_check: OperationWorkflowPlaybookEvidenceCheck | Unset = UNSET
-    """ OperationWorkflowPlaybookEvidenceCheck. Ephemeral case-read observation of a pinned requirement, separate
+    """OperationWorkflowPlaybookEvidenceCheck. Ephemeral case-read observation of a pinned requirement, separate
     from human review and attachment validity. Contract or guidance changes, missing declarations and incomplete
-    coverage remain unavailable. Does not change progress or authorize execution. """
+    coverage remain unavailable. Does not change progress or authorize execution."""
     reviewed_by: str | Unset = UNSET
-    """ OperationWorkflowPlaybookProgressItem.reviewed_by. Authenticated account or API-key reviewer, assigned by
-    the server. """
+    """OperationWorkflowPlaybookProgressItem.reviewed_by. Authenticated account or API-key reviewer, assigned by
+    the server."""
     reviewed_at: datetime.datetime | Unset = UNSET
-    """ OperationWorkflowPlaybookProgressItem.reviewed_at. Server review clock for the latest edit. """
+    """OperationWorkflowPlaybookProgressItem.reviewed_at. Server review clock for the latest edit."""
 
     def to_dict(self) -> dict[str, Any]:
         label = self.label

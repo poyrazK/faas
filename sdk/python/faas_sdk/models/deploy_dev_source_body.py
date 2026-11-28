@@ -17,29 +17,29 @@ T = TypeVar("T", bound="DeployDevSourceBody")
 @_attrs_define
 class DeployDevSourceBody:
     source: File
-    """ Complete tar.gz when dev_source_base is absent; otherwise a tar.gz of changed entries. """
+    """Complete tar.gz when dev_source_base is absent; otherwise a tar.gz of changed entries."""
     dev_source_target: str
-    """ Canonical revision of the complete source tree after reconstruction. """
+    """Canonical revision of the complete source tree after reconstruction."""
     dev_source_base: str | Unset = UNSET
-    """ Canonical cached source revision. Omit for a complete snapshot. """
+    """Canonical cached source revision. Omit for a complete snapshot."""
     dev_source_deleted: str | Unset = UNSET
-    """ JSON string array of canonical archive paths removed since dev_source_base. """
+    """JSON string array of canonical archive paths removed since dev_source_base."""
     dev_source_build_now: str | Unset = UNSET
-    """ Set to true to build this sync at once even when it reaches the running instance as a live patch. Without
-    it, such a sync's build waits until the developer stops saving and a later sync replaces it. """
+    """Set to true to build this sync at once even when it reaches the running instance as a live patch. Without
+    it, such a sync's build waits until the developer stops saving and a later sync replaces it."""
     dockerfile: bool | Unset = UNSET
     runtime: DeployDevSourceBodyRuntime | Unset = UNSET
     handler: str | Unset = UNSET
     healthcheck: str | Unset = UNSET
-    """ Startup readiness for this developer-source deployment, encoded as JSON with one HTTP path or standard gRPC
-    health selector. """
+    """Startup readiness for this developer-source deployment, encoded as JSON with one HTTP path or standard gRPC
+    health selector."""
     source_root: str | Unset = UNSET
-    """ Build directory within the developer-source archive. Empty or omitted inherits the app's configured root;
-    '.' selects the archive root. """
+    """Build directory within the developer-source archive. Empty or omitted inherits the app's configured root;
+    '.' selects the archive root."""
     scope: str | Unset = UNSET
-    """ Named environment scope read by the deployment; omitted uses default. """
+    """Named environment scope read by the deployment; omitted uses default."""
     workflows: str | Unset = UNSET
-    """ Optional JSON workflow-definition array attached to this developer deployment. """
+    """Optional JSON workflow-definition array attached to this developer deployment."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

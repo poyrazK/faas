@@ -28,8 +28,8 @@ class FailureRules:
     rules: list[FailureRule]
     unmatched_failure: FailureRulesUnmatchedFailure
     uncertain_outcome: FailureRulesUncertainOutcome
-    """ Choose whether a missing completion receipt stays held for reconciliation or is retried with possible
-    duplicate execution. """
+    """Choose whether a missing completion receipt stays held for reconciliation or is retried with possible
+    duplicate execution."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

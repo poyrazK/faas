@@ -8,6 +8,8 @@ from urllib.parse import unquote
 
 import httpx
 import pytest
+
+from faas_sdk import JobContext, JobError
 from faas_sdk.preview import FaaSClient
 from faas_sdk.preview.files import (
     BytesFileSource,
@@ -17,8 +19,6 @@ from faas_sdk.preview.files import (
     FileOptions,
     file_source_digest,
 )
-
-from faas_sdk import JobContext, JobError
 
 ROOT = Path(__file__).resolve().parents[1] / "request-contracts"
 if not ROOT.exists():

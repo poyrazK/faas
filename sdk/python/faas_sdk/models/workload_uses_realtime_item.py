@@ -15,7 +15,7 @@ T = TypeVar("T", bound="WorkloadUsesRealtimeItem")
 class WorkloadUsesRealtimeItem:
     app: str
     channels: str | Unset = UNSET
-    """ Channel glob with one trailing *. """
+    """Channel glob with one trailing *."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

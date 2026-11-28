@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+
 from faas_sdk.job_runtime import JobContract
 from faas_sdk.preview import (
     PIPELINE_TOOL_SCHEMA,
@@ -539,14 +540,9 @@ async def test_pipeline_preview_binds_current_input_caller_and_source_before_res
         return PipelineStartPreviewSource(source_version=source, summary=fixture["summary"])
 
     tool, _, store, native, *_ = setup(authorize=authorize)
-    mcp = PipelineToolMCP(
-        tool,
-        preview=PipelineStartPreviewPolicy(
-            contract=JobContract(fixture["contract"]),
-            signing_key="local-preview-test-key" * 2,
-            read=read,
-        ),
-    )
+    mcp = PipelineToolMCP(tool, preview=PipelineStartPreviewPolicy(
+        contract=JobContract(fixture["contract"]), signing_key="local-preview-test-key" * 2, read=read,
+    ))
     args = dict(request_id=F["request_id"], input=F["input"], expected_contract_sha256=CONTRACT.sha256)
 
     async def call(op, arguments, actor="alice"):
@@ -597,19 +593,12 @@ async def test_confirmation_pins_a_file_version_in_native_envelope_and_recovery_
 
     async def read(_input, _access, _timeout):
         return PipelineStartPreviewSource(
-            source_version=source["sha256"],
-            summary=fixture["summary"],
-            pinned_source=source,
+            source_version=source["sha256"], summary=fixture["summary"], pinned_source=source,
         )
 
-    adapter = PipelineToolMCP(
-        tool,
-        preview=PipelineStartPreviewPolicy(
-            contract=JobContract(fixture["contract"]),
-            signing_key="fixture-pinned-preview-key" * 2,
-            read=read,
-        ),
-    )
+    adapter = PipelineToolMCP(tool, preview=PipelineStartPreviewPolicy(
+        contract=JobContract(fixture["contract"]), signing_key="fixture-pinned-preview-key" * 2, read=read,
+    ))
     args = dict(request_id=F["request_id"], input=F["input"])
 
     async def preview():
@@ -617,10 +606,7 @@ async def test_confirmation_pins_a_file_version_in_native_envelope_and_recovery_
 
     async def confirm(shown):
         return await adapter.call(
-            F["name"] + "_start",
-            args | {"preview_token": shown["preview_token"]},
-            "alice",
-            timeout=2,
+            F["name"] + "_start", args | {"preview_token": shown["preview_token"]}, "alice", timeout=2,
         )
 
     original = await preview()
@@ -669,11 +655,7 @@ async def test_pinned_reads_verify_version_and_current_authority():
 
     async def read(source=pinned):
         return await read_pinned_pipeline_source(
-            files,
-            source,
-            "alice",
-            options=FileOptions(timeout=2),
-            authorize=authorize,
+            files, source, "alice", options=FileOptions(timeout=2), authorize=authorize,
         )
 
     assert await read() == fixture["pinned_bytes"].encode()

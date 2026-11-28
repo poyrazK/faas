@@ -33,7 +33,7 @@ class MCPReadinessNotificationReceipt:
     created_by: UUID
     delivery_version: int
     destination: MCPReadinessNotificationReceiptDestination | Unset = UNSET
-    """ Receiver selected by the retained decision; absent for a whole-event receipt. """
+    """Receiver selected by the retained decision; absent for a whole-event receipt."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

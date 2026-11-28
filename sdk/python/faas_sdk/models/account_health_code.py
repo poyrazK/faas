@@ -15,11 +15,11 @@ class AccountHealthCode:
     """How often one problem code was returned in the window."""
 
     code: str
-    """ Problem code from the response body and X-Faas-Error-Code. """
+    """Problem code from the response body and X-Faas-Error-Code."""
     count: int
-    """ Responses with this code. """
+    """Responses with this code."""
     last_at: datetime.datetime
-    """ Most recent response with this code. """
+    """Most recent response with this code."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

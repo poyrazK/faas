@@ -36,8 +36,7 @@ class MCPAdmissionEvidence:
     expected_fingerprint: str
     gateways: list[MCPAdmissionGateway]
     reason: str | Unset = UNSET
-    """ Public rejection code, or traffic_update_failed for a later traffic failure. Raw errors are never stored.
-    """
+    """Public rejection code, or traffic_update_failed for a later traffic failure. Raw errors are never stored."""
     observed_fingerprint: str | Unset = UNSET
     expected_revision: int | Unset = UNSET
     observed_revision: int | Unset = UNSET

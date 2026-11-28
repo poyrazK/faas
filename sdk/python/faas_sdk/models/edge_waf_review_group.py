@@ -24,34 +24,34 @@ class EdgeWAFReviewGroup:
     rule_id: str
     crs_rule_id: int
     category: str
-    """ CRS attack category of the rule (sqli, xss, rce, lfi, rfi, php, java, generic, protocol, multipart, scanner,
-    session_fixation, other). """
+    """CRS attack category of the rule (sqli, xss, rce, lfi, rfi, php, java, generic, protocol, multipart, scanner,
+    session_fixation, other)."""
     path: str
-    """ Request path with id-like segments (numbers, UUIDs, long hex or tokens) read as {id}. """
+    """Request path with id-like segments (numbers, UUIDs, long hex or tokens) read as {id}."""
     events: int
     detected: int
-    """ Detections in sampled requests. """
+    """Detections in sampled requests."""
     warned: int
     blocked: int
     clients: int
-    """ Distinct client IPs. """
+    """Distinct client IPs."""
     top_client_percent: int
-    """ Share of the group's detections from its busiest client. """
+    """Share of the group's detections from its busiest client."""
     scanner_percent: int
-    """ Share of the group's detections from clients flagged on 5 or more paths in the window. """
+    """Share of the group's detections from clients flagged on 5 or more paths in the window."""
     first_seen: datetime.datetime
     last_seen: datetime.datetime
     request_ids: list[str]
-    """ The newest example request IDs; look them up with the events listing. """
+    """The newest example request IDs; look them up with the events listing."""
     excluded: bool
-    """ The rule excludes this CRS rule now. """
+    """The rule excludes this CRS rule now."""
     assessment: EdgeWAFReviewGroupAssessment
     reason: str
-    """ Why the group got its assessment. """
+    """Why the group got its assessment."""
     rule_name: str | Unset = UNSET
     rule_mode: EdgeWAFReviewGroupRuleMode | Unset = UNSET
     known_false_positive: str | Unset = UNSET
-    """ The documented legitimate traffic this CRS rule flags. """
+    """The documented legitimate traffic this CRS rule flags."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

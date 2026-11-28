@@ -21,7 +21,7 @@ class OperationWorkflowAttentionGroup:
 
     value: str
     stats: OperationWorkflowAttentionStats
-    """ Aggregate counts and age measurements for workflows, blockers, deadlines, and unresolved dependencies. """
+    """Aggregate counts and age measurements for workflows, blockers, deadlines, and unresolved dependencies."""
 
     def to_dict(self) -> dict[str, Any]:
         value = self.value

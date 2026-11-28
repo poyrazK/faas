@@ -15,13 +15,13 @@ class EdgeRuleAsyncActionRetryPolicy:
     """Optional per-route retry override; attempts are capped by the account plan."""
 
     max_attempts: int | Unset = UNSET
-    """ Total attempts including the first; 0 inherits the plan default. """
+    """Total attempts including the first; 0 inherits the plan default."""
     base_seconds: float | Unset = UNSET
-    """ Base delay for exponential retry backoff. """
+    """Base delay for exponential retry backoff."""
     max_seconds: float | Unset = UNSET
-    """ Maximum exponential backoff delay; must be at least base_seconds when both are positive. """
+    """Maximum exponential backoff delay; must be at least base_seconds when both are positive."""
     jitter_seconds: float | Unset = UNSET
-    """ Symmetric retry jitter fraction. """
+    """Symmetric retry jitter fraction."""
 
     def to_dict(self) -> dict[str, Any]:
         max_attempts = self.max_attempts

@@ -39,7 +39,7 @@ class OperationWorkflowNextActionDigestExplanation:
     changed_fields: list[OperationWorkflowNextActionDigestExplanationChangedFieldsItem]
     next_step: str
     obligation_id: str | Unset = UNSET
-    """ Exact work-item identity, distinguishing multiple fulfillment reviews on one shared source. """
+    """Exact work-item identity, distinguishing multiple fulfillment reviews on one shared source."""
 
     def to_dict(self) -> dict[str, Any]:
         subscription_id = str(self.subscription_id)

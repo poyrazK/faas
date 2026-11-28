@@ -16,7 +16,7 @@ class UpdateProjectRequest:
     """Patch for the customer-managed repository binding and production branch."""
 
     repo_full_name: str | Unset = UNSET
-    """ GitHub owner/name. An empty string removes the repository binding. """
+    """GitHub owner/name. An empty string removes the repository binding."""
     production_branch: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

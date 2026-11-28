@@ -28,13 +28,13 @@ class ProfileAttributionComparison:
     warnings: list[str]
     maximum_change_percentage_points: float = 20.0
     baseline: ProfileAttributionQuality | Unset = UNSET
-    """ Labeled and unattributed shares of all sampled CPU in the deployment window, even when a route filter is
+    """Labeled and unattributed shares of all sampled CPU in the deployment window, even when a route filter is
     selected. Not VM CPU or request instrumentation completeness. Percentages are absent when no CPU was sampled.
-    """
+   """
     candidate: ProfileAttributionQuality | Unset = UNSET
-    """ Labeled and unattributed shares of all sampled CPU in the deployment window, even when a route filter is
+    """Labeled and unattributed shares of all sampled CPU in the deployment window, even when a route filter is
     selected. Not VM CPU or request instrumentation completeness. Percentages are absent when no CPU was sampled.
-    """
+   """
     delta_percentage_points: float | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

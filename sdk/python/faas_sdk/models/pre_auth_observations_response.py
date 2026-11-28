@@ -28,16 +28,16 @@ class PreAuthObservationsResponse:
     app_id: str
     range_: PreAuthObservationsResponseRange
     source: str
-    """ prometheus or degraded: <reason>. """
+    """prometheus or degraded: <reason>."""
     as_of: datetime.datetime
     policies: list[PreAuthPolicyObservation]
     suggestion: PreAuthEnforcementSuggestion | Unset = UNSET
-    """ Advice on switching an observe-mode guard to enforce, judged on the
+    """Advice on switching an observe-mode guard to enforce, judged on the
     response range. Present only for observe mode
     with a healthy metrics source; nothing is applied automatically.
     `ready` needs a range of 24h or longer, at least 1000 requests, and no
     successful (2xx/3xx) request among those the guard would have blocked.
-     """
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

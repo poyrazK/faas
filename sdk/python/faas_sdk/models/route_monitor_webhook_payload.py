@@ -38,11 +38,11 @@ class RouteMonitorWebhookPayload:
     checked_at: datetime.datetime
     incident_path: str
     transition_id: UUID | Unset = UNSET
-    """ Stable identifier for one escalation transition; omitted for incident open and recovery events. """
+    """Stable identifier for one escalation transition; omitted for incident open and recovery events."""
     customer_impact: RouteMonitorCustomerImpact | Unset = UNSET
-    """ Aggregate observed request-time identity counts; never includes customer IDs. """
+    """Aggregate observed request-time identity counts; never includes customer IDs."""
     escalation: RouteMonitorWebhookEscalation | Unset = UNSET
-    """ Counts newly violated route and signal budgets since the prior incident evaluation. """
+    """Counts newly violated route and signal budgets since the prior incident evaluation."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

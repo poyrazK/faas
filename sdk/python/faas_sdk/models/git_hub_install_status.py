@@ -37,33 +37,33 @@ class GitHubInstallStatus:
     last_reconcile_detached_count: int
     installation_id: int | Unset = UNSET
     github_login: str | Unset = UNSET
-    """ The GitHub user or organization the App is installed on. """
+    """The GitHub user or organization the App is installed on."""
     default_branch: str | Unset = UNSET
-    """ Empty for newer connections: an installation has no default
+    """Empty for newer connections: an installation has no default
     branch, and a bind without a branch takes the repository's
     default branch. Older connections report the `main` they stored.
-     """
+    """
     repo_full_name: str | Unset = UNSET
     production_branch: str | Unset = UNSET
     deploy_branches: GitHubInstallStatusDeployBranches | Unset = UNSET
-    """ Configured GitHub branch-to-deployment-scope mappings for the project. """
+    """Configured GitHub branch-to-deployment-scope mappings for the project."""
     binding_id: str | Unset = UNSET
     linked_at: datetime.datetime | None | Unset = UNSET
     last_reconciled_at: datetime.datetime | None | Unset = UNSET
     last_reconcile_error: str | Unset = UNSET
     csrf_token: str | Unset = UNSET
-    """ CSRF token for sync and disconnect mutations. """
+    """CSRF token for sync and disconnect mutations."""
     sync_result: GitHubInstallStatusSyncResult | Unset = UNSET
     activity: GitHubInstallActivity | Unset = UNSET
-    """ Bounded, redacted activity for the currently bound app. Webhook
+    """Bounded, redacted activity for the currently bound app. Webhook
     payloads, GitHub delivery identifiers, retry controls, and worker
     error text are never returned.
-     """
+    """
     installations: list[GitHubInstallationSummary] | Unset = UNSET
-    """ The account's connected installations when it has more than
+    """The account's connected installations when it has more than
     one. An unbound app then reports no `installation_id`; a bind or
     repository listing names one of these.
-     """
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

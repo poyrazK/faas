@@ -27,7 +27,7 @@ class StoredWorkflowLiveSuiteCase:
     outcome: StoredWorkflowLiveSuiteCaseOutcome
     run_id: UUID | Unset = UNSET
     verification: StoredWorkflowLiveVerification | Unset = UNSET
-    """ Safe provenance and status for one explicitly authorized live verification run. """
+    """Safe provenance and status for one explicitly authorized live verification run."""
 
     def to_dict(self) -> dict[str, Any]:
         name = self.name

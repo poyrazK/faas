@@ -1,0 +1,206 @@
+from __future__ import annotations
+
+import datetime
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, TypeVar
+from uuid import UUID
+
+from attrs import define as _attrs_define
+from attrs import field as _attrs_field
+
+from ..models.queue_binding_response_mode import QueueBindingResponseMode, check_queue_binding_response_mode
+from ..models.queue_binding_response_workload_class import (
+    QueueBindingResponseWorkloadClass,
+    check_queue_binding_response_workload_class,
+)
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.retry_policy_dto import RetryPolicyDTO
+
+
+T = TypeVar("T", bound="QueueBindingResponse")
+
+
+@_attrs_define
+class QueueBindingResponse:
+    """Durable queue-to-workload binding."""
+
+    id: str
+    app_id: str
+    account_id: UUID
+    name: str
+    queue_name: str
+    mode: QueueBindingResponseMode
+    workload_class: QueueBindingResponseWorkloadClass
+    enabled: bool
+    max_concurrency: int
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
+    environment: str | Unset = UNSET
+    """Immutable project environment slug; omitted for a shared legacy binding."""
+    environment_id: UUID | Unset = UNSET
+    """Original catalog environment identity; omitted for a shared legacy binding."""
+    retry_policy: RetryPolicyDTO | Unset = UNSET
+    """Wire shape for dispatch.RetryPolicy. max_attempts
+    is a requested total-attempt count; zero inherits the applicable
+    account plan and never means unlimited. Durable invocation
+    producers materialize the effective plan-capped value, and the
+    scheduler re-clamps it at dispatch time to account for later plan
+    downgrades.
+    """
+    retired_at: datetime.datetime | Unset = UNSET
+    """Retirement hold timestamp; present only for a retained retired binding."""
+    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        id = self.id
+
+        app_id = self.app_id
+
+        account_id = str(self.account_id)
+
+        name = self.name
+
+        queue_name = self.queue_name
+
+        mode: str = self.mode
+
+        workload_class: str = self.workload_class
+
+        enabled = self.enabled
+
+        max_concurrency = self.max_concurrency
+
+        created_at = self.created_at.isoformat()
+
+        updated_at = self.updated_at.isoformat()
+
+        environment = self.environment
+
+        environment_id: str | Unset = UNSET
+        if not isinstance(self.environment_id, Unset):
+            environment_id = str(self.environment_id)
+
+        retry_policy: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.retry_policy, Unset):
+            retry_policy = self.retry_policy.to_dict()
+
+        retired_at: str | Unset = UNSET
+        if not isinstance(self.retired_at, Unset):
+            retired_at = self.retired_at.isoformat()
+
+        field_dict: dict[str, Any] = {}
+        field_dict.update(self.additional_properties)
+        field_dict.update(
+            {
+                "id": id,
+                "app_id": app_id,
+                "account_id": account_id,
+                "name": name,
+                "queue_name": queue_name,
+                "mode": mode,
+                "workload_class": workload_class,
+                "enabled": enabled,
+                "max_concurrency": max_concurrency,
+                "created_at": created_at,
+                "updated_at": updated_at,
+            }
+        )
+        if environment is not UNSET:
+            field_dict["environment"] = environment
+        if environment_id is not UNSET:
+            field_dict["environment_id"] = environment_id
+        if retry_policy is not UNSET:
+            field_dict["retry_policy"] = retry_policy
+        if retired_at is not UNSET:
+            field_dict["retired_at"] = retired_at
+
+        return field_dict
+
+    @classmethod
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.retry_policy_dto import RetryPolicyDTO
+
+        d = dict(src_dict)
+        id = d.pop("id")
+
+        app_id = d.pop("app_id")
+
+        account_id = UUID(d.pop("account_id"))
+
+        name = d.pop("name")
+
+        queue_name = d.pop("queue_name")
+
+        mode = check_queue_binding_response_mode(d.pop("mode"))
+
+        workload_class = check_queue_binding_response_workload_class(d.pop("workload_class"))
+
+        enabled = d.pop("enabled")
+
+        max_concurrency = d.pop("max_concurrency")
+
+        created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
+
+        environment = d.pop("environment", UNSET)
+
+        _environment_id = d.pop("environment_id", UNSET)
+        environment_id: UUID | Unset
+        if isinstance(_environment_id, Unset):
+            environment_id = UNSET
+        else:
+            environment_id = UUID(_environment_id)
+
+        _retry_policy = d.pop("retry_policy", UNSET)
+        retry_policy: RetryPolicyDTO | Unset
+        if isinstance(_retry_policy, Unset):
+            retry_policy = UNSET
+        else:
+            retry_policy = RetryPolicyDTO.from_dict(_retry_policy)
+
+        _retired_at = d.pop("retired_at", UNSET)
+        retired_at: datetime.datetime | Unset
+        if isinstance(_retired_at, Unset):
+            retired_at = UNSET
+        else:
+            retired_at = datetime.datetime.fromisoformat(_retired_at)
+
+        queue_binding_response = cls(
+            id=id,
+            app_id=app_id,
+            account_id=account_id,
+            name=name,
+            queue_name=queue_name,
+            mode=mode,
+            workload_class=workload_class,
+            enabled=enabled,
+            max_concurrency=max_concurrency,
+            created_at=created_at,
+            updated_at=updated_at,
+            environment=environment,
+            environment_id=environment_id,
+            retry_policy=retry_policy,
+            retired_at=retired_at,
+        )
+
+        queue_binding_response.additional_properties = d
+        return queue_binding_response
+
+    @property
+    def additional_keys(self) -> list[str]:
+        return list(self.additional_properties.keys())
+
+    def __getitem__(self, key: str) -> Any:
+        return self.additional_properties[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        self.additional_properties[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del self.additional_properties[key]
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.additional_properties

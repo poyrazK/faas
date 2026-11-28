@@ -60,7 +60,7 @@ class ManagedRealtimeEndpointResponse:
     created_at: datetime.datetime
     updated_at: datetime.datetime
     auth_token_previous_expires_at: datetime.datetime | None | Unset = UNSET
-    """ When the previous static bearer credential stops being accepted during rotation. """
+    """When the previous static bearer credential stops being accepted during rotation."""
     auth_issuer: str | Unset = UNSET
     auth_jwks_url: str | Unset = UNSET
     auth_audience: list[str] | Unset = UNSET

@@ -22,7 +22,7 @@ class CreateAppLogDrainRequest:
     kind: CreateAppLogDrainRequestKind
     target_url: str
     auth_header: str | Unset = UNSET
-    """ One Name: value pair; sealed at rest and never returned. """
+    """One Name: value pair; sealed at rest and never returned."""
     enabled: bool | Unset = True
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

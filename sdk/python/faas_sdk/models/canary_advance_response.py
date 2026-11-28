@@ -23,21 +23,21 @@ class CanaryAdvanceResponse:
     """The atomic canary transition result and the deployment_audit row id."""
 
     deployment: DeploymentResponse
-    """ One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional
+    """One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional
     `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object; they round-
     trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy pinned. Env
     values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed because the ref shape
-    is non-secret by design. """
+    is non-secret by design."""
     audit_id: str
-    """ The deployment_audit row id, stringified for SDK portability. """
+    """The deployment_audit row id, stringified for SDK portability."""
     profile_gate: ProfileCanaryGateDecision | Unset = UNSET
-    """ Current profiling gate decision for an owned canary stage and its exact stable predecessor. """
+    """Current profiling gate decision for an owned canary stage and its exact stable predecessor."""
     route_health: RouteHealthDecision | Unset = UNSET
-    """ Metadata-only decision evaluated inside the canary traffic transaction; history_id correlates the exact
-    saved evidence with the advance response and traffic audit. """
+    """Metadata-only decision evaluated inside the canary traffic transaction; history_id correlates the exact
+    saved evidence with the advance response and traffic audit."""
     route_gate: RouteGateDecision | Unset = UNSET
-    """ Metadata-only decision from the same transaction as a canary traffic advance. Findings remain in the route
-    result API. """
+    """Metadata-only decision from the same transaction as a canary traffic advance. Findings remain in the route
+    result API."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

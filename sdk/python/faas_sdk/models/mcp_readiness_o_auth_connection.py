@@ -18,7 +18,7 @@ class MCPReadinessOAuthConnection:
     role: str
     revision: UUID
     scope: str | Unset = UNSET
-    """ Connection environment. Omission preserves the default environment. """
+    """Connection environment. Omission preserves the default environment."""
 
     def to_dict(self) -> dict[str, Any]:
         role = self.role

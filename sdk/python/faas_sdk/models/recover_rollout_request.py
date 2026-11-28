@@ -25,24 +25,24 @@ class RecoverRolloutRequest:
     """
 
     action: RecoverRolloutRequestAction
-    """ The recovery action. `advance` requires the rollout to be stuck (>30 min in the same canary step); `promote`
-    short-circuits the rollout to 100% / complete; `abort` flips rollout_state='aborted'. """
+    """The recovery action. `advance` requires the rollout to be stuck (>30 min in the same canary step); `promote`
+    short-circuits the rollout to 100% / complete; `abort` flips rollout_state='aborted'."""
     expected_review: AppReleaseReview | Unset = UNSET
-    """ Atomic app configuration and serving-deployment identities used to fence release admission. """
+    """Atomic app configuration and serving-deployment identities used to fence release admission."""
     reason: str | Unset = UNSET
-    """ Operator-supplied reason (≤1024 chars). Lands verbatim in the deployment_audit row's data payload under the
-    `reason` key. """
+    """Operator-supplied reason (≤1024 chars). Lands verbatim in the deployment_audit row's data payload under the
+    `reason` key."""
     deployment_id: UUID | Unset = UNSET
-    """ Exact active canary or service rollout to abort. Requires action abort and
-    expected_predecessor_deployment_id; both are checked in the recovery transaction. """
+    """Exact active canary or service rollout to abort. Requires action abort and
+    expected_predecessor_deployment_id; both are checked in the recovery transaction."""
     expected_predecessor_deployment_id: UUID | Unset = UNSET
-    """ Exact older live predecessor in the candidate scope. Canary recovery requires positive serving weight; a
+    """Exact older live predecessor in the candidate scope. Canary recovery requires positive serving weight; a
     service handoff also accepts its retained zero-weight predecessor. Required with deployment_id. Enforced binding
-    policies check this exact recipient before routing can change. """
+    policies check this exact recipient before routing can change."""
     expected_step: int | Unset = UNSET
-    """ For advance and promote: the canary step the caller observed. The recovery is refused with
+    """For advance and promote: the canary step the caller observed. The recovery is refused with
     canary_step_conflict when the running canary is at another step, and with 404 when no canary is running. Not
-    allowed with abort or deployment_id. """
+    allowed with abort or deployment_id."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

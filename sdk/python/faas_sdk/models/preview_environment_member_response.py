@@ -24,21 +24,21 @@ class PreviewEnvironmentMemberResponse:
 
     app_id: UUID
     slug: str
-    """ Empty if the recorded app is missing. """
+    """Empty if the recorded app is missing."""
     workload_name: str
     app_status: str
-    """ Includes missing when the recorded app is unavailable. """
+    """Includes missing when the recorded app is unavailable."""
     preview_state: str
     deployment_id: str
-    """ Empty until a deployment for the recorded commit exists. """
+    """Empty until a deployment for the recorded commit exists."""
     deployment_status: str
-    """ Missing until a deployment for the recorded commit exists. """
+    """Missing until a deployment for the recorded commit exists."""
     expires_at: datetime.datetime | Unset = UNSET
-    """ Preview workload expiration. """
+    """Preview workload expiration."""
     changes_from_production: PreviewProductionChangesResponse | Unset = UNSET
-    """ Non-secret preview differences from the production parent. """
+    """Non-secret preview differences from the production parent."""
     links: PreviewResourceLinksResponse | Unset = UNSET
-    """ Public preview URL and native APIs for its logs, metrics, and effective app configuration. """
+    """Public preview URL and native APIs for its logs, metrics, and effective app configuration."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

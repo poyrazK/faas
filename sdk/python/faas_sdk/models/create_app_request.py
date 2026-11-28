@@ -70,174 +70,174 @@ class CreateAppRequest:
     """
 
     slug: str
-    """ The tag- prefix is reserved for stable deployment-alias hostnames. """
+    """The tag- prefix is reserved for stable deployment-alias hostnames."""
     project_id: UUID | Unset = UNSET
-    """ Existing project in the selected workspace. Projects managed by a repository or an active release set
-    require their project release workflow. """
+    """Existing project in the selected workspace. Projects managed by a repository or an active release set
+    require their project release workflow."""
     profiling: ProfilingConfig | Unset = UNSET
-    """ Opt-in sampled CPU profiling baked into each deployment. """
+    """Opt-in sampled CPU profiling baked into each deployment."""
     tracing: TracingConfig | Unset = UNSET
-    """ Opt-in zero-config request tracing baked into each deployment. Managed runtimes export database, cache and
+    """Opt-in zero-config request tracing baked into each deployment. Managed runtimes export database, cache and
     HTTP client spans to the debugger without an API key or code changes; apps that configure their own OTel
-    exporter are left untouched. """
+    exporter are left untouched."""
     type_: CreateAppRequestType | Unset = UNSET
     visibility: CreateAppRequestVisibility | Unset = "public"
-    """ Ingress exposure for the new app. Choose internal to make it service-only; available on every plan. """
+    """Ingress exposure for the new app. Choose internal to make it service-only; available on every plan."""
     allowed_service_callers: list[str] | Unset = UNSET
-    """ Standalone target-side service allowlist. Omit for same-account access; [] denies all. Names are normalized
-    to lowercase, sorted, and deduplicated. """
+    """Standalone target-side service allowlist. Omit for same-account access; [] denies all. Names are normalized
+    to lowercase, sorted, and deduplicated."""
     allowed_service_call_scopes: ServiceCallerScopes | Unset = UNSET
-    """ Target-owned service authorization map from logical caller app name to allowed HTTP methods and path
-    prefixes. When present, callers missing from the map are denied. """
+    """Target-owned service authorization map from logical caller app name to allowed HTTP methods and path
+    prefixes. When present, callers missing from the map are denied."""
     service_binding_targets: list[str] | Unset = UNSET
-    """ Standalone outbound target app slugs. Names are normalized, sorted, and deduplicated; the platform derives
+    """Standalone outbound target app slugs. Names are normalized, sorted, and deduplicated; the platform derives
     read-only binding keys and internal URLs, including the HTTPS canary companion and optional HTTPS-first
-    canonical URL. Targets may be declared before they exist. Omit or [] for no bindings. """
+    canonical URL. Targets may be declared before they exist. Omit or [] for no bindings."""
     service_reliability: ServiceReliabilityPolicies | Unset = UNSET
-    """ Map of declared target service names to caller-owned reliability policies. Only names in this app's service
-    bindings may appear. """
+    """Map of declared target service names to caller-owned reliability policies. Only names in this app's service
+    bindings may appear."""
     service_binding_policy: CreateAppRequestServiceBindingPolicy | Unset = UNSET
-    """ Standalone caller authorization. Omit for legacy same-account reachability; declared permits only
-    service_binding_targets. """
+    """Standalone caller authorization. Omit for legacy same-account reachability; declared permits only
+    service_binding_targets."""
     service_binding_transport: ServiceBindingTransport | Unset = UNSET
-    """ Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private
-    `.internal` alias; `http` preserves the legacy `.svc.gregale` endpoint. """
+    """Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private
+    `.internal` alias; `http` preserves the legacy `.svc.gregale` endpoint."""
     runtime: CreateAppRequestRuntime | Unset = UNSET
     ram_mb: int | Unset = UNSET
     vcpu: int | Unset = UNSET
-    """ Optional guest vCPU assertion. When supplied with ram_mb, the pair must match the plan shape: Free (128
-    MB/2), Hobby (256 MB/2), Pro (512 MB/2), or Scale (1024 MB/4). Omit to use the plan default. """
+    """Optional guest vCPU assertion. When supplied with ram_mb, the pair must match the plan shape: Free (128
+    MB/2), Hobby (256 MB/2), Pro (512 MB/2), or Scale (1024 MB/4). Omit to use the plan default."""
     cpu_millicores: CreateAppRequestCpuMillicores | Unset = 1000
-    """ Sustained CPU allowance per instance. Omit for 1000 millicores. """
+    """Sustained CPU allowance per instance. Omit for 1000 millicores."""
     resource_profile: ResourceProfile | Unset = UNSET
-    """ Named resource profile resolved to a stable memory and sustained CPU shape. Profiles use the existing cgroup
-    and placement controls. """
+    """Named resource profile resolved to a stable memory and sustained CPU shape. Profiles use the existing cgroup
+    and placement controls."""
     max_concurrency: int | Unset = UNSET
     idle_timeout_s: int | Unset = UNSET
     request_timeout_s: int | Unset = UNSET
-    """ Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default; the current platform
-    ceiling is 30 seconds. """
+    """Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default; the current platform
+    ceiling is 30 seconds."""
     function_concurrency: int | Unset = UNSET
-    """ Requests one Node or Python function worker may serve at once. Omitted, 0 or 1 keeps one request per worker;
-    the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads. """
+    """Requests one Node or Python function worker may serve at once. Omitted, 0 or 1 keeps one request per worker;
+    the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads."""
     execution_mode: CreateAppRequestExecutionMode | Unset = UNSET
-    """ Lifecycle contract for the app. Default is request; service/worker/job are plan-gated. """
+    """Lifecycle contract for the app. Default is request; service/worker/job are plan-gated."""
     restart_policy: CreateAppRequestRestartPolicy | Unset = UNSET
-    """ Restart behavior for the workload. Omitted uses the execution-mode default. """
+    """Restart behavior for the workload. Omitted uses the execution-mode default."""
     after_restore: AfterRestoreHook | Unset = UNSET
-    """ Optional loopback callback that must succeed after snapshot restore, or after a frozen instance resumes,
-    before the instance becomes ready. """
+    """Optional loopback callback that must succeed after snapshot restore, or after a frozen instance resumes,
+    before the instance becomes ready."""
     before_checkpoint: BeforeCheckpointHook | Unset = UNSET
-    """ Optional loopback callback for new terminal init snapshots. A failure aborts capture. Enabling it disables
-    warm snapshots; snapshot reuse skips the callback. """
+    """Optional loopback callback for new terminal init snapshots. A failure aborts capture. Enabling it disables
+    warm snapshots; snapshot reuse skips the callback."""
     warmup: WarmupHook | Unset = UNSET
-    """ Path that primes a deployment's first init snapshot. Before that capture Gregale sends up to 20 GET requests
+    """Path that primes a deployment's first init snapshot. Before that capture Gregale sends up to 20 GET requests
     (5 s at most) to it on the app's HTTP port; without it, the HTTP health check path is used. Priming never fails
-    a deploy. """
+    a deploy."""
     pause: CreateAppRequestPause | Unset = UNSET
-    """ When the platform may pause the app's VM: between_requests pauses it between requests and freezes it at the
+    """When the platform may pause the app's VM: between_requests pauses it between requests and freezes it at the
     idle timeout, when_idle freezes it at the idle timeout, never parks it as before. Omitted uses the default:
     between_requests for functions, when_idle for request-mode apps. Worker, service and job execution modes accept
-    only never. """
+    only never."""
     startup_deadline_s: int | Unset = UNSET
-    """ Upper bound on time-to-ready in seconds. 0 uses the plan default. """
+    """Upper bound on time-to-ready in seconds. 0 uses the plan default."""
     stop_grace_period_s: int | Unset = UNSET
-    """ Upper bound on worker or service shutdown draining time in seconds before SIGKILL. 0 uses the mode/plan
-    default. """
+    """Upper bound on worker or service shutdown draining time in seconds before SIGKILL. 0 uses the mode/plan
+    default."""
     stop_signal: str | Unset = UNSET
-    """ Signal sent to initiate graceful stop (e.g. SIGTERM, SIGINT, SIGQUIT, SIGHUP, SIGUSR1, SIGUSR2). Omitted
-    defaults to SIGTERM. """
+    """Signal sent to initiate graceful stop (e.g. SIGTERM, SIGINT, SIGQUIT, SIGHUP, SIGUSR1, SIGUSR2). Omitted
+    defaults to SIGTERM."""
     max_retries: int | Unset = UNSET
-    """ Maximum consecutive restart attempts. 0 uses the plan default. """
+    """Maximum consecutive restart attempts. 0 uses the plan default."""
     retry_policy: RetryPolicyDTO | Unset = UNSET
-    """ Wire shape for dispatch.RetryPolicy. max_attempts
+    """Wire shape for dispatch.RetryPolicy. max_attempts
     is a requested total-attempt count; zero inherits the applicable
     account plan and never means unlimited. Durable invocation
     producers materialize the effective plan-capped value, and the
     scheduler re-clamps it at dispatch time to account for later plan
     downgrades.
-     """
+    """
     service_replicas: ServiceReplicas | Unset = UNSET
-    """ Per-deployment replica scaffold for execution_mode='service'. Replica count is bounded by ServiceReplicasMax
+    """Per-deployment replica scaffold for execution_mode='service'. Replica count is bounded by ServiceReplicasMax
     per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit the app's max_concurrency ceiling. min ≤ desired
-    ≤ max must hold. Foundation here; rolling-deploy / rollback / image-digest pinning semantics land. """
+    ≤ max must hold. Foundation here; rolling-deploy / rollback / image-digest pinning semantics land."""
     worker_replicas: WorkerScaling | Unset = UNSET
-    """ Queue-driven or custom-metric autoscaling policy for execution_mode='worker'. Supports scale-to-zero when
-    min=0. """
+    """Queue-driven or custom-metric autoscaling policy for execution_mode='worker'. Supports scale-to-zero when
+    min=0."""
     ports: list[WorkloadPort] | Unset = UNSET
-    """ App-owned listener declarations. Named TCP listeners are publicly routable at
-    `<slug>--port-<name>.<domain>`; UDP listeners remain guest-only. """
+    """App-owned listener declarations. Named TCP listeners are publicly routable at
+    `<slug>--port-<name>.<domain>`; UDP listeners remain guest-only."""
     favicon: None | str | Unset = UNSET
-    """ Create-time base64-encoded favicon for the gateway edge answer; the decoded payload is capped at 32 KiB. """
+    """Create-time base64-encoded favicon for the gateway edge answer; the decoded payload is capped at 32 KiB."""
     robots_txt: None | str | Unset = UNSET
-    """ Create-time per-app robots.txt body; empty uses the platform allow-all default. """
+    """Create-time per-app robots.txt body; empty uses the platform allow-all default."""
     head_wakes: bool | Unset = False
-    """ Create-time opt-in to waking a parked app for HEAD / instead of receiving the cached edge answer. """
+    """Create-time opt-in to waking a parked app for HEAD / instead of receiving the cached edge answer."""
     crawler_policy: CreateAppRequestCrawlerPolicy | Unset = "wake"
-    """ Policy for known monitor/crawler requests: wake the app, serve only a fresh edge cache hit, or suppress the
-    wake. """
+    """Policy for known monitor/crawler requests: wake the app, serve only a fresh edge cache hit, or suppress the
+    wake."""
     pre_auth_rate_limit: PreAuthRateLimitConfig | Unset = UNSET
-    """ Optional per-source gateway limit evaluated before consumer-key lookup, JWT verification, and VM wake. App-
+    """Optional per-source gateway limit evaluated before consumer-key lookup, JWT verification, and VM wake. App-
     wide and failed-response budgets are replica-local; exact routes can opt into shared request budgets. Observe
-    mode records threshold crossings without rejecting requests. """
+    mode records threshold crossings without rejecting requests."""
     health_path: str | Unset = "/healthz"
-    """ Monitor-facing health path. Empty/omitted uses /healthz. """
+    """Monitor-facing health path. Empty/omitted uses /healthz."""
     health_path_wakes: bool | Unset = False
-    """ Allow health probes to wake the app. Pro/Scale only; omitted uses the non-waking edge answer. """
+    """Allow health probes to wake the app. Pro/Scale only; omitted uses the non-waking edge answer."""
     session_affinity: bool | Unset = False
-    """ Enable best-effort cookie-based routing to the same running instance. Omitted uses false. """
+    """Enable best-effort cookie-based routing to the same running instance. Omitted uses false."""
     version_affinity_cookie: str | Unset = UNSET
-    """ Use a stable, non-secret browser cookie for rollout affinity. Omit to disable. """
+    """Use a stable, non-secret browser cookie for rollout affinity. Omit to disable."""
     version_affinity_managed_cookie: bool | Unset = False
-    """ Issue an opaque, host-only browser cookie for rollout affinity. Mutually exclusive with
-    version_affinity_cookie; omitted uses false. """
+    """Issue an opaque, host-only browser cookie for rollout affinity. Mutually exclusive with
+    version_affinity_cookie; omitted uses false."""
     revision_pin_ttl_seconds: int | Unset = 0
-    """ Maximum lifetime of a superseded deployment for revision-pinned requests; zero disables pinning. """
+    """Maximum lifetime of a superseded deployment for revision-pinned requests; zero disables pinning."""
     release_policy: CreateAppRequestReleasePolicy | Unset = UNSET
-    """ Default rollout for production releases that name no rollout policy. Omit for safe. """
+    """Default rollout for production releases that name no rollout policy. Omit for safe."""
     release_probe_paths: list[str] | Unset = UNSET
-    """ Up to 3 concrete GET paths the default rollout probe checks instead of /. """
+    """Up to 3 concrete GET paths the default rollout probe checks instead of /."""
     streaming_enabled: bool | Unset = UNSET
-    """ Per-app streaming flag. Omitted at create-time → the API applies the plan default. """
+    """Per-app streaming flag. Omitted at create-time → the API applies the plan default."""
     websocket_enabled: bool | Unset = UNSET
-    """ Per-app raw-bytes Upgrade bridge flag. Omitted → the API applies the plan default; PATCH-true on Free is
-    rejected by the API with 403 plan_websocket_not_allowed. """
+    """Per-app raw-bytes Upgrade bridge flag. Omitted → the API applies the plan default; PATCH-true on Free is
+    rejected by the API with 403 plan_websocket_not_allowed."""
     route_metrics_enabled: bool | Unset = UNSET
-    """ Per-app per-route observability flag. Omitted → the API applies the plan default (Free = false;
-    Hobby/Pro/Scale = true). PATCH-true on Free is rejected by the API with 403 plan_route_metrics_not_allowed. """
+    """Per-app per-route observability flag. Omitted → the API applies the plan default (Free = false;
+    Hobby/Pro/Scale = true). PATCH-true on Free is rejected by the API with 403 plan_route_metrics_not_allowed."""
     maintenance_mode: bool | Unset = UNSET
-    """ Coarse per-app maintenance toggle. Omitted → the API applies the default (false). Free-tier allowed; no plan
-    gate. Flipping this on at create time pins the app for maintenance from the first request. """
+    """Coarse per-app maintenance toggle. Omitted → the API applies the default (false). Free-tier allowed; no plan
+    gate. Flipping this on at create time pins the app for maintenance from the first request."""
     app_protocol: CreateAppRequestAppProtocol | Unset = UNSET
-    """ Per-app wire-protocol selector. Closed set {http1, http2, grpc}. Omit to use the per-plan default ('http1');
+    """Per-app wire-protocol selector. Closed set {http1, http2, grpc}. Omit to use the per-plan default ('http1');
     set explicitly to opt in to http2 or grpc. Free customers POSTing 'grpc' are rejected with 403
-    plan_app_protocol_grpc_not_allowed. """
+    plan_app_protocol_grpc_not_allowed."""
     warm_snapshot_enabled: bool | Unset = UNSET
-    """ Per-app two-tier snapshot flag. Omitted at create-time → the API applies the plan default. Free/Hobby PATCH-
-    true is rejected. """
+    """Per-app two-tier snapshot flag. Omitted at create-time → the API applies the plan default. Free/Hobby PATCH-
+    true is rejected."""
     warm_snapshot_min_requests: int | Unset = UNSET
-    """ Optional create-time override for the warm-tier request-count threshold. Range [1, 100]. Omitted → the API
-    applies the plan default. """
+    """Optional create-time override for the warm-tier request-count threshold. Range [1, 100]. Omitted → the API
+    applies the plan default."""
     warm_snapshot_min_ms: int | Unset = UNSET
-    """ Optional create-time override for the warm-tier time-since-first-ready threshold, milliseconds. Range [100,
-    60000]. Omitted → the API applies the plan default. """
+    """Optional create-time override for the warm-tier time-since-first-ready threshold, milliseconds. Range [100,
+    60000]. Omitted → the API applies the plan default."""
     warm_pool_size: int | Unset = UNSET
-    """ Desired paused warm-pool size. Omit for the default of zero; non-zero values require Hobby+ and may not
-    exceed max_concurrency. """
+    """Desired paused warm-pool size. Omit for the default of zero; non-zero values require Hobby+ and may not
+    exceed max_concurrency."""
     eviction_priority: CreateAppRequestEvictionPriority | Unset = UNSET
-    """ Per-app eviction tier. 'best_effort' (default) keeps the pre-#475 LRU-by-last_request_at reaper behaviour;
+    """Per-app eviction tier. 'best_effort' (default) keeps the pre-#475 LRU-by-last_request_at reaper behaviour;
     'reserved' protects the app from cross-account RAM-pressure eviction. Omitted at create-time → the API applies
-    the schema default 'best_effort'. """
+    the schema default 'best_effort'."""
     overflow_node: str | Unset = UNSET
-    """ Per-app preferred spill target for cross-node pressure rebalance. Wire form is compute_nodes.name (resolved
+    """Per-app preferred spill target for cross-node pressure rebalance. Wire form is compute_nodes.name (resolved
     server-side). Omitted → no preference; empty string at create-time is rejected with 422 invalid_overflow_node
-    because the column starts NULL and there is no 'clear' path at create-time. """
+    because the column starts NULL and there is no 'clear' path at create-time."""
     require_authn: bool | Unset = UNSET
-    """ Per-deployment token-gate flag. Omitted at create-time → the API applies the plan default (false). Pro/Scale
-    only. """
+    """Per-deployment token-gate flag. Omitted at create-time → the API applies the plan default (false). Pro/Scale
+    only."""
     platform_tenant_required: bool | Unset = UNSET
-    """ Require verified platform tenant identity on app traffic from creation. Omitted or false leaves the policy
-    disabled. Available on Hobby and above. """
+    """Require verified platform tenant identity on app traffic from creation. Omitted or false leaves the policy
+    disabled. Available on Hobby and above."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

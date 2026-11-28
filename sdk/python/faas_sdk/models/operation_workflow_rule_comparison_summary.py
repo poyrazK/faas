@@ -23,8 +23,8 @@ class OperationWorkflowRuleComparisonSummary:
 
     sampled_workflow_count: int
     unattributed_workflow_count: int
-    """ Sampled workflows without an observed decision identity in the retained window. Includes missing history and
-    paths without decisions; absence does not prove a rule was unused. """
+    """Sampled workflows without an observed decision identity in the retained window. Includes missing history and
+    paths without decisions; absence does not prove a rule was unused."""
     comparisons_truncated: bool
     comparisons: list[OperationWorkflowRuleComparison]
 

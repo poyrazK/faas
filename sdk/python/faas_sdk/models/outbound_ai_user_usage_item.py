@@ -17,7 +17,7 @@ class OutboundAIUserUsageItem:
     """
 
     end_user: str
-    """ X-Gregale-AI-User value; "~other" collects end users beyond the daily cap. """
+    """X-Gregale-AI-User value; "~other" collects end users beyond the daily cap."""
     requests: int
     error_requests: int
     input_tokens: int

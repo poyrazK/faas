@@ -30,8 +30,8 @@ class PlanAffectedApp:
     action: PlanAffectedAppAction
     id: str | Unset = UNSET
     existing_root_dir: str | Unset = UNSET
-    """ RootDir of the existing app row. Empty for create. Populated only when it differs from the scan-time
-    RootDir. """
+    """RootDir of the existing app row. Empty for create. Populated only when it differs from the scan-time
+    RootDir."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

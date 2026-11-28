@@ -26,8 +26,8 @@ class OperationWorkflowRetainedMilestoneGroupResult:
     id: str
     satisfied: bool
     selected_path_id: str | Unset = UNSET
-    """ When supplied by the application readiness request only this path determines group satisfaction; other paths
-    remain diagnostic. """
+    """When supplied by the application readiness request only this path determines group satisfaction; other paths
+    remain diagnostic."""
     alternatives: list[OperationWorkflowRetainedMilestone] | Unset = UNSET
     paths: list[OperationWorkflowRetainedMilestonePathResult] | Unset = UNSET
 

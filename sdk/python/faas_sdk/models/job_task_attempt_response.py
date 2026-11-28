@@ -36,7 +36,7 @@ class JobTaskAttemptResponse:
     input_id: str | Unset = UNSET
     input_ref: str | Unset = UNSET
     work_decision: WorkDecision | Unset = UNSET
-    """ Persisted classifier decision for one execution result. """
+    """Persisted classifier decision for one execution result."""
     outcome_code: str | Unset = UNSET
     instance_id: UUID | Unset = UNSET
     error_class: str | Unset = UNSET

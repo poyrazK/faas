@@ -34,7 +34,7 @@ class DeployTokenResponse:
     revoked_at: datetime.datetime | Unset = UNSET
     rotated_from_id: UUID | Unset = UNSET
     plaintext: str | Unset = UNSET
-    """ Present only on create/rotate. Store it in CI immediately; it cannot be retrieved later. """
+    """Present only on create/rotate. Store it in CI immediately; it cannot be retrieved later."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

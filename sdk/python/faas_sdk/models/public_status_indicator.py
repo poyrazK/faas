@@ -22,7 +22,7 @@ class PublicStatusIndicator:
     label: str
     value: float | None
     sample_status: str
-    """ Distinguishes an observed value, a successful query with insufficient samples, and a telemetry failure. """
+    """Distinguishes an observed value, a successful query with insufficient samples, and a telemetry failure."""
     unit: str
     target: float
     comparison: PublicStatusIndicatorComparison

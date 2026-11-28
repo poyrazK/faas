@@ -23,21 +23,21 @@ class UsageResponse:
     requests: int
     included_gb_hours: int
     cpu_usec: int | Unset = UNSET
-    """ Cumulative host cgroup CPU-µs (informational; not billed). """
+    """Cumulative host cgroup CPU-µs (informational; not billed)."""
     tx_bytes: int | Unset = UNSET
-    """ Per-app monthly HTTP response bytes the gateway forwarded (informational; not billed). Diagnostic subset of
-    canonical net_tx_bytes and never added to it. """
+    """Per-app monthly HTTP response bytes the gateway forwarded (informational; not billed). Diagnostic subset of
+    canonical net_tx_bytes and never added to it."""
     net_tx_bytes: int | Unset = UNSET
-    """ Per-app monthly byte delta on root-side vethHost.rx_bytes. Canonical optional egress-billing source;
+    """Per-app monthly byte delta on root-side vethHost.rx_bytes. Canonical optional egress-billing source;
     informational while the provider policy is off. Includes Ethernet framing — the same kernel counter used by
-    shaping. """
+    shaping."""
     net_rx_bytes: int | Unset = UNSET
-    """ Per-app monthly byte delta on root-side vethHost.tx_bytes (root→guest = ingress; informational; not billed).
+    """Per-app monthly byte delta on root-side vethHost.tx_bytes (root→guest = ingress; informational; not billed).
     Mirror of `net_tx_bytes` for the inbound direction. Same sysfs source —
-    `/sys/class/net/<vethHost>/statistics/tx_bytes`. """
+    `/sys/class/net/<vethHost>/statistics/tx_bytes`."""
     cold_boots: int | Unset = UNSET
-    """ Per-app monthly count of WAKE_RESTORE→WAKE_COLD_BOOT transitions observed (informational; not billed).
-    Source: The scheduler instancestats.Poller → the metering service Sampler. """
+    """Per-app monthly count of WAKE_RESTORE→WAKE_COLD_BOOT transitions observed (informational; not billed).
+    Source: The scheduler instancestats.Poller → the metering service Sampler."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

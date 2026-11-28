@@ -32,8 +32,8 @@ class ApplyResponse:
     can_apply: bool
     plan_token: str
     safe_release: ProjectSafeRelease | Unset = UNSET
-    """ Server-owned safe project release checkpoint. Activation occurs only after all zero-traffic candidates
-    complete readiness. """
+    """Server-owned safe project release checkpoint. Activation occurs only after all zero-traffic candidates
+    complete readiness."""
     submission_attempt_id: str | Unset = UNSET
     repo_full_name: str | Unset = UNSET
     tier: str | Unset = UNSET
@@ -41,10 +41,10 @@ class ApplyResponse:
     managed: list[PlanManaged] | Unset = UNSET
     crons: list[PlanCron] | Unset = UNSET
     async_routes: list[PlanAsyncRoute] | Unset = UNSET
-    """ Structured async-route reconciliation returned with the applied plan. """
+    """Structured async-route reconciliation returned with the applied plan."""
     warnings: list[str] | Unset = UNSET
     detection_warnings: list[PlanDetectionWarning] | Unset = UNSET
-    """ Structured skipped/merged detector decisions returned with the applied plan. """
+    """Structured skipped/merged detector decisions returned with the applied plan."""
     observed_apps: int | Unset = UNSET
     observed_crons: int | Unset = UNSET
     limit_apps: int | Unset = UNSET
@@ -62,17 +62,17 @@ class ApplyResponse:
     project_id: str | Unset = UNSET
     apps: list[ApplyResponseAppsItem] | Unset = UNSET
     builds: list[AppliedBuild] | Unset = UNSET
-    """ Per-workload build enqueue results. Populated when the apply
+    """Per-workload build enqueue results. Populated when the apply
     path actually enqueued one (deployment, build) per added or
     changed workload (repo decomposition close-
     the-loop). On staging or enqueue failure the per-app Error
     field is populated and the IDs are empty.
-     """
+    """
     unchanged: list[str] | Unset = UNSET
-    """ Slugs in apps that this apply did not rebuild: nothing in them
+    """Slugs in apps that this apply did not rebuild: nothing in them
     changed, or --only left them out. apps is the whole project
     membership, so a client compares it with builds plus unchanged.
-     """
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

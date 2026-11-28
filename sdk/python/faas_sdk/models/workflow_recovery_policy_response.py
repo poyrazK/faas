@@ -33,22 +33,22 @@ class WorkflowRecoveryPolicyResponse:
     app_id: UUID
     version: int
     policy: WorkflowRecoveryPolicy
-    """ Explicit app recovery policy. Preview prepares parent-job plans and worker-discovered initial-failure
+    """Explicit app recovery policy. Preview prepares parent-job plans and worker-discovered initial-failure
     reviews. initial_failure requires explicit failure statuses. Opt-in automatic_retry requires saved_failure only;
     automatic_initial requires initial_failure only. Both require explicit workflow and failure-status filters and
     execution limits. Resume count caps the absolute generation; preparation and execution budgets are separate.
-    Cancellation remains manual. """
+    Cancellation remains manual."""
     updated_at: datetime.datetime
     actor_kind: str
     actor_id: str
     status: WorkflowRecoveryPolicyResponseStatus
     polling_notification: WorkflowRecoveryPollingNotification | Unset = UNSET
-    """ Last captured polling alert receipt. queued means durable outbox admission; no_receivers never replays to
+    """Last captured polling alert receipt. queued means durable outbox admission; no_receivers never replays to
     later subscribers. Successful polling retains the recovered receipt separately from the cleared error metadata.
-    """
+   """
     automatic_execution: WorkflowRecoveryPolicyAutomaticExecution | Unset = UNSET
-    """ Durable consecutive failure counter and automatic execution pause for the current policy version. Updating
-    the policy explicitly clears this pause. """
+    """Durable consecutive failure counter and automatic execution pause for the current policy version. Updating
+    the policy explicitly clears this pause."""
     last_evaluation_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

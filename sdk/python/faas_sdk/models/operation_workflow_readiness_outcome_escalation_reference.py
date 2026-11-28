@@ -18,14 +18,14 @@ class OperationWorkflowReadinessOutcomeEscalationReference:
     """
 
     notification_id: UUID
-    """ OperationWorkflowReadinessOutcomeEscalationReference.notification_id. Retained coordination escalation
-    policy or evidence; business interpretation and execution remain application-owned. """
+    """OperationWorkflowReadinessOutcomeEscalationReference.notification_id. Retained coordination escalation
+    policy or evidence; business interpretation and execution remain application-owned."""
     sequence: int
-    """ OperationWorkflowReadinessOutcomeEscalationReference.sequence. Retained coordination escalation policy or
-    evidence; business interpretation and execution remain application-owned. """
+    """OperationWorkflowReadinessOutcomeEscalationReference.sequence. Retained coordination escalation policy or
+    evidence; business interpretation and execution remain application-owned."""
     created_at: datetime.datetime
-    """ OperationWorkflowReadinessOutcomeEscalationReference.created_at. Retained coordination escalation policy or
-    evidence; business interpretation and execution remain application-owned. """
+    """OperationWorkflowReadinessOutcomeEscalationReference.created_at. Retained coordination escalation policy or
+    evidence; business interpretation and execution remain application-owned."""
 
     def to_dict(self) -> dict[str, Any]:
         notification_id = str(self.notification_id)

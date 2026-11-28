@@ -89,40 +89,17 @@ def test_pipeline_completion_round_trip_and_legacy_absence():
     legacy = ExecutionPipelineResponse.from_dict({"deadline_at": "2026-11-16T01:00:00Z", "steps": []})
     assert legacy.completion is UNSET
     manifest = {
-        "version": "v1",
-        "completion_id": "01234567-89ab-cdef-0123-456789abcdef",
-        "workflow_id": "report",
-        "outcome": "cancelled",
-        "finished_at": "2026-11-16T00:00:00Z",
+        "version": "v1", "completion_id": "01234567-89ab-cdef-0123-456789abcdef",
+        "workflow_id": "report", "outcome": "cancelled", "finished_at": "2026-11-16T00:00:00Z",
         "receipt": "/v1/execution-workflows/report",
         "usage": {"wall_time_ms": 7, "cpu_time_ms": 3, "peak_memory_mb": 8},
-        "steps": [
-            {
-                "label": "one",
-                "outcome": "cancelled",
-                "attempts": [
-                    {
-                        "run_id": "11234567-89ab-cdef-0123-456789abcdef",
-                        "attempt": 1,
-                        "status": "cancelled",
-                        "receipt": "/v1/executions/run",
-                        "usage": {"wall_time_ms": 7, "cpu_time_ms": 3, "peak_memory_mb": 8},
-                        "artifacts": [
-                            {
-                                "name": "report.csv",
-                                "size_bytes": 5,
-                                "sha256": "sha256:abc",
-                                "url": "/v1/executions/run/artifacts/report.csv",
-                            }
-                        ],
-                    }
-                ],
-            }
-        ],
+        "steps": [{"label": "one", "outcome": "cancelled", "attempts": [{
+            "run_id": "11234567-89ab-cdef-0123-456789abcdef", "attempt": 1, "status": "cancelled",
+            "receipt": "/v1/executions/run", "usage": {"wall_time_ms": 7, "cpu_time_ms": 3, "peak_memory_mb": 8},
+            "artifacts": [{"name": "report.csv", "size_bytes": 5, "sha256": "sha256:abc", "url": "/v1/executions/run/artifacts/report.csv"}],
+        }]}],
     }
-    parsed = ExecutionPipelineResponse.from_dict(
-        {"deadline_at": "2026-11-16T01:00:00Z", "steps": [], "completion": manifest}
-    )
+    parsed = ExecutionPipelineResponse.from_dict({"deadline_at": "2026-11-16T01:00:00Z", "steps": [], "completion": manifest})
     assert str(parsed.completion.completion_id) == manifest["completion_id"]
     assert parsed.completion.usage.wall_time_ms == 7
     assert parsed.completion.steps[0].attempts[0].artifacts[0].name == "report.csv"
@@ -131,39 +108,20 @@ def test_pipeline_completion_round_trip_and_legacy_absence():
 
 def test_pipeline_watch_gap_cursor_and_terminal():
     from types import SimpleNamespace
-
     from faas_sdk.preview.execution_pipeline_progress import watch_execution_pipeline
 
     seen = []
-
     def handler(request):
         after = int(request.url.params["after"])
         seen.append(after)
-        return httpx.Response(
-            200,
-            json={
-                "pipeline_id": "01234567-89ab-cdef-0123-456789abcdef",
-                "events": [
-                    {
-                        "sequence": 5 if after == 1 else 6,
-                        "type": "pipeline",
-                        "status": "running",
-                        "created_at": "2026-11-17T00:00:00Z",
-                    }
-                ],
-                "next_sequence": 5 if after == 1 else 6,
-                "gap": after == 1,
-                "terminal": after != 1,
-            },
-        )
-
+        return httpx.Response(200, json={
+            "pipeline_id": "01234567-89ab-cdef-0123-456789abcdef",
+            "events": [{"sequence": 5 if after == 1 else 6, "type": "pipeline", "status": "running", "created_at": "2026-11-17T00:00:00Z"}],
+            "next_sequence": 5 if after == 1 else 6,
+            "gap": after == 1, "terminal": after != 1,
+        })
     gen = AuthenticatedClient(base_url="https://api.example.test", token="key").set_httpx_client(
-        httpx.Client(base_url="https://api.example.test", transport=httpx.MockTransport(handler))
-    )
-    events = list(
-        watch_execution_pipeline(
-            SimpleNamespace(_gen=gen), "01234567-89ab-cdef-0123-456789abcdef", after=1, poll_interval=0.001
-        )
-    )
+        httpx.Client(base_url="https://api.example.test", transport=httpx.MockTransport(handler)))
+    events = list(watch_execution_pipeline(SimpleNamespace(_gen=gen), "01234567-89ab-cdef-0123-456789abcdef", after=1, poll_interval=0.001))
     assert [e["type"] for e in events] == ["gap", "progress", "progress", "terminal"]
     assert seen == [1, 5]

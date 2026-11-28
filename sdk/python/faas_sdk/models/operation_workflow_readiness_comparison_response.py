@@ -19,35 +19,34 @@ class OperationWorkflowReadinessComparisonResponse:
     """Live comparison counts before filtering with bounded matching changes and the next available-edge snapshot."""
 
     baseline_at: datetime.datetime
-    """ ReadinessComparisonResponse. Saved snapshot capture time. """
+    """ReadinessComparisonResponse. Saved snapshot capture time."""
     evaluated_at: datetime.datetime
-    """ ReadinessComparisonResponse. Time of the shared per-workflow evidence evaluation or comparison completion.
-    """
+    """ReadinessComparisonResponse. Time of the shared per-workflow evidence evaluation or comparison completion."""
     baseline_transition_count: int
-    """ ReadinessComparisonResponse. All transitions in the supplied snapshot before filters. """
+    """ReadinessComparisonResponse. All transitions in the supplied snapshot before filters."""
     compared_transition_count: int
-    """ ReadinessComparisonResponse. Transitions with comparable current edges and declared requirements. """
+    """ReadinessComparisonResponse. Transitions with comparable current edges and declared requirements."""
     newly_ready_count: int
-    """ ReadinessComparisonResponse. Comparable transitions that changed from unmet to ready. """
+    """ReadinessComparisonResponse. Comparable transitions that changed from unmet to ready."""
     newly_blocked_count: int
-    """ ReadinessComparisonResponse. Comparable transitions that changed from ready to unmet. """
+    """ReadinessComparisonResponse. Comparable transitions that changed from ready to unmet."""
     changed_count: int
-    """ ReadinessComparisonResponse. Comparable transitions with evidence or reason changes and unchanged readiness
-    result. """
+    """ReadinessComparisonResponse. Comparable transitions with evidence or reason changes and unchanged readiness
+    result."""
     unchanged_count: int
-    """ ReadinessComparisonResponse. Comparable transitions with unchanged result and evidence summaries. """
+    """ReadinessComparisonResponse. Comparable transitions with unchanged result and evidence summaries."""
     unavailable_count: int
-    """ ReadinessComparisonResponse. Transitions excluded from readiness comparison due to contract state edge or
-    retained-revision boundaries. """
+    """ReadinessComparisonResponse. Transitions excluded from readiness comparison due to contract state edge or
+    retained-revision boundaries."""
     matching_change_count: int
-    """ ReadinessComparisonResponse. Changes matching the selected filter before row limit. """
+    """ReadinessComparisonResponse. Changes matching the selected filter before row limit."""
     items: list[OperationWorkflowReadinessChange]
-    """ ReadinessComparisonResponse. Matching transition comparison rows. """
+    """ReadinessComparisonResponse. Matching transition comparison rows."""
     snapshot: OperationWorkflowReadinessSnapshot
-    """ Caller-held compact readiness observations for at most 100 returned transitions. No historical
-    authentication or execution authority is implied. """
+    """Caller-held compact readiness observations for at most 100 returned transitions. No historical
+    authentication or execution authority is implied."""
     has_more: bool
-    """ ReadinessComparisonResponse. More matching changes exist than the returned row limit. """
+    """ReadinessComparisonResponse. More matching changes exist than the returned row limit."""
 
     def to_dict(self) -> dict[str, Any]:
         baseline_at = self.baseline_at.isoformat()

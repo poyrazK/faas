@@ -4,6 +4,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+
 from faas_sdk.preview import (
     ApplicationToolkit,
     PipelineTaskCaller,
@@ -134,19 +135,14 @@ async def test_repairs_a_replacement_link_after_failed_bind_and_isolates_oauth_c
 
     class Store:
         async def load(self, namespace, owner, lookup):
-            return next(
-                (
-                    row
-                    for (ns, principal, _), row in bindings.items()
-                    if (ns, principal) == (namespace, owner) and all(row[k] == v for k, v in lookup.items())
-                ),
-                None,
-            )
+            return next((
+                row for (ns, principal, _), row in bindings.items()
+                if (ns, principal) == (namespace, owner) and all(row[k] == v for k, v in lookup.items())
+            ), None)
 
         async def bind(self, namespace, owner, row):
             return bindings.setdefault(
-                (namespace, owner, row["request_id"]),
-                row | {"created_at": C["created_at"]},
+                (namespace, owner, row["request_id"]), row | {"created_at": C["created_at"]},
             )
 
         load_linked = load
@@ -176,24 +172,16 @@ async def test_repairs_a_replacement_link_after_failed_bind_and_isolates_oauth_c
                 if name.endswith("_start") and id not in receipts:
                     starts += 1
                     receipts.add(id)
-                state = (
-                    "started"
-                    if name.endswith("_start")
-                    else ("not_found" if id not in receipts else "failed" if id == C["request_id"] else "running")
+                state = "started" if name.endswith("_start") else (
+                    "not_found" if id not in receipts else "failed" if id == C["request_id"] else "running"
                 )
                 content = dict(
-                    state=state,
-                    receipt=dict(tool=TOOL, request_id=id, identity=C["receipt_identity"], run_id=C["run_id"]),
-                    steps=[],
-                    approval=None,
+                    state=state, receipt=dict(tool=TOOL, request_id=id, identity=C["receipt_identity"], run_id=C["run_id"]),
+                    steps=[], approval=None,
                 )
                 if id == C["request_id"]:
                     content["source_failure"] = "source_unavailable"
-            return {
-                "isError": False,
-                "structuredContent": content,
-                "content": [{"type": "text", "text": json.dumps(content)}],
-            }
+            return {"isError": False, "structuredContent": content, "content": [{"type": "text", "text": json.dumps(content)}]}
 
     async def prepare(source, _principal, _timeout):
         nonlocal preparations
@@ -203,29 +191,22 @@ async def test_repairs_a_replacement_link_after_failed_bind_and_isolates_oauth_c
 
     def open_runtime():
         return PipelineTasks(
-            Toolkit(),
-            store=Store(),
-            namespace="linked",
-            owner_key="task-key-for-tests-at-least-32-bytes",
-            tools=[TOOL],
-            recovery=PipelineTaskRecoveryPolicy(scopes=["replace"], prepare=prepare),
+            Toolkit(), store=Store(), namespace="linked", owner_key="task-key-for-tests-at-least-32-bytes",
+            tools=[TOOL], recovery=PipelineTaskRecoveryPolicy(scopes=["replace"], prepare=prepare),
         )
 
     caller = replace(ALICE, access=ToolkitAccess("alice", [*ACCESS.scopes, "preview", "replace"]))
     runtime = open_runtime()
     original = await runtime.create(START, ARGS, caller, timeout=1)
     preview_args = dict(
-        task_id=original["taskId"],
-        recovery_request_id="aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa",
+        task_id=original["taskId"], recovery_request_id="aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa",
         expected_contract_sha256=contract_hash,
     )
     confirmed = preview_args | {"preview_token": token}
     name = runtime.recovery_tools["confirm"]["name"]
     foreign = await runtime.preview_recovery(preview_args, replace(caller, client_id="other"), timeout=1)
     assert json.loads(foreign["content"][0]["text"]) == {"code": "not_found"}
-    assert (await runtime.preview_recovery(preview_args, caller, timeout=1))["structuredContent"][
-        "preview_token"
-    ] == token
+    assert (await runtime.preview_recovery(preview_args, caller, timeout=1))["structuredContent"]["preview_token"] == token
     assert starts == 0
     with pytest.raises(QueryToolError, match="query_failed"):
         await runtime.create(name, confirmed, caller, timeout=1)

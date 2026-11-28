@@ -27,15 +27,15 @@ class WorkflowRecoveryFailureEligibilityAssessment:
     """
 
     observation: WorkflowRecoveryFailureEligibility
-    """ Latest retained-state retry checks, observed after the original failure. No inputs or outputs are retained;
-    this is not failure-time proof or an admission guarantee. """
+    """Latest retained-state retry checks, observed after the original failure. No inputs or outputs are retained;
+    this is not failure-time proof or an admission guarantee."""
     freshness: WorkflowRecoveryFailureEligibilityAssessmentFreshness
     current: WorkflowRecoveryPolicyAssessment
-    """ Eligibility from preserved facts, conditional preparation result and lower-bound pressure from observed
-    applications. """
+    """Eligibility from preserved facts, conditional preparation result and lower-bound pressure from observed
+    applications."""
     proposed: WorkflowRecoveryPolicyAssessment
-    """ Eligibility from preserved facts, conditional preparation result and lower-bound pressure from observed
-    applications. """
+    """Eligibility from preserved facts, conditional preparation result and lower-bound pressure from observed
+    applications."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

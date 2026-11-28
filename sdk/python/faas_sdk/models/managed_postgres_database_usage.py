@@ -15,7 +15,7 @@ class ManagedPostgresDatabaseUsage:
 
     database_id: str
     name: str
-    """ Empty for a database deleted since. """
+    """Empty for a database deleted since."""
     compute_unit_seconds: int
     starts: int
     awake_seconds: int

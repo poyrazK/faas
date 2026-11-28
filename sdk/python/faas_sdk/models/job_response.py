@@ -44,24 +44,24 @@ class JobResponse:
     created_at: datetime.datetime
     updated_at: datetime.datetime
     schedule: str | Unset = UNSET
-    """ Recurring five-field cron expression, when configured. """
+    """Recurring five-field cron expression, when configured."""
     timezone: str | Unset = UNSET
-    """ IANA timezone used to evaluate the recurring schedule. """
+    """IANA timezone used to evaluate the recurring schedule."""
     last_scheduled_at: datetime.datetime | Unset = UNSET
-    """ Most recent scheduled occurrence that created a run. """
+    """Most recent scheduled occurrence that created a run."""
     schedule_policy: SchedulePolicy | Unset = UNSET
-    """ Versioned recurring-work scheduling policy for Jobs and both HTTP and command Crons. HTTP replace waits for
+    """Versioned recurring-work scheduling policy for Jobs and both HTTP and command Crons. HTTP replace waits for
     a prior dispatched request to complete because the scheduler has no stop acknowledgement for a request already
-    delivered to the app. """
+    delivered to the app."""
     failure_rules: FailureRules | Unset = UNSET
-    """ Versioned explicit classification policy for failed Job partitions, command-Cron executions, and HTTP Cron
-    outcome codes. HTTP status is not a business outcome matcher. """
+    """Versioned explicit classification policy for failed Job partitions, command-Cron executions, and HTTP Cron
+    outcome codes. HTTP status is not a business outcome matcher."""
     image_resolved_digest: str | Unset = UNSET
-    """ Immutable OCI manifest digest selected from image_ref. """
+    """Immutable OCI manifest digest selected from image_ref."""
     image_storage_key: str | Unset = UNSET
-    """ Canonical ext4 artifact key consumed by the VM manager. """
+    """Canonical ext4 artifact key consumed by the VM manager."""
     image_materialization_error: str | Unset = UNSET
-    """ Actionable pull/build failure when materialization_status is failed. """
+    """Actionable pull/build failure when materialization_status is failed."""
     image_materialized_at: datetime.datetime | Unset = UNSET
     env_overrides: JobResponseEnvOverrides | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

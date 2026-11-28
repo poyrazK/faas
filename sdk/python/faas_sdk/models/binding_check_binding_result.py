@@ -36,12 +36,12 @@ class BindingCheckBindingResult:
     name: str
     scope: str
     status: str
-    """ passed, blocked, unsupported or skipped. """
+    """passed, blocked, unsupported or skipped."""
     required_queue_evidence: BindingCheckBindingResultRequiredQueueEvidence | Unset = UNSET
-    """ Explicit scheduler readiness requirement; a passed policy result does not imply queue connectivity. """
+    """Explicit scheduler readiness requirement; a passed policy result does not imply queue connectivity."""
     object_storage_mode: BindingCheckBindingResultObjectStorageMode | Unset = UNSET
-    """ Exact admitted canary mode. Older evidence with no mode is listing-only and cannot satisfy write
-    requirements. """
+    """Exact admitted canary mode. Older evidence with no mode is listing-only and cannot satisfy write
+    requirements."""
     required_object_storage_mode: BindingCheckBindingResultRequiredObjectStorageMode | Unset = UNSET
     binding: str | Unset = UNSET
     reason: str | Unset = UNSET
@@ -49,11 +49,11 @@ class BindingCheckBindingResult:
     checked_at: datetime.datetime | Unset = UNSET
     refresh_status: str | Unset = UNSET
     application_adoption: BindingApplicationAdoption | Unset = UNSET
-    """ Metadata-only application self-attestations for managed PostgreSQL or object-storage secrets. Counts refer
+    """Metadata-only application self-attestations for managed PostgreSQL or object-storage secrets. Counts refer
     to workload/secret pairs. Reads use a single state snapshot and include missing reports. Task guests, jobs,
     mirrors and unauthorized workloads are excluded. Receipts expire when secret versions change, independently of
     probe age. An older guest projection does not erase a newer application receipt. complete describes this
-    optional observation read; a read failure leaves default checks unchanged and blocks strict checks. """
+    optional observation read; a read failure leaves default checks unchanged and blocks strict checks."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -16,7 +16,7 @@ class OperationWorkflowBlockerDuration:
     operation: str
     code: str
     owner: str
-    """ Blocker owner observed in this instance interval; empty means unassigned. """
+    """Blocker owner observed in this instance interval; empty means unassigned."""
     observed_seconds: int
     observation_count: int
     ongoing: bool

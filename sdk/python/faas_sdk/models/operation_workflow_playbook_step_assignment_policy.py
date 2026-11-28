@@ -22,29 +22,29 @@ class OperationWorkflowPlaybookStepAssignmentPolicy:
     """
 
     label: str
-    """ OperationWorkflowPlaybookStepAssignmentPolicy.label. Exact unique declared follow-up label. """
+    """OperationWorkflowPlaybookStepAssignmentPolicy.label. Exact unique declared follow-up label."""
     owner: str
-    """ OperationWorkflowPlaybookStepAssignmentPolicy.owner. Required trimmed control-free UTF-8 team label. """
+    """OperationWorkflowPlaybookStepAssignmentPolicy.owner. Required trimmed control-free UTF-8 team label."""
     complete_after_seconds: int
-    """ OperationWorkflowPlaybookStepAssignmentPolicy.complete_after_seconds. Completion window from first list
-    review for independent steps, or first prerequisite readiness for dependent steps; bounded to seven days. """
+    """OperationWorkflowPlaybookStepAssignmentPolicy.complete_after_seconds. Completion window from first list
+    review for independent steps, or first prerequisite readiness for dependent steps; bounded to seven days."""
     review_impact: OperationWorkflowPlaybookReviewImpact | Unset = UNSET
-    """ OperationWorkflowPlaybookReviewImpact. Frozen application guidance explaining the business result protected
-    by human review; advisory confidence, independent of reported business state. """
+    """OperationWorkflowPlaybookReviewImpact. Frozen application guidance explaining the business result protected
+    by human review; advisory confidence, independent of reported business state."""
     review_after_seconds: int | Unset = UNSET
-    """ OperationWorkflowPlaybookStepAssignmentPolicy.review_after_seconds. Optional validity review window starting
+    """OperationWorkflowPlaybookStepAssignmentPolicy.review_after_seconds. Optional validity review window starting
     at prerequisite reopening; zero omits the target. Pinned independently of the original step completion deadline.
-    Inbox acknowledgment does not satisfy this target. """
+    Inbox acknowledgment does not satisfy this target."""
     review_fallback_owner: str | Unset = UNSET
-    """ OperationWorkflowPlaybookStepAssignmentPolicy.review_fallback_owner. Optional fallback team after an
+    """OperationWorkflowPlaybookStepAssignmentPolicy.review_fallback_owner. Optional fallback team after an
     unresolved review deadline; requires a positive review window and a team distinct from owner. Manual assignments
-    prevent automatic takeover. """
+    prevent automatic takeover."""
     acknowledge_after_seconds: int | Unset = UNSET
-    """ OperationWorkflowPlaybookStepAssignmentPolicy.acknowledge_after_seconds. Optional response window from queue
-    delivery; zero disables. Separate from the original step completion deadline. """
+    """OperationWorkflowPlaybookStepAssignmentPolicy.acknowledge_after_seconds. Optional response window from queue
+    delivery; zero disables. Separate from the original step completion deadline."""
     fallback_owner: str | Unset = UNSET
-    """ OperationWorkflowPlaybookStepAssignmentPolicy.fallback_owner. Optional distinct fallback team; requires a
-    positive response window. Assignment changes preserve human ownership history. """
+    """OperationWorkflowPlaybookStepAssignmentPolicy.fallback_owner. Optional distinct fallback team; requires a
+    positive response window. Assignment changes preserve human ownership history."""
 
     def to_dict(self) -> dict[str, Any]:
         label = self.label

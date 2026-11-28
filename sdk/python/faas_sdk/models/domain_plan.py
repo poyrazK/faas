@@ -27,8 +27,8 @@ class DomainPlan:
     version: DomainPlanVersion | Unset = UNSET
     sha256: str | Unset = UNSET
     manifest: DomainManifest | Unset = UNSET
-    """ Versioned desired bindings. Only listed domains change; omission never removes a binding. At most 20
-    bindings in a 128 KiB request. Use a separate file from the application deployment manifest. """
+    """Versioned desired bindings. Only listed domains change; omission never removes a binding. At most 20
+    bindings in a 128 KiB request. Use a separate file from the application deployment manifest."""
     changes: list[DomainBindingChange] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

@@ -14,8 +14,8 @@ class ChangeManagedPostgresComputePolicyRequest:
     """Canonical UUID request for a scale-to-zero change on an existing managed PostgreSQL database."""
 
     request_id: UUID
-    """ Canonical nonzero UUID for this policy intent; replay with the same database and scale-to-zero setting after
-    uncertain responses. """
+    """Canonical nonzero UUID for this policy intent; replay with the same database and scale-to-zero setting after
+    uncertain responses."""
     scale_to_zero: bool
 
     def to_dict(self) -> dict[str, Any]:

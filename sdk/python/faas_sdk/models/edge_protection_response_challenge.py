@@ -16,19 +16,19 @@ class EdgeProtectionResponseChallenge:
     """kind=challenge decisions; its 403s also appear in rejections under gate challenge."""
 
     issued: int
-    """ Challenge pages served to browser navigations. """
+    """Challenge pages served to browser navigations."""
     solved: int
-    """ Passes earned by solving the proof of work. """
+    """Passes earned by solving the proof of work."""
     rejected: int
-    """ Non-navigation requests answered 403 challenge_required. """
+    """Non-navigation requests answered 403 challenge_required."""
     passed: int
-    """ Requests let through on a pass from an earlier solve. """
+    """Requests let through on a pass from an earlier solve."""
     bypassed: int
-    """ Requests let through on a verified API key, consumer key or JWT. """
+    """Requests let through on a verified API key, consumer key or JWT."""
     invalid: int
-    """ Solutions refused: wrong work or an expired token. """
+    """Solutions refused: wrong work or an expired token."""
     raised: int | Unset = UNSET
-    """ The part of issued served at a difficulty raised under attack. """
+    """The part of issued served at a difficulty raised under attack."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

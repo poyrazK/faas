@@ -22,13 +22,13 @@ class BindingPromotionRequest:
 
     expected_serving_deployment_id: UUID | Unset = UNSET
     max_verification_age: str | Unset = "10m"
-    """ Positive Go duration; maximum age of passed verification evidence. """
+    """Positive Go duration; maximum age of passed verification evidence."""
     allow_unsupported: bool | Unset = False
-    """ Explicit queue/outbound connectivity probe waiver; coverage remains partial. Push consumer readiness and the
-    independent 30-second poll window cannot be waived. """
+    """Explicit queue/outbound connectivity probe waiver; coverage remains partial. Push consumer readiness and the
+    independent 30-second poll window cannot be waived."""
     require_application_ack: bool | Unset = False
-    """ Require current managed-secret application receipts; use the dedicated promote-with-application-ack route
-    for compatibility with older servers. The dedicated route always forces true. """
+    """Require current managed-secret application receipts; use the dedicated promote-with-application-ack route
+    for compatibility with older servers. The dedicated route always forces true."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

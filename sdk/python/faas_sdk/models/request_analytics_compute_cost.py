@@ -32,16 +32,16 @@ class RequestAnalyticsComputeCost:
     estimated_millicents: int
     allocated_millicents: int
     unallocated_millicents: int
-    """ Estimated compute value not assigned because the window has no observed route requests. """
+    """Estimated compute value not assigned because the window has no observed route requests."""
     other_route_millicents: int
-    """ Value allocated to requests outside the top route list. """
+    """Value allocated to requests outside the top route list."""
     other_route_requests: int
     other_route_request_share_pct: float
     rate_millicents_per_gb_hour: int
     currency: RequestAnalyticsComputeCostCurrency
     allocation_method: RequestAnalyticsComputeCostAllocationMethod
-    """ request_time_share splits by observed request time; request_share is the fallback when the window has no
-    timing. """
+    """request_time_share splits by observed request time; request_share is the fallback when the window has no
+    timing."""
     basis: RequestAnalyticsComputeCostBasis
     request_count: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

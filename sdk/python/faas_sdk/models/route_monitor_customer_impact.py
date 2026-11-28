@@ -28,7 +28,7 @@ class RouteMonitorCustomerImpact:
     observed_customers: int
     violated_customers: int
     unknown_customers: int | Unset = UNSET
-    """ Distinct observed cohorts whose status cannot be established from retained evidence. """
+    """Distinct observed cohorts whose status cannot be established from retained evidence."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -18,19 +18,19 @@ class AccountHealthSignal:
     """A problem that keeps recurring, in customer wording, with the next step when there is one."""
 
     kind: AccountHealthSignalKind
-    """ Stable signal identifier. """
+    """Stable signal identifier."""
     subject: str
-    """ What the signal is about: an app slug, a scheduled job name or a problem code. """
+    """What the signal is about: an app slug, a scheduled job name or a problem code."""
     title: str
-    """ Short headline for the signal. """
+    """Short headline for the signal."""
     detail: str
-    """ What keeps happening and how to fix it. """
+    """What keeps happening and how to fix it."""
     since: datetime.datetime
-    """ When Gregale first detected the problem. """
+    """When Gregale first detected the problem."""
     action: str | Unset = UNSET
-    """ Label of the link that fixes the signal. """
+    """Label of the link that fixes the signal."""
     action_url: str | Unset = UNSET
-    """ Dashboard path of the page that fixes the signal. """
+    """Dashboard path of the page that fixes the signal."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

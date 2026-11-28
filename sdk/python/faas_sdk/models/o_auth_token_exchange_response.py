@@ -27,11 +27,11 @@ class OAuthTokenExchangeResponse:
     """RFC 8693 token exchange response with an opaque deploy bearer."""
 
     access_token: str
-    """ Opaque `fp_oidc_…` bearer for deploy routes. """
+    """Opaque `fp_oidc_…` bearer for deploy routes."""
     issued_token_type: OAuthTokenExchangeResponseIssuedTokenType
     token_type: OAuthTokenExchangeResponseTokenType
     expires_in: int
-    """ Seconds until the bearer expires. """
+    """Seconds until the bearer expires."""
     scope: OAuthTokenExchangeResponseScope
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

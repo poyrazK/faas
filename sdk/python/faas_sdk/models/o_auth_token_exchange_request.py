@@ -38,10 +38,10 @@ class OAuthTokenExchangeRequest:
 
     grant_type: OAuthTokenExchangeRequestGrantType
     subject_token: str
-    """ IdP-issued JWT to exchange for a short-lived deploy bearer. """
+    """IdP-issued JWT to exchange for a short-lived deploy bearer."""
     subject_token_type: OAuthTokenExchangeRequestSubjectTokenType
     audience: str
-    """ Trust-policy audience pinned in the subject JWT. """
+    """Trust-policy audience pinned in the subject JWT."""
     requested_token_type: OAuthTokenExchangeRequestRequestedTokenType | Unset = UNSET
     scope: OAuthTokenExchangeRequestScope | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

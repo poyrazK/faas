@@ -4,6 +4,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+
 from faas_sdk.preview import (
     EventContract,
     EventOutbox,

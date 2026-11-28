@@ -44,8 +44,8 @@ class OperationWorkflowDependencyTrace:
 
     findings: list[OperationWorkflowDependencyFinding]
     visited_workflow_count: int
-    """ Distinct inspected workflow references including the selected source and cached lookups of unknown or
-    satisfied prerequisites. """
+    """Distinct inspected workflow references including the selected source and cached lookups of unknown or
+    satisfied prerequisites."""
     examined_dependency_count: int
     depth_limit: OperationWorkflowDependencyTraceDepthLimit
     workflow_limit: OperationWorkflowDependencyTraceWorkflowLimit

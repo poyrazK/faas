@@ -28,7 +28,7 @@ class ConnectionBudgetInventory:
     overlap_consumers: int
     stale_node_instances: int
     session_bindings: int | Unset = UNSET
-    """ Session bindings are modeled at their role connection limit and are not counted in other_bindings. """
+    """Session bindings are modeled at their role connection limit and are not counted in other_bindings."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

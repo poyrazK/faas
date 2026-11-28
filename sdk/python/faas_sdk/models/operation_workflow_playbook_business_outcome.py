@@ -36,36 +36,36 @@ class OperationWorkflowPlaybookBusinessOutcome:
     """
 
     status: OperationWorkflowPlaybookBusinessOutcomeStatus
-    """ OperationWorkflowPlaybookBusinessOutcome.status. Only a fresh comparable explicit terminal outcome
+    """OperationWorkflowPlaybookBusinessOutcome.status. Only a fresh comparable explicit terminal outcome
     establishes achieved or different outcome. Missing state, stale reports, missing terminal outcome and contract
-    changes are unavailable. """
+    changes are unavailable."""
     reason: str
-    """ OperationWorkflowPlaybookBusinessOutcome.reason. Stable comparison reason; changing clocks and report
-    revisions alone does not change the business result. """
+    """OperationWorkflowPlaybookBusinessOutcome.reason. Stable comparison reason; changing clocks and report
+    revisions alone does not change the business result."""
     evidence: OperationWorkflowReadinessBusinessOutcome
-    """ Advisory comparison of the expected terminal outcome with a scoped retained application report. Missing
+    """Advisory comparison of the expected terminal outcome with a scoped retained application report. Missing
     state, stale reports, contract changes, older revisions and terminal reports without outcome codes remain
     unknown. Explicit outcome codes do not imply causation or authorize execution. Completion snapshots are
-    immutable; current checks are live reads. """
+    immutable; current checks are live reads."""
     outcome_guidance: list[OperationWorkflowPlaybookOutcomeGuidance] | Unset = UNSET
-    """ OperationWorkflowPlaybookBusinessOutcome.outcome_guidance. Frozen complete guidance set retained for later
-    exact-contract observations; never an execution instruction. """
+    """OperationWorkflowPlaybookBusinessOutcome.outcome_guidance. Frozen complete guidance set retained for later
+    exact-contract observations; never an execution instruction."""
     guidance: OperationWorkflowPlaybookOutcomeGuidance | Unset = UNSET
-    """ OperationWorkflowPlaybookOutcomeGuidance. Application-defined business meaning and optional suggested human
+    """OperationWorkflowPlaybookOutcomeGuidance. Application-defined business meaning and optional suggested human
     follow-up, frozen with the playbook version. Plain text only; never establishes execution authority or changes
-    outcome acceptance. """
+    outcome acceptance."""
     acceptance_policy: OperationWorkflowPlaybookOutcomeAcceptancePolicy | Unset = UNSET
-    """ OperationWorkflowPlaybookOutcomeAcceptancePolicy. Explicit business acceptance rules pinned with the
+    """OperationWorkflowPlaybookOutcomeAcceptancePolicy. Explicit business acceptance rules pinned with the
     playbook. Requires an expected outcome; an empty list permits no alternatives. Omission preserves legacy
-    reviewer acceptance. """
+    reviewer acceptance."""
     acceptance: OperationWorkflowPlaybookBusinessOutcomeAcceptance | Unset = UNSET
-    """ OperationWorkflowPlaybookBusinessOutcome.acceptance. Classification under the frozen explicit policy.
-    Omitted for legacy playbooks; alternatives never change the primary expected-outcome status. """
+    """OperationWorkflowPlaybookBusinessOutcome.acceptance. Classification under the frozen explicit policy.
+    Omitted for legacy playbooks; alternatives never change the primary expected-outcome status."""
     deadline_at: datetime.datetime | Unset = UNSET
-    """ OperationWorkflowPlaybookBusinessOutcome.deadline_at. Pinned expected-result deadline, if configured. """
+    """OperationWorkflowPlaybookBusinessOutcome.deadline_at. Pinned expected-result deadline, if configured."""
     deadline_reached: bool | Unset = UNSET
-    """ OperationWorkflowPlaybookBusinessOutcome.deadline_reached. The observation clock is at or past the deadline;
-    does not establish failure or historical timeliness. """
+    """OperationWorkflowPlaybookBusinessOutcome.deadline_reached. The observation clock is at or past the deadline;
+    does not establish failure or historical timeliness."""
 
     def to_dict(self) -> dict[str, Any]:
         status: str = self.status

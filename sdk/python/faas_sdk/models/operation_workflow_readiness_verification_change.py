@@ -24,12 +24,12 @@ class OperationWorkflowReadinessVerificationChange:
     """A changed disposition of one captured resolution, delivered once for an observed status change."""
 
     before_status: OperationWorkflowReadinessVerificationChangeBeforeStatus
-    """ OperationWorkflowReadinessVerificationChange.before_status. Server-managed advisory verification observation
-    for the retained source completion. """
+    """OperationWorkflowReadinessVerificationChange.before_status. Server-managed advisory verification observation
+    for the retained source completion."""
     after: OperationWorkflowReadinessVerificationWatchItem
-    """ Saved resolution identity and latest watch disposition. Missing proof is unavailable; invalidated means an
+    """Saved resolution identity and latest watch disposition. Missing proof is unavailable; invalidated means an
     explicit later application report reopened the blocker. Proof is the last retained observation, not current
-    readiness. """
+    readiness."""
 
     def to_dict(self) -> dict[str, Any]:
         before_status: str = self.before_status

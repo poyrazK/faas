@@ -19,11 +19,11 @@ class SecretFile:
     """
 
     secret: str
-    """ App secret whose value the file holds. """
+    """App secret whose value the file holds."""
     name: str
-    """ File name in /run/secrets. """
+    """File name in /run/secrets."""
     mode: int | Unset = UNSET
-    """ Permission bits; omitted means 0444. """
+    """Permission bits; omitted means 0444."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

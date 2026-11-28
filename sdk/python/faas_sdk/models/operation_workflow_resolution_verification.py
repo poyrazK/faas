@@ -25,16 +25,16 @@ class OperationWorkflowResolutionVerification:
     """Retained resolution claim and its exact proof-verification status under the original scoped workflow contract."""
 
     resolution: OperationWorkflowBlockerResolution
-    """ Explicit application explanation for clearing one prior blocker occurrence. The source must be a retained
+    """Explicit application explanation for clearing one prior blocker occurrence. The source must be a retained
     report in the same owner/business-reference/workflow-instance/contract-version boundary and must contain this
     target/code. The containing state report supplies the resolution identity and timestamps. A cleared list alone
-    does not imply a resolution fact. """
+    does not imply a resolution fact."""
     resolution_operation_id: UUID
     resolution_report_id: UUID
     resolution_revision: int
     status: OperationWorkflowResolutionVerificationStatus
     verified_at: datetime.datetime | Unset = UNSET
-    """ Retained proof publication time. """
+    """Retained proof publication time."""
 
     def to_dict(self) -> dict[str, Any]:
         resolution = self.resolution.to_dict()

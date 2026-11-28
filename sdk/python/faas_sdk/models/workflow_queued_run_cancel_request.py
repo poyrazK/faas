@@ -17,7 +17,7 @@ class WorkflowQueuedRunCancelRequest:
 
     run_ids: list[UUID]
     workflow_name: str | Unset = UNSET
-    """ Optional exact workflow-name guard for the selection. """
+    """Optional exact workflow-name guard for the selection."""
 
     def to_dict(self) -> dict[str, Any]:
         run_ids = []

@@ -38,30 +38,29 @@ class OperationWorkflowReadinessChange:
     """Readiness comparison of the saved edge with fresh retained evidence. Contract and state boundaries are explicit."""
 
     baseline: OperationWorkflowReadinessSnapshotEntry
-    """ One saved transition identity and stable evidence summaries for comparison within the same ownership scope.
-    """
+    """One saved transition identity and stable evidence summaries for comparison within the same ownership scope."""
     status: OperationWorkflowReadinessChangeStatus
-    """ ReadinessChange. Classification; only comparable unchanged requirements can become newly ready or newly
-    blocked. """
+    """ReadinessChange. Classification; only comparable unchanged requirements can become newly ready or newly
+    blocked."""
     added_reasons: list[OperationWorkflowReadinessChangeAddedReasonsItem]
-    """ ReadinessChange. Declared requirement codes now unmet that were absent from the saved reasons. """
+    """ReadinessChange. Declared requirement codes now unmet that were absent from the saved reasons."""
     resolved_reasons: list[OperationWorkflowReadinessChangeResolvedReasonsItem]
-    """ ReadinessChange. Saved requirement codes that are no longer unmet; this does not prove application
-    authorization. """
+    """ReadinessChange. Saved requirement codes that are no longer unmet; this does not prove application
+    authorization."""
     changed_categories: list[OperationWorkflowReadinessChangeChangedCategoriesItem]
-    """ ReadinessChange. Evidence categories whose complete stable summaries changed. """
+    """ReadinessChange. Evidence categories whose complete stable summaries changed."""
     explanation: str
-    """ ReadinessChange. Human-readable meaning and comparison boundary. """
+    """ReadinessChange. Human-readable meaning and comparison boundary."""
     evidence_changes: list[OperationWorkflowReadinessEvidenceChange]
-    """ Individual retained evidence changes; missing verification is never inferred fulfilled. """
+    """Individual retained evidence changes; missing verification is never inferred fulfilled."""
     evidence_comparison_complete: bool
-    """ True only when both evidence inventories are complete and requirements remain comparable. """
+    """True only when both evidence inventories are complete and requirements remain comparable."""
     current_operation_id: UUID | Unset = UNSET
-    """ ReadinessChange. Latest retained reporting Operation when current state is available. """
+    """ReadinessChange. Latest retained reporting Operation when current state is available."""
     current_state: str | Unset = UNSET
-    """ ReadinessChange. Current retained workflow state even when the saved edge is no longer applicable. """
+    """ReadinessChange. Current retained workflow state even when the saved edge is no longer applicable."""
     current: OperationWorkflowReadinessQueueEntry | Unset = UNSET
-    """ One declared current-state transition evaluated without planned evidence; reporting is advisory. """
+    """One declared current-state transition evaluated without planned evidence; reporting is advisory."""
 
     def to_dict(self) -> dict[str, Any]:
         baseline = self.baseline.to_dict()

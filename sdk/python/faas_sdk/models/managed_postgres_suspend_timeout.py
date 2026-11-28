@@ -15,11 +15,11 @@ class ManagedPostgresSuspendTimeout:
 
     database_id: str
     seconds: int
-    """ Seconds of inactivity before the database suspends. """
+    """Seconds of inactivity before the database suspends."""
     custom: bool
-    """ True when the database has its own value; false when it follows the platform default. """
+    """True when the database has its own value; false when it follows the platform default."""
     applied: bool
-    """ False while the database is running: it takes the value the next time it suspends. """
+    """False while the database is running: it takes the value the next time it suspends."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

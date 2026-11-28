@@ -18,13 +18,13 @@ class RouteCustomerObservation:
     """One request-time consumer and tenant identity group; either or both IDs may be present."""
 
     requests: int
-    """ Weighted retained requests attributed to this identity pair. """
+    """Weighted retained requests attributed to this identity pair."""
     last_observed_at: datetime.datetime
-    """ Latest recorded telemetry timestamp for this identity group; may be a minute bucket. """
+    """Latest recorded telemetry timestamp for this identity group; may be a minute bucket."""
     consumer_id: UUID | Unset = UNSET
-    """ Stable authenticated consumer ID owned by the selected app, if recorded and resolvable. """
+    """Stable authenticated consumer ID owned by the selected app, if recorded and resolvable."""
     platform_tenant_id: UUID | Unset = UNSET
-    """ Account-owned tenant ID recorded when these requests occurred, if resolvable. """
+    """Account-owned tenant ID recorded when these requests occurred, if resolvable."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

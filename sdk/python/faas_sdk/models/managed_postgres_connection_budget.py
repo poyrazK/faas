@@ -46,13 +46,13 @@ class ManagedPostgresConnectionBudget:
     enforced: bool
     model: ManagedPostgresConnectionBudgetModel
     inventory: ConnectionBudgetInventory
-    """ Deduplicated app/scope potential consumers; counts are not live SQL sessions. """
+    """Deduplicated app/scope potential consumers; counts are not live SQL sessions."""
     demand: ConnectionBudgetDemand
-    """ Canonical runtime pools and explicit planning headroom. Unbounded consumers remain unknown. """
+    """Canonical runtime pools and explicit planning headroom. Unbounded consumers remain unknown."""
     capacity: ConnectionBudgetCapacity
-    """ Operator-qualified tenant allocation clamped to observed SQL ceilings for the exact database generation and
+    """Operator-qualified tenant allocation clamped to observed SQL ceilings for the exact database generation and
     placement. Unknown without fresh evidence; this does not reserve connections or establish complete consumer
-    coverage. """
+    coverage."""
     reasons: list[str]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

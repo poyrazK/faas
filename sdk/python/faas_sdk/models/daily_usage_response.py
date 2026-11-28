@@ -19,21 +19,21 @@ class DailyUsageResponse:
     app_id: str
     day: str
     mb_seconds: int
-    """ Cumulative mb_seconds for the day (informational; not billed). """
+    """Cumulative mb_seconds for the day (informational; not billed)."""
     requests: int
-    """ Cumulative request count for the day (informational; not billed). """
+    """Cumulative request count for the day (informational; not billed)."""
     cpu_usec: int
-    """ Cumulative host cgroup CPU-µs for the day (informational; not billed). """
+    """Cumulative host cgroup CPU-µs for the day (informational; not billed)."""
     tx_bytes: int
-    """ HTTP response bytes for the day (informational; not billed). """
+    """HTTP response bytes for the day (informational; not billed)."""
     net_tx_bytes: int
-    """ Cumulative net_tx_bytes for the day (informational; not billed). """
+    """Cumulative net_tx_bytes for the day (informational; not billed)."""
     net_rx_bytes: int
-    """ Cumulative ingress bytes for the day (informational; not billed). """
+    """Cumulative ingress bytes for the day (informational; not billed)."""
     cold_boots: int
-    """ Per-day WAKE_RESTORE→WAKE_COLD_BOOT transition count (informational; not billed). """
+    """Per-day WAKE_RESTORE→WAKE_COLD_BOOT transition count (informational; not billed)."""
     builder_seconds: int
-    """ Builder VM seconds burned by this app on this day (informational; not billed). """
+    """Builder VM seconds burned by this app on this day (informational; not billed)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

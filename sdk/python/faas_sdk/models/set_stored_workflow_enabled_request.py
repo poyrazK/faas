@@ -13,7 +13,7 @@ class SetStoredWorkflowEnabledRequest:
     """Publication revision and the desired state of automatic starts."""
 
     expected_version: int
-    """ Current stored workflow revision to pause or resume. """
+    """Current stored workflow revision to pause or resume."""
     enabled: bool
 
     def to_dict(self) -> dict[str, Any]:

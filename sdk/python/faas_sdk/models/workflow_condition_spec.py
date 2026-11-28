@@ -17,9 +17,9 @@ class WorkflowConditionSpec:
     """
 
     run: str
-    """ Named app handler that checks the condition. """
+    """Named app handler that checks the condition."""
     interval: str
-    """ Delay between checks; at least 1m and no more than the plan wait limit. """
+    """Delay between checks; at least 1m and no more than the plan wait limit."""
     max_attempts: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

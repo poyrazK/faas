@@ -22,8 +22,8 @@ class RotateDeployTokenResponse:
     """Replacement deploy-token metadata and one-time plaintext, plus the revoked predecessor id."""
 
     token: DeployTokenResponse
-    """ Metadata for a per-app deploy token. The fp_deploy_ plaintext is returned only on create and rotate
-    responses. """
+    """Metadata for a per-app deploy token. The fp_deploy_ plaintext is returned only on create and rotate
+    responses."""
     token_plaintext: str
     old_token_id: UUID
     old_token_expires_at: datetime.datetime | Unset = UNSET

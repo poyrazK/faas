@@ -25,8 +25,8 @@ class OperationWorkflowReviewResponseEscalationActionReview:
     at: datetime.datetime
     actor: str
     health: OperationWorkflowReviewResponseHealth
-    """ Sampled advisory response-plan condition. Clear means no observed blockers or review obligations, not
-    business completion. Sampling stops on response resolution. """
+    """Sampled advisory response-plan condition. Clear means no observed blockers or review obligations, not
+    business completion. Sampling stops on response resolution."""
 
     def to_dict(self) -> dict[str, Any]:
         completed_at = self.completed_at.isoformat()

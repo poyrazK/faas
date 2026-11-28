@@ -17,11 +17,11 @@ class OperationWorkflowVerificationPerformance:
     """Cohort verification-wait distribution and pending obligations for one verification owner."""
 
     owner: str
-    """ Verification recipient for this cohort group; empty means unassigned. """
+    """Verification recipient for this cohort group; empty means unassigned."""
     pending_resolution_count: int
     duration: OperationWorkflowDurationDistribution
-    """ One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
-    zero. """
+    """One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
+    zero."""
 
     def to_dict(self) -> dict[str, Any]:
         owner = self.owner

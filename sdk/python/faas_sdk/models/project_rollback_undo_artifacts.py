@@ -19,7 +19,7 @@ class ProjectRollbackUndoArtifacts:
 
     deployment_id: UUID
     expires_at: datetime.datetime | Unset = UNSET
-    """ The deadline after a pause. Omitted while the operation holds the deployment for execution. """
+    """The deadline after a pause. Omitted while the operation holds the deployment for execution."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

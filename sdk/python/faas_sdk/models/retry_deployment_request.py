@@ -23,8 +23,8 @@ class RetryDeploymentRequest:
     """
 
     from_stage: RetryDeploymentRequestFromStage
-    """ Closed-6 stage vocabulary. `source_download` re-runs the whole pipeline (intentional retry-from-top); any
-    other value resumes from that stage with all prior inputs copied from the source row. """
+    """Closed-6 stage vocabulary. `source_download` re-runs the whole pipeline (intentional retry-from-top); any
+    other value resumes from that stage with all prior inputs copied from the source row."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

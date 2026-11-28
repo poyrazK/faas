@@ -18,20 +18,19 @@ class OperationWorkflowReadinessInboxResponse:
     """Retained notification page with explicit cursor gaps; unchanged evaluations do not create entries."""
 
     subscription: OperationWorkflowReadinessSubscription
-    """ Durable subscription configuration and most recent successful bounded evaluation; deletion cancels future
-    evaluations and removes its inbox. """
+    """Durable subscription configuration and most recent successful bounded evaluation; deletion cancels future
+    evaluations and removes its inbox."""
     items: list[OperationWorkflowReadinessNotification]
-    """ OperationWorkflowReadinessInboxResponse.items. Notifications after the supplied sequence in ascending order.
-    """
+    """OperationWorkflowReadinessInboxResponse.items. Notifications after the supplied sequence in ascending order."""
     latest_sequence: int
-    """ OperationWorkflowReadinessInboxResponse.latest_sequence. Most recent committed subscription sequence. """
+    """OperationWorkflowReadinessInboxResponse.latest_sequence. Most recent committed subscription sequence."""
     next_sequence: int
-    """ OperationWorkflowReadinessInboxResponse.next_sequence. Cursor for the next page. """
+    """OperationWorkflowReadinessInboxResponse.next_sequence. Cursor for the next page."""
     resync_required: bool
-    """ OperationWorkflowReadinessInboxResponse.resync_required. The supplied cursor is outside retained history;
-    the page starts at retained entries without claiming completeness. """
+    """OperationWorkflowReadinessInboxResponse.resync_required. The supplied cursor is outside retained history;
+    the page starts at retained entries without claiming completeness."""
     has_more: bool
-    """ OperationWorkflowReadinessInboxResponse.has_more. More committed entries follow this page. """
+    """OperationWorkflowReadinessInboxResponse.has_more. More committed entries follow this page."""
 
     def to_dict(self) -> dict[str, Any]:
         subscription = self.subscription.to_dict()

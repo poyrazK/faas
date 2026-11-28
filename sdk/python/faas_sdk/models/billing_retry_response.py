@@ -25,13 +25,13 @@ class BillingRetryResponse:
     """
 
     attempt_id: str
-    """ apId-side attempt handle (Stripe: in_…, Paddle: txn_…-related). """
+    """apId-side attempt handle (Stripe: in_…, Paddle: txn_…-related)."""
     provider_ref_id: str
-    """ Provider-side handle for the new attempt (Stripe: pi_…, Paddle: tx_…). """
+    """Provider-side handle for the new attempt (Stripe: pi_…, Paddle: tx_…)."""
     status: str
-    """ Always "pending_provider_confirmation" today; reserved for future settlement states. """
+    """Always "pending_provider_confirmation" today; reserved for future settlement states."""
     next_billing_at: datetime.datetime | None | Unset = UNSET
-    """ Next scheduled billing instant after the retry settles; null when not known yet. """
+    """Next scheduled billing instant after the retry settles; null when not known yet."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

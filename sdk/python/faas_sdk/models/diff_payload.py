@@ -30,7 +30,7 @@ class DiffPayload:
     changes: list[DiffChange]
     breaks: list[DiffBreak]
     plan: DiffPayloadPlan | Unset = UNSET
-    """ Customer's subscription tier (echoed from acct.Plan). """
+    """Customer's subscription tier (echoed from acct.Plan)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

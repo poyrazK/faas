@@ -36,53 +36,51 @@ class OperationWorkflowPlaybookStepAssignment:
     """
 
     progress_id: UUID
-    """ OperationWorkflowPlaybookStepAssignment.progress_id. Exact pinned checklist identity. """
+    """OperationWorkflowPlaybookStepAssignment.progress_id. Exact pinned checklist identity."""
     outcome_code: str
-    """ OperationWorkflowPlaybookStepAssignment.outcome_code. Exact outcome follow-up selector. """
+    """OperationWorkflowPlaybookStepAssignment.outcome_code. Exact outcome follow-up selector."""
     item_index: int
-    """ OperationWorkflowPlaybookStepAssignment.item_index. Local step index. """
+    """OperationWorkflowPlaybookStepAssignment.item_index. Local step index."""
     label: str
-    """ OperationWorkflowPlaybookStepAssignment.label. Pinned human follow-up label. """
+    """OperationWorkflowPlaybookStepAssignment.label. Pinned human follow-up label."""
     status: OperationWorkflowPlaybookStepAssignmentStatus
-    """ OperationWorkflowPlaybookStepAssignment.status. Latest accepted human step review; independent of inbox
-    completion. """
+    """OperationWorkflowPlaybookStepAssignment.status. Latest accepted human step review; independent of inbox
+    completion."""
     due_at: datetime.datetime
-    """ OperationWorkflowPlaybookStepAssignment.due_at. Original immutable completion deadline. """
+    """OperationWorkflowPlaybookStepAssignment.due_at. Original immutable completion deadline."""
     last_step_owner: str
-    """ OperationWorkflowPlaybookStepAssignment.last_step_owner. Latest synchronized checklist assignment, distinct
-    from a manual queue override. """
+    """OperationWorkflowPlaybookStepAssignment.last_step_owner. Latest synchronized checklist assignment, distinct
+    from a manual queue override."""
     manual_owner: bool
-    """ OperationWorkflowPlaybookStepAssignment.manual_owner. Manual inbox changes or automatic fallback protect
-    queue ownership from later checklist synchronization. """
+    """OperationWorkflowPlaybookStepAssignment.manual_owner. Manual inbox changes or automatic fallback protect
+    queue ownership from later checklist synchronization."""
     history: list[OperationWorkflowReadinessAssignmentChange]
-    """ OperationWorkflowPlaybookStepAssignment.history. Bounded retained checklist and inbox assignment changes.
-    """
+    """OperationWorkflowPlaybookStepAssignment.history. Bounded retained checklist and inbox assignment changes."""
     history_truncated: bool
-    """ OperationWorkflowPlaybookStepAssignment.history_truncated. Older ownership changes are no longer retained.
-    """
+    """OperationWorkflowPlaybookStepAssignment.history_truncated. Older ownership changes are no longer retained."""
     review_impact: OperationWorkflowPlaybookReviewImpact | Unset = UNSET
-    """ OperationWorkflowPlaybookReviewImpact. Frozen application guidance explaining the business result protected
-    by human review; advisory confidence, independent of reported business state. """
+    """OperationWorkflowPlaybookReviewImpact. Frozen application guidance explaining the business result protected
+    by human review; advisory confidence, independent of reported business state."""
     dependency_review_status: OperationWorkflowPlaybookStepAssignmentDependencyReviewStatus | Unset = UNSET
-    """ OperationWorkflowPlaybookStepAssignment.dependency_review_status. Latest source checklist decision for this
-    review episode, observed by an active watch; independent of inbox acknowledgment or manual completion. """
+    """OperationWorkflowPlaybookStepAssignment.dependency_review_status. Latest source checklist decision for this
+    review episode, observed by an active watch; independent of inbox acknowledgment or manual completion."""
     dependency_review_prerequisite: str | Unset = UNSET
-    """ OperationWorkflowPlaybookStepAssignment.dependency_review_prerequisite. Reopened ancestor label captured
+    """OperationWorkflowPlaybookStepAssignment.dependency_review_prerequisite. Reopened ancestor label captured
     from retained progress history when available; the immutable review revision identifies the event if history has
-    been truncated. """
+    been truncated."""
     dependency_review: OperationWorkflowPlaybookProgressItem | Unset = UNSET
-    """ OperationWorkflowPlaybookProgressItem. Durable advisory checklist coordination, independent of application
-    business success. """
+    """OperationWorkflowPlaybookProgressItem. Durable advisory checklist coordination, independent of application
+    business success."""
     readiness: OperationWorkflowPlaybookStepReadiness | Unset = UNSET
-    """ OperationWorkflowPlaybookStepReadiness. Human review dependency status, not business state or execution
-    authority. """
+    """OperationWorkflowPlaybookStepReadiness. Human review dependency status, not business state or execution
+    authority."""
     source_revision: int | Unset = UNSET
-    """ OperationWorkflowPlaybookStepAssignment.source_revision. Last synchronized progress revision, used to retain
-    intervening owner changes; incomplete source history prevents fallback. """
+    """OperationWorkflowPlaybookStepAssignment.source_revision. Last synchronized progress revision, used to retain
+    intervening owner changes; incomplete source history prevents fallback."""
     response: OperationWorkflowReadinessEscalationResponse | Unset = UNSET
-    """ Optional acknowledgment response target on a retained assigned escalation. Human acknowledgment fulfills it;
+    """Optional acknowledgment response target on a retained assigned escalation. Human acknowledgment fulfills it;
     completion or follow-up clearing stops it. A missed target emits one notice and optional guarded fallback.
-    Assignment history retains the latest 16 changes. """
+    Assignment history retains the latest 16 changes."""
 
     def to_dict(self) -> dict[str, Any]:
         progress_id = str(self.progress_id)

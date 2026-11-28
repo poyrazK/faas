@@ -44,14 +44,14 @@ class OperationWorkflowTransitionReadiness:
     """
 
     pending_verification_count: int
-    """ Exact retained pending resolution proof count targeting the transition Operation before previews, across
-    retained workflow reports. Advisory rather than a new transition guard. """
+    """Exact retained pending resolution proof count targeting the transition Operation before previews, across
+    retained workflow reports. Advisory rather than a new transition guard."""
     pending_verifications_truncated: bool
     transition: OperationWorkflowInstanceTransition
-    """ One allowed state edge from the selected contract version, bound to the Operation that can report it.
+    """One allowed state edge from the selected contract version, bound to the Operation that can report it.
     Required milestones must be committed with the transition in the same application transaction. This declaration
     does not establish that the edge is currently valid for the application's business row or authorized for the
-    caller. """
+    caller."""
     declared: bool
     ready: bool
     reasons: list[OperationWorkflowTransitionReadinessReasonsItem]
@@ -59,27 +59,27 @@ class OperationWorkflowTransitionReadiness:
     contract_version: int
     blockers: list[OperationWorkflowBlocker]
     unmet_dependencies: list[OperationWorkflowRelatedInstance]
-    """ Unmet reference/status pairs; inspect full related states through the workflow detail. """
+    """Unmet reference/status pairs; inspect full related states through the workflow detail."""
     missing_milestones: list[str]
     reporting: OperationWorkflowTransitionReporting | Unset = UNSET
-    """ Workflow-wide current-state expected condition coverage evaluated from the latest reporting Operation pinned
+    """Workflow-wide current-state expected condition coverage evaluated from the latest reporting Operation pinned
     definition and retained explicit decision contexts. It does not add transition guards. Counts precede previews.
     Unknown coverage is never inferred as satisfied; source evidence uses its own pinned freshness budget.
-    Conditions apply to current state rather than proposed destination state. """
+    Conditions apply to current state rather than proposed destination state."""
     pending_verifications: list[OperationWorkflowResolutionVerification] | Unset = UNSET
-    """ Canonical first matching pending proofs with declared owners and milestone references. Verified proofs and
-    other target Operations are excluded. """
+    """Canonical first matching pending proofs with declared owners and milestone references. Verified proofs and
+    other target Operations are excluded."""
     retained_milestone_groups: list[OperationWorkflowRetainedMilestoneGroupResult] | Unset = UNSET
     retained_milestones: list[OperationWorkflowRetainedMilestone] | Unset = UNSET
-    """ Status and latest retained evidence for each prerequisite declared on this edge. Absent facts remain
-    awaiting verification; invalidating facts mark prerequisites invalidated. Both statuses prevent readiness. """
+    """Status and latest retained evidence for each prerequisite declared on this edge. Absent facts remain
+    awaiting verification; invalidating facts mark prerequisites invalidated. Both statuses prevent readiness."""
     unmet_effects: list[OperationWorkflowUnmetEffect] | Unset = UNSET
     unmet_invariants: list[OperationWorkflowUnmetInvariant] | Unset = UNSET
     invariant_blockers: list[OperationWorkflowBlocker] | Unset = UNSET
-    """ Subset of matching blockers using the invariant- namespace. Failed or unknown application checks deny
-    readiness through application_blocked. """
+    """Subset of matching blockers using the invariant- namespace. Failed or unknown application checks deny
+    readiness through application_blocked."""
     missing_dependency_workflows: list[str] | Unset = UNSET
-    """ Required workflow selectors without a reported prerequisite link. """
+    """Required workflow selectors without a reported prerequisite link."""
     missing_policies: list[OperationWorkflowPolicyRequirement] | Unset = UNSET
     state_revision: int | Unset = UNSET
 

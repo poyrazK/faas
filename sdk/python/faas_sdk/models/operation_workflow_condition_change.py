@@ -35,22 +35,22 @@ class OperationWorkflowConditionChange:
     condition_id: str
     status: OperationWorkflowConditionChangeStatus
     current_evidence: OperationWorkflowConditionEvidence
-    """ Exact retained report and decision fact reference with reported rule identity. Previous evidence is absent
+    """Exact retained report and decision fact reference with reported rule identity. Previous evidence is absent
     when the baseline did not report a decision in this context. Links refer to the current retained Operation view.
-    """
+   """
     explanation: str
     group_id: str | Unset = UNSET
-    """ Selected path group for path comparisons; omitted for reasons. """
+    """Selected path group for path comparisons; omitted for reasons."""
     before: OperationBusinessConditionResult | Unset = UNSET
-    """ Application-reported condition result matching the pinned milestone declaration. Omitted conditions remain
-    unreported; unknown is explicit. No execution authority or causal inference. """
+    """Application-reported condition result matching the pinned milestone declaration. Omitted conditions remain
+    unreported; unknown is explicit. No execution authority or causal inference."""
     after: OperationBusinessConditionResult | Unset = UNSET
-    """ Application-reported condition result matching the pinned milestone declaration. Omitted conditions remain
-    unreported; unknown is explicit. No execution authority or causal inference. """
+    """Application-reported condition result matching the pinned milestone declaration. Omitted conditions remain
+    unreported; unknown is explicit. No execution authority or causal inference."""
     previous_evidence: OperationWorkflowConditionEvidence | Unset = UNSET
-    """ Exact retained report and decision fact reference with reported rule identity. Previous evidence is absent
+    """Exact retained report and decision fact reference with reported rule identity. Previous evidence is absent
     when the baseline did not report a decision in this context. Links refer to the current retained Operation view.
-    """
+   """
 
     def to_dict(self) -> dict[str, Any]:
         source: str = self.source

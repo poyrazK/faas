@@ -21,13 +21,13 @@ class InvitationListResponse:
 
     invitations: list[OrgInvitationResponse]
     next_before: str | Unset = UNSET
-    """ Opaque cursor — set to the **base64-url-of-JSON** of
+    """Opaque cursor — set to the **base64-url-of-JSON** of
     the last row's compound `(created_at, id)` key when
     there's a next page. Pass back as `?before=` to
     fetch it. The compound key keeps the
     `created_at DESC, id DESC` order exact under random UUIDs. The wire shape is
     opaque; clients MUST pass the value back unchanged.
-     """
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

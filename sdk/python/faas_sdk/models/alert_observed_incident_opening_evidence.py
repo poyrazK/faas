@@ -20,18 +20,18 @@ class AlertObservedIncidentOpeningEvidence:
     """Values captured at the first breach of a live observed incident."""
 
     metric: str
-    """ Metric the rule evaluated when the incident opened. """
+    """Metric the rule evaluated when the incident opened."""
     window: str
-    """ Rolling metric window in use when the incident opened. """
+    """Rolling metric window in use when the incident opened."""
     comparison: AlertObservedIncidentOpeningEvidenceComparison
     observed: float
-    """ Observed value in the metric's units. """
+    """Observed value in the metric's units."""
     baseline: float
-    """ Historical median in the metric's units. """
+    """Historical median in the metric's units."""
     trigger_value: float
-    """ Trigger derived from the baseline and rule threshold at opening. """
+    """Trigger derived from the baseline and rule threshold at opening."""
     baseline_days: int | Unset = UNSET
-    """ Number of days that qualified for the baseline. """
+    """Number of days that qualified for the baseline."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

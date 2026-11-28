@@ -39,25 +39,25 @@ class PlanResponse:
     limit_crons: int
     can_apply: bool
     plan_token: str
-    """ base64-JSON plan token; pass back as ?plan_token= on /v1/projects to skip the second extract. """
+    """base64-JSON plan token; pass back as ?plan_token= on /v1/projects to skip the second extract."""
     safe_release: ProjectSafeRelease | Unset = UNSET
-    """ Server-owned safe project release checkpoint. Activation occurs only after all zero-traffic candidates
-    complete readiness. """
+    """Server-owned safe project release checkpoint. Activation occurs only after all zero-traffic candidates
+    complete readiness."""
     repo_full_name: str | Unset = UNSET
     environment: str | Unset = UNSET
-    """ Registered project environment targeted by this plan """
+    """Registered project environment targeted by this plan"""
     environment_protected: bool | Unset = UNSET
-    """ Whether applying this plan requires protected-environment approval """
+    """Whether applying this plan requires protected-environment approval"""
     environment_config_hash: str | Unset = UNSET
-    """ Hash of the non-secret environment configuration bound into this plan """
+    """Hash of the non-secret environment configuration bound into this plan"""
     async_routes: list[PlanAsyncRoute] | Unset = UNSET
-    """ Structured diff for manifest-owned async routes; omitted when the manifest does not declare async_routes or
-    no route actions need to be shown. """
+    """Structured diff for manifest-owned async routes; omitted when the manifest does not declare async_routes or
+    no route actions need to be shown."""
     warnings: list[str] | Unset = UNSET
     feature_hints: list[FeatureHint] | Unset = UNSET
-    """ Gregale behaviors and features that apply to the scanned source, with the commands that change them. """
+    """Gregale behaviors and features that apply to the scanned source, with the commands that change them."""
     detection_warnings: list[PlanDetectionWarning] | Unset = UNSET
-    """ Structured skipped/merged detector decisions available to explain-mode clients. """
+    """Structured skipped/merged detector decisions available to explain-mode clients."""
     crons_not_allowed: bool | Unset = UNSET
     can_apply_pre_exclude: bool | Unset = UNSET
     gate_rescued_by_exclude: bool | Unset = UNSET

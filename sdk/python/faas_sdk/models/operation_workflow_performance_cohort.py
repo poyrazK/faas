@@ -36,14 +36,14 @@ class OperationWorkflowPerformanceCohort:
     cohort_truncated: bool
     exclusions: list[OperationWorkflowPerformanceCoverageReason]
     state_time: OperationWorkflowDurationDistribution
-    """ One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
-    zero. """
+    """One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
+    zero."""
     blocked_time: OperationWorkflowDurationDistribution
-    """ One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
-    zero. """
+    """One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
+    zero."""
     verification_wait: OperationWorkflowDurationDistribution
-    """ One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
-    zero. """
+    """One accumulated duration per eligible workflow. Nearest-rank percentiles are zero when workflow_count is
+    zero."""
     states: list[OperationWorkflowStatePerformance]
     blockers: list[OperationWorkflowBlockerPerformance]
     verification_owners: list[OperationWorkflowVerificationPerformance]

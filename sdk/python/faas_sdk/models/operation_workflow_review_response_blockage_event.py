@@ -20,18 +20,18 @@ class OperationWorkflowReviewResponseBlockageEvent:
     """
 
     source_notification_id: UUID
-    """ OperationWorkflowReviewResponseBlockageEvent.source_notification_id. Original response alert identity. """
+    """OperationWorkflowReviewResponseBlockageEvent.source_notification_id. Original response alert identity."""
     source_sequence: int
-    """ OperationWorkflowReviewResponseBlockageEvent.source_sequence. Original response alert sequence within this
-    inbox. """
+    """OperationWorkflowReviewResponseBlockageEvent.source_sequence. Original response alert sequence within this
+    inbox."""
     checked_at: datetime.datetime
-    """ OperationWorkflowReviewResponseBlockageEvent.checked_at. Case observation time. """
+    """OperationWorkflowReviewResponseBlockageEvent.checked_at. Case observation time."""
     added_blockers: list[str]
-    """ OperationWorkflowReviewResponseBlockageEvent.added_blockers. Newly observed blockers labeled by fixed linked
-    review position; first observations are silent. """
+    """OperationWorkflowReviewResponseBlockageEvent.added_blockers. Newly observed blockers labeled by fixed linked
+    review position; first observations are silent."""
     cleared_blockers: list[str] | Unset = UNSET
-    """ OperationWorkflowReviewResponseBlockageEvent.cleared_blockers. Previously observed blockers positively
-    verified as cleared; unavailable sources and changed failure reasons cannot establish recovery. """
+    """OperationWorkflowReviewResponseBlockageEvent.cleared_blockers. Previously observed blockers positively
+    verified as cleared; unavailable sources and changed failure reasons cannot establish recovery."""
 
     def to_dict(self) -> dict[str, Any]:
         source_notification_id = str(self.source_notification_id)

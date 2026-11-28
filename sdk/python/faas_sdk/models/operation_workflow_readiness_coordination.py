@@ -37,55 +37,53 @@ class OperationWorkflowReadinessCoordination:
     """
 
     revision: int
-    """ OperationWorkflowReadinessCoordination.revision. Shared coordination value; does not alter application
-    evidence. """
+    """OperationWorkflowReadinessCoordination.revision. Shared coordination value; does not alter application
+    evidence."""
     status: OperationWorkflowReadinessCoordinationStatus
-    """ OperationWorkflowReadinessCoordination.status. Shared coordination value; does not alter application
-    evidence. """
+    """OperationWorkflowReadinessCoordination.status. Shared coordination value; does not alter application
+    evidence."""
     owner: str
-    """ OperationWorkflowReadinessCoordination.owner. Shared coordination value; does not alter application
-    evidence. """
+    """OperationWorkflowReadinessCoordination.owner. Shared coordination value; does not alter application
+    evidence."""
     note: str
-    """ OperationWorkflowReadinessCoordination.note. Shared coordination value; does not alter application evidence.
-    """
+    """OperationWorkflowReadinessCoordination.note. Shared coordination value; does not alter application evidence."""
     updated_at: datetime.datetime
-    """ OperationWorkflowReadinessCoordination.updated_at. Shared coordination value; does not alter application
-    evidence. """
+    """OperationWorkflowReadinessCoordination.updated_at. Shared coordination value; does not alter application
+    evidence."""
     updated_by: str
-    """ OperationWorkflowReadinessCoordination.updated_by. Shared coordination value; does not alter application
-    evidence. """
+    """OperationWorkflowReadinessCoordination.updated_by. Shared coordination value; does not alter application
+    evidence."""
     fulfillment_review_escalations: list[OperationWorkflowFulfillmentReviewEscalation] | Unset = UNSET
-    """ Immutable escalation delivery receipts. One delivery per review ID/deadline across destination/policy edits
-    and restoring deadlines; capacity exhaustion stops further escalation delivery for this retained source. """
+    """Immutable escalation delivery receipts. One delivery per review ID/deadline across destination/policy edits
+    and restoring deadlines; capacity exhaustion stops further escalation delivery for this retained source."""
     fulfillment_review_reminders: list[OperationWorkflowFulfillmentReviewReminder] | Unset = UNSET
-    """ Immutable delivery receipts; each review deadline is notified once, even if restored later. At capacity no
-    further reminders are published for this retained source. """
+    """Immutable delivery receipts; each review deadline is notified once, even if restored later. At capacity no
+    further reminders are published for this retained source."""
     review_coordination_changes: list[OperationWorkflowFulfillmentReviewCoordinationChange] | Unset = UNSET
-    """ Immutable review-cycle ownership/deadline changes. Capacity exhaustion rejects further writes without
-    pruning decisions. """
+    """Immutable review-cycle ownership/deadline changes. Capacity exhaustion rejects further writes without
+    pruning decisions."""
     fulfillment_reviews: list[OperationWorkflowObligationFulfillmentReview] | Unset = UNSET
     reaffirmations: list[OperationWorkflowObligationReaffirmation] | Unset = UNSET
-    """ Immutable human reaffirmations with fresh application evidence; capacity exhaustion rejects further writes.
-    """
+    """Immutable human reaffirmations with fresh application evidence; capacity exhaustion rejects further writes."""
     reopenings: list[OperationWorkflowObligationReopening] | Unset = UNSET
-    """ Retained immutable human reopening receipts. Capacity exhaustion rejects further reopening without pruning
-    prior decisions. """
+    """Retained immutable human reopening receipts. Capacity exhaustion rejects further reopening without pruning
+    prior decisions."""
     fulfillments: list[OperationWorkflowObligationFulfillment] | Unset = UNSET
-    """ Immutable exact-case cycle fulfillment receipts. Capacity exhaustion rejects further fulfillment; receipts
-    are never pruned into reopened work. """
+    """Immutable exact-case cycle fulfillment receipts. Capacity exhaustion rejects further fulfillment; receipts
+    are never pruned into reopened work."""
     target_bindings: list[OperationWorkflowObligationTargetBinding] | Unset = UNSET
     completion: OperationWorkflowReadinessCompletion | Unset = UNSET
-    """ Immutable recorded follow-up completion with server-derived actor, write time and advisory pre-write
-    evidence check. Retained with the original notification. """
+    """Immutable recorded follow-up completion with server-derived actor, write time and advisory pre-write
+    evidence check. Retained with the original notification."""
     follow_up_at: datetime.datetime | Unset = UNSET
-    """ OperationWorkflowReadinessCoordination.follow_up_at. Shared coordination value; does not alter application
-    evidence. """
+    """OperationWorkflowReadinessCoordination.follow_up_at. Shared coordination value; does not alter application
+    evidence."""
     acknowledged_at: datetime.datetime | Unset = UNSET
-    """ OperationWorkflowReadinessCoordination.acknowledged_at. Shared coordination value; does not alter
-    application evidence. """
+    """OperationWorkflowReadinessCoordination.acknowledged_at. Shared coordination value; does not alter
+    application evidence."""
     acknowledged_by: str | Unset = UNSET
-    """ OperationWorkflowReadinessCoordination.acknowledged_by. Shared coordination value; does not alter
-    application evidence. """
+    """OperationWorkflowReadinessCoordination.acknowledged_by. Shared coordination value; does not alter
+    application evidence."""
 
     def to_dict(self) -> dict[str, Any]:
         revision = self.revision

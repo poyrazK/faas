@@ -27,7 +27,7 @@ class ListInstancesResponse:
 
     instances: list[InstanceResponse]
     next_before: None | Unset | UUID = UNSET
-    """ Cursor (instances.id UUIDv7) for the next older page. Empty / null at the end. """
+    """Cursor (instances.id UUIDv7) for the next older page. Empty / null at the end."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

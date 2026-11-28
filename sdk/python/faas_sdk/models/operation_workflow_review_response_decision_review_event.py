@@ -24,16 +24,15 @@ class OperationWorkflowReviewResponseDecisionReviewEvent:
     """
 
     source_notification_id: UUID
-    """ OperationWorkflowReviewResponseDecisionReviewEvent.source_notification_id. Original risk alert identity. """
+    """OperationWorkflowReviewResponseDecisionReviewEvent.source_notification_id. Original risk alert identity."""
     source_sequence: int
-    """ OperationWorkflowReviewResponseDecisionReviewEvent.source_sequence. Original alert sequence in this inbox.
-    """
+    """OperationWorkflowReviewResponseDecisionReviewEvent.source_sequence. Original alert sequence in this inbox."""
     decision: OperationWorkflowReviewResponseDecision
-    """ Immutable human decision with accountable actor and the reviewed health snapshot. Application execution
-    remains application-owned. """
+    """Immutable human decision with accountable actor and the reviewed health snapshot. Application execution
+    remains application-owned."""
     review: OperationWorkflowReviewResponseDecisionReview
-    """ First changed observation for one explicit response decision. Remains latched until a new explicit decision;
-    ordinary edits, acknowledgment and subsequent recovery do not clear it. """
+    """First changed observation for one explicit response decision. Remains latched until a new explicit decision;
+    ordinary edits, acknowledgment and subsequent recovery do not clear it."""
 
     def to_dict(self) -> dict[str, Any]:
         source_notification_id = str(self.source_notification_id)

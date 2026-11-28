@@ -16,7 +16,7 @@ class ManagedRealtimeMessageRequest:
     """Binary-safe message payload encoded as standard base64."""
 
     data_base64: str
-    """ Decoded payload is limited to 1 MiB. """
+    """Decoded payload is limited to 1 MiB."""
     binary: bool | Unset = False
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

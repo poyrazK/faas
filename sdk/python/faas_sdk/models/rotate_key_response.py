@@ -23,17 +23,17 @@ class RotateKeyResponse:
     """
 
     key: APIKeyResponse
-    """ API key metadata: id, prefix (first 8 chars), label, scopes, created/last-used timestamps, request count.
+    """API key metadata: id, prefix (first 8 chars), label, scopes, created/last-used timestamps, request count.
     **Plaintext is returned only on POST**. `org_id` is the org the key was minted against; legacy account-scoped
     responses stamp `org_id = caller's personal org`. See `org.create_api_key` / `org.revoke_api_key` for the new
-    org-scoped verbs. """
+    org-scoped verbs."""
     key_plaintext: str
-    """ New plaintext (PRESENT ONLY on this response). Capture immediately; the API never returns it again. """
+    """New plaintext (PRESENT ONLY on this response). Capture immediately; the API never returns it again."""
     old_key_id: str
-    """ Predecessor key id (matches Key.rotated_from_id). """
+    """Predecessor key id (matches Key.rotated_from_id)."""
     old_key_expires_at: datetime.datetime
-    """ Grace deadline applied to the old key (RFC 3339, UTC). When grace_window_days=0 the deadline is 'now'
-    (atomic rotation). """
+    """Grace deadline applied to the old key (RFC 3339, UTC). When grace_window_days=0 the deadline is 'now'
+    (atomic rotation)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

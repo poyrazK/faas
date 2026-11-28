@@ -41,16 +41,16 @@ class AppWebhookDeliveryResponse:
     webhook_id: str
     account_id: UUID
     event: str
-    """ Platform event name or explicitly delivered custom outbox event type. """
+    """Platform event name or explicitly delivered custom outbox event type."""
     attempt: int
     status: AppWebhookDeliveryResponseStatus
     next_attempt_at: datetime.datetime
     created_at: datetime.datetime
     updated_at: datetime.datetime
     app_id: str | Unset = UNSET
-    """ Omitted for events sourced from a platform tenant rather than one app. """
+    """Omitted for events sourced from a platform tenant rather than one app."""
     payload: AppWebhookDeliveryResponsePayload | Unset = UNSET
-    """ The original event payload (omitted on rows past the first attempt; the customer has already seen it). """
+    """The original event payload (omitted on rows past the first attempt; the customer has already seen it)."""
     last_error: str | Unset = UNSET
     last_response_code: int | Unset = UNSET
     delivered_at: datetime.datetime | Unset = UNSET

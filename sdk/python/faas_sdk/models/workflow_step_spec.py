@@ -37,12 +37,12 @@ class WorkflowStepSpec:
 
     name: str
     run: str | Unset = UNSET
-    """ Named platform operation to invoke. """
+    """Named platform operation to invoke."""
     managed_operation: bool | Unset = UNSET
-    """ Opt into the managed PostgreSQL operation result protocol for this executable HTTP step. The handler must
-    use the transactional operation SDK. """
+    """Opt into the managed PostgreSQL operation result protocol for this executable HTTP step. The handler must
+    use the transactional operation SDK."""
     for_each: WorkflowForEachSpec | Unset = UNSET
-    """ Bounded-concurrency action over a JSON array from input or a direct dependency
+    """Bounded-concurrency action over a JSON array from input or a direct dependency
     output. Snapshots all items and resolved action inputs before dispatch. At most
     128 items, 1 MiB source/prepared inputs and 1 MiB collected output. Parent names
     permit at most 64 UTF-8 bytes. Omitted or zero max_parallel means one active
@@ -55,9 +55,9 @@ class WorkflowStepSpec:
     the completed prefix. With continue, output includes every input position and
     null for guarded or unsuccessful items. An empty list succeeds with []. Parent
     consumes zero attempts; each item has its own ledger.
-     """
+    """
     join: WorkflowJoinSpec | Unset = UNSET
-    """ Native branch join. Waits for all dependencies to finish and permits only
+    """Native branch join. Waits for all dependencies to finish and permits only
     skips caused by false guards, including their descendants. Failed,
     cancelled, unknown and exception-route skips cannot activate a join.
     The first succeeded dependency in output_from order supplies the durable
@@ -65,9 +65,9 @@ class WorkflowStepSpec:
     skip the join and its continuation. Consumes zero execution attempts.
     Requires 2-128 dependencies and cannot have input, method, when, timeout,
     retry or exception routes, or be/depend on an exception handler.
-     """
+    """
     outbound: WorkflowOutboundSpec | Unset = UNSET
-    """ Call an existing customer managed outbound integration bound to this app.
+    """Call an existing customer managed outbound integration bound to this app.
     Credentials and fixed-origin routing remain with the outbound gateway. Input is a
     templated JSON body. Path segments and query values support the workflow
     template syntax; dynamic path values are escaped as one segment. GET and
@@ -75,14 +75,14 @@ class WorkflowStepSpec:
     One provider call occurs per workflow attempt. Automatic mutating retries
     require explicit provider idempotency support. Workflow outputs contain
     status and body; sensitive headers and failed-response bodies are omitted.
-     """
+    """
     input_: bool | float | list[Any] | None | str | Unset | WorkflowStepSpecInputType0 = UNSET
-    """ JSON input passed to the named operation. """
+    """JSON input passed to the named operation."""
     path: str | Unset = UNSET
-    """ HTTP wake path, retained for compatibility with the existing executor. """
+    """HTTP wake path, retained for compatibility with the existing executor."""
     method: WorkflowStepSpecMethod | Unset = UNSET
     when: WorkflowGuardSpec | Unset = UNSET
-    """ Bounded declarative when predicate. Specify exactly one of all, any,
+    """Bounded declarative when predicate. Specify exactly one of all, any,
     not, or ref/op/value. References select input or a direct dependency
     output using input.foo or steps.lookup.output.body.foo without template
     delimiters. Equality is type-sensitive and accepts scalar literals only.
@@ -92,23 +92,23 @@ class WorkflowStepSpec:
     At most 32 predicate nodes, 8 levels and 16 KiB per guard. Guards are
     forbidden on on_failure/on_timeout handler targets. A false guard skips
     its step and propagates through dependencies; skipped paths do not join.
-     """
+    """
     depends_on: list[str] | Unset = UNSET
     wait_for_event: str | Unset = UNSET
     wait_for_callback: bool | Unset = UNSET
-    """ Park for one account-authorized callback completion. Requires a wait timeout. """
+    """Park for one account-authorized callback completion. Requires a wait timeout."""
     wait_for_duration: str | Unset = UNSET
-    """ Durable timer, from 1s up to the plan's 7-day workflow wait limit. Fixed day suffixes such as `3d` mean
-    24-hour days; no compute is held while waiting. """
+    """Durable timer, from 1s up to the plan's 7-day workflow wait limit. Fixed day suffixes such as `3d` mean
+    24-hour days; no compute is held while waiting."""
     wait_for_condition: WorkflowConditionSpec | Unset = UNSET
-    """ Bounded scheduled checker. Each 2xx response must be a JSON object with boolean done. A false response
-    becomes the next check's input; no compute is held between checks. """
+    """Bounded scheduled checker. Each 2xx response must be a JSON object with boolean done. A false response
+    becomes the next check's input; no compute is held between checks."""
     timeout: str | Unset = UNSET
-    """ Step or wait timeout in time.ParseDuration form, for example `30s`; workflow also accepts fixed 24-hour day
-    suffixes such as `7d`. """
+    """Step or wait timeout in time.ParseDuration form, for example `30s`; workflow also accepts fixed 24-hour day
+    suffixes such as `7d`."""
     on_timeout: str | Unset = UNSET
     on_failure: str | Unset = UNSET
-    """ Name of the handler step to run after this step reaches a terminal failure. """
+    """Name of the handler step to run after this step reaches a terminal failure."""
     retry: None | Unset | WorkflowRetrySpec = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

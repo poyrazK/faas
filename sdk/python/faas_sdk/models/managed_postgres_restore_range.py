@@ -18,9 +18,9 @@ class ManagedPostgresRestoreRange:
     """
 
     earliest: datetime.datetime
-    """ The later of the database's creation and the start of its restore window. """
+    """The later of the database's creation and the start of its restore window."""
     latest: datetime.datetime
-    """ When the response was made; a restore point must be before it. """
+    """When the response was made; a restore point must be before it."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

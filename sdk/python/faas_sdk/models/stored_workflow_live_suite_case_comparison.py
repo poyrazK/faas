@@ -27,13 +27,13 @@ class StoredWorkflowLiveSuiteCaseComparison:
 
     name: str
     change: StoredWorkflowLiveSuiteCaseComparisonChange
-    """ Equal hashes and current terminal reports are required for regression, recovery or unchanged. Hash mismatch
+    """Equal hashes and current terminal reports are required for regression, recovery or unchanged. Hash mismatch
     is incompatible even when a report is pending; absent evidence is unknown. Added and removed take precedence
-    when only one suite selected the case. """
+    when only one suite selected the case."""
     baseline: StoredWorkflowLiveSuiteObservation | Unset = UNSET
-    """ Safe original run identity, creation time and recorded result only. """
+    """Safe original run identity, creation time and recorded result only."""
     candidate: StoredWorkflowLiveSuiteObservation | Unset = UNSET
-    """ Safe original run identity, creation time and recorded result only. """
+    """Safe original run identity, creation time and recorded result only."""
 
     def to_dict(self) -> dict[str, Any]:
         name = self.name

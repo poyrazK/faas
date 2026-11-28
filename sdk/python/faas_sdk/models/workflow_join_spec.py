@@ -22,7 +22,7 @@ class WorkflowJoinSpec:
     """
 
     output_from: list[str]
-    """ Every direct dependency exactly once, in explicit selection priority order. """
+    """Every direct dependency exactly once, in explicit selection priority order."""
 
     def to_dict(self) -> dict[str, Any]:
         output_from = self.output_from

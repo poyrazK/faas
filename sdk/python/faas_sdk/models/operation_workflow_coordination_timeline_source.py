@@ -15,23 +15,23 @@ class OperationWorkflowCoordinationTimelineSource:
     """OperationWorkflowCoordinationTimelineSource. Retained inbox coordination projection metadata."""
 
     subscription_id: UUID
-    """ OperationWorkflowCoordinationTimelineSource.subscription_id. Read subscription UUID. """
+    """OperationWorkflowCoordinationTimelineSource.subscription_id. Read subscription UUID."""
     name: str
-    """ OperationWorkflowCoordinationTimelineSource.name. Current subscription name. """
+    """OperationWorkflowCoordinationTimelineSource.name. Current subscription name."""
     earliest_sequence: int
-    """ OperationWorkflowCoordinationTimelineSource.earliest_sequence. Earliest retained sequence, or zero when
-    empty. """
+    """OperationWorkflowCoordinationTimelineSource.earliest_sequence. Earliest retained sequence, or zero when
+    empty."""
     latest_sequence: int
-    """ OperationWorkflowCoordinationTimelineSource.latest_sequence. Latest published sequence at source read. """
+    """OperationWorkflowCoordinationTimelineSource.latest_sequence. Latest published sequence at source read."""
     retained_count: int
-    """ OperationWorkflowCoordinationTimelineSource.retained_count. Notifications retained in this source, including
-    other workflow identities. """
+    """OperationWorkflowCoordinationTimelineSource.retained_count. Notifications retained in this source, including
+    other workflow identities."""
     gap_before: bool
-    """ OperationWorkflowCoordinationTimelineSource.gap_before. Older notifications were pruned or an inbox
-    resynchronization is required. """
+    """OperationWorkflowCoordinationTimelineSource.gap_before. Older notifications were pruned or an inbox
+    resynchronization is required."""
     missing_during_read: bool
-    """ OperationWorkflowCoordinationTimelineSource.missing_during_read. Subscription disappeared between listing
-    and reading. """
+    """OperationWorkflowCoordinationTimelineSource.missing_during_read. Subscription disappeared between listing
+    and reading."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

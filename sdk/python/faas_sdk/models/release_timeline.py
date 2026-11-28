@@ -28,18 +28,18 @@ class ReleaseTimeline:
     deployment_id: UUID
     app: str
     status: str
-    """ The deployment's status, such as live or superseded. """
+    """The deployment's status, such as live or superseded."""
     phase: ReleaseTimelinePhase
-    """ Where the release is, matched in this order. """
+    """Where the release is, matched in this order."""
     summary: str
-    """ One line, such as "Rolling out: step 2 of 4, 10% of traffic". """
+    """One line, such as "Rolling out: step 2 of 4, 10% of traffic"."""
     traffic_percent: int
     created_at: datetime.datetime
     events: list[ReleaseTimelineEvent]
     revision: int | Unset = UNSET
     scope: str | Unset = UNSET
     canary_step: int | Unset = UNSET
-    """ Zero-based current canary step. """
+    """Zero-based current canary step."""
     canary_total_steps: int | Unset = UNSET
     deployed_by: str | Unset = UNSET
     commit_sha: str | Unset = UNSET
@@ -47,21 +47,21 @@ class ReleaseTimeline:
     tag: str | Unset = UNSET
     reason: str | Unset = UNSET
     stable_deployment_id: UUID | Unset = UNSET
-    """ The release this one replaces; an abort returns traffic to it. """
+    """The release this one replaces; an abort returns traffic to it."""
     stable_revision: int | Unset = UNSET
     replaced_by_deployment_id: UUID | Unset = UNSET
-    """ The newer release of the same scope that took over. """
+    """The newer release of the same scope that took over."""
     replaced_by_revision: int | Unset = UNSET
     watch_until: datetime.datetime | Unset = UNSET
-    """ When the post-release watch stops judging the release. """
+    """When the post-release watch stops judging the release."""
     approval: ReleaseApprovalStatus | Unset = UNSET
-    """ A release's approval state. """
+    """A release's approval state."""
     schedule: ScheduledRelease | Unset = UNSET
-    """ A release built ahead of time that starts its rollout at release_at. """
+    """A release built ahead of time that starts its rollout at release_at."""
     gates: list[ReleaseGateResult] | Unset = UNSET
-    """ The results of the newest decision that judged release gates. """
+    """The results of the newest decision that judged release gates."""
     truncated: bool | Unset = UNSET
-    """ Older audit history was left out. """
+    """Older audit history was left out."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

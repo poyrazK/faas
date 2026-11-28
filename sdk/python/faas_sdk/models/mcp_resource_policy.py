@@ -34,20 +34,20 @@ class MCPResourcePolicy:
     allowed_origins: list[str] | Unset = UNSET
     tool_scopes: MCPResourcePolicyToolScopesType0 | None | Unset = UNSET
     resource_scopes: MCPResourcePolicyResourceScopesType0 | None | Unset = UNSET
-    """ Absolute URIs or simple variable templates; every matching entry must authorize access. """
+    """Absolute URIs or simple variable templates; every matching entry must authorize access."""
     prompt_scopes: MCPResourcePolicyPromptScopesType0 | None | Unset = UNSET
     credential: MCPResourcePolicyCredential | Unset = UNSET
-    """ What callers present. Omitted means a bearer JWT verified against
+    """What callers present. Omitted means a bearer JWT verified against
     the rule's issuer. consumer_key means an app consumer key whose
     mcp:<scope> scopes satisfy the policy's scopes.
-     """
+    """
     tool_limits: MCPResourcePolicyToolLimits | Unset = UNSET
-    """ Per-caller limits on tools/call, keyed by tool name. """
+    """Per-caller limits on tools/call, keyed by tool name."""
     audience: str | Unset = UNSET
-    """ Token audience an external OAuth issuer uses for this server when
+    """Token audience an external OAuth issuer uses for this server when
     it is not the resource. The rule's JWT audience must then be
     exactly this value. Bearer-token policies only.
-     """
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -13,7 +13,7 @@ from ...types import UNSET, Response
 
 def _get_kwargs(
     *,
-    body: PasswordSignupRequest | PasswordSignupRequest | Unset = UNSET,
+    body: PasswordSignupRequest | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
@@ -77,7 +77,7 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
-    body: PasswordSignupRequest | PasswordSignupRequest | Unset = UNSET,
+    body: PasswordSignupRequest | Unset = UNSET,
 ) -> Response[PasswordLoginResponse | Problem]:
     """Create account with email + password.
 
@@ -118,7 +118,7 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient | Client,
-    body: PasswordSignupRequest | PasswordSignupRequest | Unset = UNSET,
+    body: PasswordSignupRequest | Unset = UNSET,
 ) -> PasswordLoginResponse | Problem | None:
     """Create account with email + password.
 
@@ -154,7 +154,7 @@ def sync(
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
-    body: PasswordSignupRequest | PasswordSignupRequest | Unset = UNSET,
+    body: PasswordSignupRequest | Unset = UNSET,
 ) -> Response[PasswordLoginResponse | Problem]:
     """Create account with email + password.
 
@@ -193,7 +193,7 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
-    body: PasswordSignupRequest | PasswordSignupRequest | Unset = UNSET,
+    body: PasswordSignupRequest | Unset = UNSET,
 ) -> PasswordLoginResponse | Problem | None:
     """Create account with email + password.
 

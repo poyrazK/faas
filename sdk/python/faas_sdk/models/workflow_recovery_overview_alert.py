@@ -26,9 +26,9 @@ class WorkflowRecoveryOverviewAlert:
     """
 
     notification: WorkflowRecoveryPollingNotification
-    """ Last captured polling alert receipt. queued means durable outbox admission; no_receivers never replays to
+    """Last captured polling alert receipt. queued means durable outbox admission; no_receivers never replays to
     later subscribers. Successful polling retains the recovered receipt separately from the cleared error metadata.
-    """
+   """
     delivery_status: WorkflowRecoveryOverviewAlertDeliveryStatus
     expected: int
     pending: int

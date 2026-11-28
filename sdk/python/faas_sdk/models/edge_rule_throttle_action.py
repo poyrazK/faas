@@ -44,18 +44,18 @@ class EdgeRuleThrottleAction:
     """
 
     requests_per_second: float
-    """ Token-bucket refill rate per route. The API
+    """Token-bucket refill rate per route. The API
     validator rejects rps > plan.RateLimitRPS with a
     422. The gateway compiler clamps + warns on the
     same bound at load time.
-     """
+    """
     burst: int
-    """ Token-bucket burst per route. Mirrors rps: rejected
+    """Token-bucket burst per route. Mirrors rps: rejected
     above `plan.RateLimitBurst` at create time and
     clamped at compile time.
-     """
+    """
     key_by: EdgeRuleThrottleActionKeyBy | Unset = ""
-    """ Per-consumer keying dimension. When `""` or `"none"`, the bucket is shared
+    """Per-consumer keying dimension. When `""` or `"none"`, the bucket is shared
     across every caller of the route (shape).
     When `"api_key"`, one bucket per authenticated API
     key. When `"consumer_id"`, one bucket per stable API consumer
@@ -75,9 +75,9 @@ class EdgeRuleThrottleAction:
     into a single non-evicting `__other__` bucket that
     still consumes tokens (the load-bearing safety
     property — §"Consequences").
-     """
+    """
     jwt_claim_name: str | Unset = UNSET
-    """ Required iff `key_by="jwt_claim"`. Names the JWT
+    """Required iff `key_by="jwt_claim"`. Names the JWT
     custom claim to extract (e.g., `"tier"`,
     `"org_id"`). Format is a CodeQL safe-identifier:
     leading letter or underscore, then `[A-Za-z0-9_]`,
@@ -87,9 +87,9 @@ class EdgeRuleThrottleAction:
     longer than 256 bytes are treated as missing. The configured
     claim is retained first within the verifier's 64-claim
     request-context bound.
-     """
+    """
     max_keys_per_rule: int | Unset = 0
-    """ Caps the cardinality of the per-consumer bucket map
+    """Caps the cardinality of the per-consumer bucket map
     for this rule. 0 means "use plan default"
     (`Limits.ThrottleMaxKeysPerRule` per plan: Free 100
     / Hobby 1000 / Pro 5000 / Scale 10000). The
@@ -97,24 +97,24 @@ class EdgeRuleThrottleAction:
     `plan.ThrottleMaxKeysPerRule`. Must be 0 when
     `key_by` is `""` or `"none"` — the cap is moot for
     non-per-consumer rules.
-     """
+    """
     key_fields: list[str] | Unset = UNSET
-    """ Required iff `key_by="composite"`: the request
+    """Required iff `key_by="composite"`: the request
     fields combined into one bucket identity. Each is one of
     ip, country, api_key, consumer_id, jwt_subject, jwt_claim
     (with `jwt_claim_name`), method, path or `header:<name>`.
     A field the request lacks makes the identity missing, so
     `missing_key_policy` applies.
-     """
+    """
     count_statuses: list[int] | Unset = UNSET
-    """ When set, requests are admitted while the bucket
+    """When set, requests are admitted while the bucket
     has a token but only responses with one of these statuses
     charge it, e.g. [401, 403] to limit failed logins without
     limiting successful ones. Across gateways the admission
     check uses each gateway's last-known shared balance.
-     """
+    """
     missing_key_policy: EdgeRuleThrottleActionMissingKeyPolicy | Unset = "shared"
-    """ Behavior when an authentication-backed dimension is not
+    """Behavior when an authentication-backed dimension is not
     available on the request. `"shared"` places all such
     requests in one bounded `__anonymous__` bucket (the
     backward-compatible default). `"reject"` returns 401
@@ -122,7 +122,7 @@ class EdgeRuleThrottleAction:
     dimensional `key_by` value. Country lookup dependency
     failures remain fail-closed with 503 rather than being
     treated as an anonymous identity.
-     """
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

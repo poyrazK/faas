@@ -27,26 +27,26 @@ class OperationWorkflowReadinessVerificationWatchItem:
     """
 
     blocker_active: bool
-    """ OperationWorkflowReadinessVerificationWatchItem.blocker_active. Whether the blocker was present at the last
-    comparable observation; an existing active blocker is not a new reopening. """
+    """OperationWorkflowReadinessVerificationWatchItem.blocker_active. Whether the blocker was present at the last
+    comparable observation; an existing active blocker is not a new reopening."""
     key: str
-    """ OperationWorkflowReadinessVerificationWatchItem.key. Server-managed advisory verification observation for
-    the retained source completion. """
+    """OperationWorkflowReadinessVerificationWatchItem.key. Server-managed advisory verification observation for
+    the retained source completion."""
     status: OperationWorkflowReadinessVerificationWatchItemStatus
-    """ OperationWorkflowReadinessVerificationWatchItem.status. Server-managed advisory verification observation for
-    the retained source completion. """
+    """OperationWorkflowReadinessVerificationWatchItem.status. Server-managed advisory verification observation for
+    the retained source completion."""
     explanation: str
-    """ OperationWorkflowReadinessVerificationWatchItem.explanation. Server-managed advisory verification
-    observation for the retained source completion. """
+    """OperationWorkflowReadinessVerificationWatchItem.explanation. Server-managed advisory verification
+    observation for the retained source completion."""
     proof: OperationWorkflowResolutionVerification
-    """ Retained resolution claim and its exact proof-verification status under the original scoped workflow
-    contract. """
+    """Retained resolution claim and its exact proof-verification status under the original scoped workflow
+    contract."""
     reporting_revision: int | Unset = UNSET
-    """ OperationWorkflowReadinessVerificationWatchItem.reporting_revision. Exact state-report revision observed for
-    the reporting or invalidating Operation. """
+    """OperationWorkflowReadinessVerificationWatchItem.reporting_revision. Exact state-report revision observed for
+    the reporting or invalidating Operation."""
     reporting_operation_id: UUID | Unset = UNSET
-    """ OperationWorkflowReadinessVerificationWatchItem.reporting_operation_id. Server-managed advisory verification
-    observation for the retained source completion. """
+    """OperationWorkflowReadinessVerificationWatchItem.reporting_operation_id. Server-managed advisory verification
+    observation for the retained source completion."""
 
     def to_dict(self) -> dict[str, Any]:
         blocker_active = self.blocker_active

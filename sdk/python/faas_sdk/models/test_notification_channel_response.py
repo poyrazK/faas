@@ -16,9 +16,9 @@ class TestNotificationChannelResponse:
     """Outcome of a test notification."""
 
     delivered: bool
-    """ Whether the destination accepted the test. """
+    """Whether the destination accepted the test."""
     error: str | Unset = UNSET
-    """ Why delivery failed, when it did. """
+    """Why delivery failed, when it did."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

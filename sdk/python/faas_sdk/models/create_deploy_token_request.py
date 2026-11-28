@@ -24,12 +24,12 @@ class CreateDeployTokenRequest:
     """
 
     agent: bool | Unset = UNSET
-    """ Mint an app-bound headless MCP credential. Omit for a standard deploy token. """
+    """Mint an app-bound headless MCP credential. Omit for a standard deploy token."""
     scopes: list[CreateDeployTokenRequestScopesItem] | Unset = UNSET
-    """ Requires agent=true. Agent and apps:read are included; omitted scopes also include deploy:write. """
+    """Requires agent=true. Agent and apps:read are included; omitted scopes also include deploy:write."""
     label: str | Unset = UNSET
     expires_at: datetime.datetime | Unset = UNSET
-    """ Optional future expiry; defaults to 90 days and is capped at 365 days. """
+    """Optional future expiry; defaults to 90 days and is capped at 365 days."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

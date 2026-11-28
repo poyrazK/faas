@@ -48,40 +48,40 @@ class ManagedPostgresDatabase:
     created_at: datetime.datetime
     updated_at: datetime.datetime
     health: ManagedPostgresHealth | Unset = UNSET
-    """ Cached read-only provider observation, separate from lifecycle state. Healthy does not prove SQL
+    """Cached read-only provider observation, separate from lifecycle state. Healthy does not prove SQL
     connectivity. Failed checks update checked_at while retaining last_success_at; stale observations must not imply
-    current availability. """
+    current availability."""
     suspend_timeout_seconds: int | Unset = UNSET
-    """ Seconds a scale-to-zero database stays up after its last activity; absent for an always-on database. """
+    """Seconds a scale-to-zero database stays up after its last activity; absent for an always-on database."""
     suspend_timeout_custom: bool | Unset = UNSET
-    """ True when the database has its own suspend timeout rather than the platform default. """
+    """True when the database has its own suspend timeout rather than the platform default."""
     wake_with_app: bool | Unset = UNSET
-    """ True when the database starts when an app bound to it wakes. """
+    """True when the database starts when an app bound to it wakes."""
     restore_source_database_id: None | str | Unset = UNSET
     restore_point_in_time: datetime.datetime | None | Unset = UNSET
     last_error_code: None | str | Unset = UNSET
     deleted_at: datetime.datetime | None | Unset = UNSET
     restorable_until: datetime.datetime | Unset = UNSET
-    """ Set while the database's delete is scheduled: it can be undeleted until then, and is purged after. """
+    """Set while the database's delete is scheduled: it can be undeleted until then, and is purged after."""
     restore_slot_until: datetime.datetime | Unset = UNSET
-    """ Set while a restored database is one past the plan's database limit. It becomes an ordinary database once
-    the account has room; otherwise its delete is scheduled at this time. """
+    """Set while a restored database is one past the plan's database limit. It becomes an ordinary database once
+    the account has room; otherwise its delete is scheduled at this time."""
     expires_at: datetime.datetime | Unset = UNSET
-    """ Set on a database restored with ttl_seconds. Its bindings are revoked and it is purged at this time. """
+    """Set on a database restored with ttl_seconds. Its bindings are revoked and it is purged at this time."""
     plan_excess: ManagedPostgresDatabasePlanExcess | Unset = UNSET
-    """ Set while the plan no longer includes this database, for example after a subscription ended, and it is
+    """Set while the plan no longer includes this database, for example after a subscription ended, and it is
     suspended: database_limit when it ranks past the plan's database limit (oldest databases are kept),
     service_class when the plan does not include its class. Its data is kept. Upgrading, deleting a database or
-    resizing to an included class resumes it. """
+    resizing to an included class resumes it."""
     hold: ManagedPostgresDatabaseHold | Unset = UNSET
-    """ Set while the platform stops this database's compute and refuses its connections although its state is
+    """Set while the platform stops this database's compute and refuses its connections although its state is
     ready: compute_ceiling once the account used its monthly compute ceiling; egress once this database sent its own
     monthly egress allowance (500 GB); inactive while the account is suspended; plan_excess (see plan_excess);
     preview for a PR preview database once the account used 80% of its compute. Its data is kept. Omitted while
-    nothing holds it; the platform applies a change within a few minutes. """
+    nothing holds it; the platform applies a change within a few minutes."""
     restore_range: ManagedPostgresRestoreRange | Unset = UNSET
-    """ The span a point-in-time restore from this database can target now. Absent while the database cannot be
-    restored from. """
+    """The span a point-in-time restore from this database can target now. Absent while the database cannot be
+    restored from."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

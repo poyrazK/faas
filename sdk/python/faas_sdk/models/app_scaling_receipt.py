@@ -25,12 +25,12 @@ class AppScalingReceipt:
     scope: str
     revision: int
     settings: AppScalingSettings
-    """ Stored RAM, CPU, concurrency and instance-floor settings. """
+    """Stored RAM, CPU, concurrency and instance-floor settings."""
     request_id: UUID
     previous_revision: int
     committed_at: datetime.datetime
     environment_id: UUID | Unset = UNSET
-    """ Immutable identity for a named environment. """
+    """Immutable identity for a named environment."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

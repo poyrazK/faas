@@ -16,11 +16,11 @@ class ApplyAppScalingRequest:
     """A reviewed partial scaling change with a durable request identity."""
 
     expected_app_id: UUID
-    """ Immutable app UUID from the reviewed scaling snapshot. """
+    """Immutable app UUID from the reviewed scaling snapshot."""
     request_id: UUID
     expected_revision: int
     expected_environment_id: UUID | Unset = UNSET
-    """ Required for a named environment; must match its immutable identity. """
+    """Required for a named environment; must match its immutable identity."""
     ram_mb: int | Unset = UNSET
     cpu_millicores: int | Unset = UNSET
     max_concurrency: int | Unset = UNSET

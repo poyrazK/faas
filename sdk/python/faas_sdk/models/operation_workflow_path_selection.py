@@ -25,11 +25,11 @@ class OperationWorkflowPathSelection:
     group_id: str
     path_id: str
     decision_conditions: list[OperationBusinessConditionResult] | Unset = UNSET
-    """ Optional application condition snapshot; requires a decision fact reference and exact equality with that
-    fact. Omitted for legacy decisions. """
+    """Optional application condition snapshot; requires a decision fact reference and exact equality with that
+    fact. Omitted for legacy decisions."""
     decision_milestone_id: UUID | Unset = UNSET
-    """ Optional business decision milestone in this report evidence list and application transaction. When present
-    all decision fields are required and must match its payload. """
+    """Optional business decision milestone in this report evidence list and application transaction. When present
+    all decision fields are required and must match its payload."""
     decision_code: str | Unset = UNSET
     decision_description: str | Unset = UNSET
     decision_rule_id: str | Unset = UNSET

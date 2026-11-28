@@ -25,7 +25,7 @@ class AppWebhookDeliveryListResponse:
 
     deliveries: list[AppWebhookDeliveryResponse]
     next_token: str | Unset = UNSET
-    """ Cursor for the next page; empty/absent when the page is the last. """
+    """Cursor for the next page; empty/absent when the page is the last."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

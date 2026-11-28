@@ -21,14 +21,14 @@ class OperationWorkflowPlaybookDependencyRegression:
     """
 
     checked_at: datetime.datetime
-    """ OperationWorkflowPlaybookDependencyRegression.checked_at. Successful case observation before revision-fenced
-    publication. """
+    """OperationWorkflowPlaybookDependencyRegression.checked_at. Successful case observation before revision-fenced
+    publication."""
     reopened_prerequisites: list[OperationWorkflowPlaybookDependencyState]
-    """ OperationWorkflowPlaybookDependencyRegression.reopened_prerequisites. Relevant ancestors observed changing
-    from completed to pending, including transitive causes. """
+    """OperationWorkflowPlaybookDependencyRegression.reopened_prerequisites. Relevant ancestors observed changing
+    from completed to pending, including transitive causes."""
     affected_steps: list[OperationWorkflowPlaybookDependencyState]
-    """ OperationWorkflowPlaybookDependencyRegression.affected_steps. Downstream steps newly waiting, gaining
-    blockers, or affected by a newly reopened ancestor; completed reviews retain a review suggestion. """
+    """OperationWorkflowPlaybookDependencyRegression.affected_steps. Downstream steps newly waiting, gaining
+    blockers, or affected by a newly reopened ancestor; completed reviews retain a review suggestion."""
 
     def to_dict(self) -> dict[str, Any]:
         checked_at = self.checked_at.isoformat()

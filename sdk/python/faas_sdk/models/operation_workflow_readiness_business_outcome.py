@@ -26,47 +26,47 @@ class OperationWorkflowReadinessBusinessOutcome:
     """
 
     expected_outcome_code: str
-    """ OperationWorkflowReadinessBusinessOutcome.expected_outcome_code. Scoped application-reported business result
+    """OperationWorkflowReadinessBusinessOutcome.expected_outcome_code. Scoped application-reported business result
     relative to the caller-selected expected terminal outcome; independent of coordination completion and readiness.
-    """
+   """
     checked_at: datetime.datetime
-    """ OperationWorkflowReadinessBusinessOutcome.checked_at. Scoped application-reported business result relative
-    to the caller-selected expected terminal outcome; independent of coordination completion and readiness. """
+    """OperationWorkflowReadinessBusinessOutcome.checked_at. Scoped application-reported business result relative
+    to the caller-selected expected terminal outcome; independent of coordination completion and readiness."""
     status: OperationWorkflowReadinessBusinessOutcomeStatus
-    """ OperationWorkflowReadinessBusinessOutcome.status. Scoped application-reported business result relative to
-    the caller-selected expected terminal outcome; independent of coordination completion and readiness. """
+    """OperationWorkflowReadinessBusinessOutcome.status. Scoped application-reported business result relative to
+    the caller-selected expected terminal outcome; independent of coordination completion and readiness."""
     explanation: str
-    """ OperationWorkflowReadinessBusinessOutcome.explanation. Scoped application-reported business result relative
-    to the caller-selected expected terminal outcome; independent of coordination completion and readiness. """
+    """OperationWorkflowReadinessBusinessOutcome.explanation. Scoped application-reported business result relative
+    to the caller-selected expected terminal outcome; independent of coordination completion and readiness."""
     reporting_operation_id: UUID | Unset = UNSET
-    """ OperationWorkflowReadinessBusinessOutcome.reporting_operation_id. Scoped application-reported business
+    """OperationWorkflowReadinessBusinessOutcome.reporting_operation_id. Scoped application-reported business
     result relative to the caller-selected expected terminal outcome; independent of coordination completion and
-    readiness. """
+    readiness."""
     report_id: UUID | Unset = UNSET
-    """ OperationWorkflowReadinessBusinessOutcome.report_id. Scoped application-reported business result relative to
-    the caller-selected expected terminal outcome; independent of coordination completion and readiness. """
+    """OperationWorkflowReadinessBusinessOutcome.report_id. Scoped application-reported business result relative to
+    the caller-selected expected terminal outcome; independent of coordination completion and readiness."""
     state_revision: int | Unset = UNSET
-    """ OperationWorkflowReadinessBusinessOutcome.state_revision. Scoped application-reported business result
+    """OperationWorkflowReadinessBusinessOutcome.state_revision. Scoped application-reported business result
     relative to the caller-selected expected terminal outcome; independent of coordination completion and readiness.
-    """
+   """
     contract_version: int | Unset = UNSET
-    """ OperationWorkflowReadinessBusinessOutcome.contract_version. Scoped application-reported business result
+    """OperationWorkflowReadinessBusinessOutcome.contract_version. Scoped application-reported business result
     relative to the caller-selected expected terminal outcome; independent of coordination completion and readiness.
-    """
+   """
     state: str | Unset = UNSET
-    """ OperationWorkflowReadinessBusinessOutcome.state. Scoped application-reported business result relative to the
-    caller-selected expected terminal outcome; independent of coordination completion and readiness. """
+    """OperationWorkflowReadinessBusinessOutcome.state. Scoped application-reported business result relative to the
+    caller-selected expected terminal outcome; independent of coordination completion and readiness."""
     reported_outcome_code: str | Unset = UNSET
-    """ OperationWorkflowReadinessBusinessOutcome.reported_outcome_code. Scoped application-reported business result
+    """OperationWorkflowReadinessBusinessOutcome.reported_outcome_code. Scoped application-reported business result
     relative to the caller-selected expected terminal outcome; independent of coordination completion and readiness.
-    """
+   """
     reported_outcome_description: str | Unset = UNSET
-    """ OperationWorkflowReadinessBusinessOutcome.reported_outcome_description. Scoped application-reported business
+    """OperationWorkflowReadinessBusinessOutcome.reported_outcome_description. Scoped application-reported business
     result relative to the caller-selected expected terminal outcome; independent of coordination completion and
-    readiness. """
+    readiness."""
     occurred_at: datetime.datetime | Unset = UNSET
-    """ OperationWorkflowReadinessBusinessOutcome.occurred_at. Scoped application-reported business result relative
-    to the caller-selected expected terminal outcome; independent of coordination completion and readiness. """
+    """OperationWorkflowReadinessBusinessOutcome.occurred_at. Scoped application-reported business result relative
+    to the caller-selected expected terminal outcome; independent of coordination completion and readiness."""
 
     def to_dict(self) -> dict[str, Any]:
         expected_outcome_code = self.expected_outcome_code

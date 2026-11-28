@@ -31,24 +31,24 @@ class BindingVerification:
     """
 
     result: str
-    """ Outcome of the recorded canary: passed, failed or unknown. May describe stale evidence. """
+    """Outcome of the recorded canary: passed, failed or unknown. May describe stale evidence."""
     source: str
-    """ Currently task_guest. """
+    """Currently task_guest."""
     deployment_id: UUID
     scope: str
     managed_service: ManagedServiceProbeSpec | Unset = UNSET
-    """ Server-selected frozen context for a managed service route probe. Contains no credentials or application
-    request. Changing context or policy invalidates the receipt. """
+    """Server-selected frozen context for a managed service route probe. Contains no credentials or application
+    request. Changing context or policy invalidates the receipt."""
     task_id: UUID | Unset = UNSET
-    """ Original probe task identity for pending observation and durable receipts. """
+    """Original probe task identity for pending observation and durable receipts."""
     target_deployment_id: UUID | Unset = UNSET
-    """ Service recipient qualified by the probe; absent for legacy any-replica evidence. """
+    """Service recipient qualified by the probe; absent for legacy any-replica evidence."""
     object_storage_mode: BindingVerificationObjectStorageMode | Unset = UNSET
-    """ Object operation level admitted for this stored verification; missing values denote a legacy listing canary
-    and do not qualify required write operations. """
+    """Object operation level admitted for this stored verification; missing values denote a legacy listing canary
+    and do not qualify required write operations."""
     reason: str | Unset = UNSET
-    """ Stable reason such as configuration_changed, deployment_changed, probe_pending, report_invalid or
-    report_truncated. """
+    """Stable reason such as configuration_changed, deployment_changed, probe_pending, report_invalid or
+    report_truncated."""
     checked_at: datetime.datetime | Unset = UNSET
     credential_generation: int | Unset = UNSET
     checks: list[BindingVerificationCheck] | Unset = UNSET

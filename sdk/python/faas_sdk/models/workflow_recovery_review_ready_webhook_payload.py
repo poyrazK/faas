@@ -37,7 +37,7 @@ class WorkflowRecoveryReviewReadyWebhookPayload:
     review_command: str
     export_command: str
     initial_failure_id: UUID | Unset = UNSET
-    """ Captured initial failure for parentless reviews. Parent-job reviews carry job_id instead. """
+    """Captured initial failure for parentless reviews. Parent-job reviews carry job_id instead."""
     job_id: UUID | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

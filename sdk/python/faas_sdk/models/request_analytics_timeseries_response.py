@@ -40,29 +40,29 @@ class RequestAnalyticsTimeseriesResponse:
 
     slug: str
     since: str
-    """ Effective series lookback after retention clamping. """
+    """Effective series lookback after retention clamping."""
     from_: datetime.datetime
-    """ First instant represented by the hourly series. """
+    """First instant represented by the hourly series."""
     until: datetime.datetime
-    """ Exclusive end instant represented by the hourly series. """
+    """Exclusive end instant represented by the hourly series."""
     window_clamped: bool
-    """ Indicates the series start was limited by plan retention. """
+    """Indicates the series start was limited by plan retention."""
     bucket: RequestAnalyticsTimeseriesResponseBucket
-    """ UTC bucket size. """
+    """UTC bucket size."""
     points: list[RequestAnalyticsTimeseriesPoint]
     as_of: datetime.datetime
-    """ UTC time when the series response was assembled. """
+    """UTC time when the series response was assembled."""
     route: str | Unset = UNSET
-    """ Exact bounded route-label filter when a route-level series was requested. """
+    """Exact bounded route-label filter when a route-level series was requested."""
     method: RequestAnalyticsTimeseriesResponseMethod | Unset = UNSET
-    """ Exact method filter when a route-level series was requested. """
+    """Exact method filter when a route-level series was requested."""
     group_by: RequestAnalyticsTimeseriesResponseGroupBy | Unset = UNSET
     series: list[RequestAnalyticsTimeseriesSeries] | Unset = UNSET
     telemetry_complete: bool | Unset = UNSET
-    """ Same as on the analytics overview: true when every gateway delivered the series window, judged up to two
-    minutes before `as_of`. """
+    """Same as on the analytics overview: true when every gateway delivered the series window, judged up to two
+    minutes before `as_of`."""
     telemetry_gaps: list[RequestAnalyticsTelemetryGap] | Unset = UNSET
-    """ Why requests in the series window may be missing. Empty or absent when the window is complete. """
+    """Why requests in the series window may be missing. Empty or absent when the window is complete."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

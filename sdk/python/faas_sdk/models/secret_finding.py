@@ -38,12 +38,12 @@ class SecretFinding:
     snippet: str
     key: str | Unset = UNSET
     layer: str | Unset = UNSET
-    """ Per-walk source label. "app" for findings in
+    """Per-walk source label. "app" for findings in
     the main image; "sidecar-<slug>" for findings in a
     sidecar (e.g. "sidecar-redis"); absent or "" for
     findings from the legacy API source-tree rejection
     path.
-     """
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

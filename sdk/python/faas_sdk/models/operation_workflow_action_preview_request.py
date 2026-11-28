@@ -24,19 +24,19 @@ class OperationWorkflowActionPreviewRequest:
 
     scope: str
     subject: OperationSubject
-    """ Immutable public business correlation metadata. Captured at admission and preserved through recovery and
-    redeploy. Never an ownership or authorization claim. """
+    """Immutable public business correlation metadata. Captured at admission and preserved through recovery and
+    redeploy. Never an ownership or authorization claim."""
     workflow: str
     instance_id: str
     app_id: UUID | Unset = UNSET
-    """ Required in customer-self mode only. """
+    """Required in customer-self mode only."""
     tenant_id: UUID | Unset = UNSET
-    """ Required in account mode only. """
+    """Required in account mode only."""
     operation: str | Unset = UNSET
     state_revision: int | Unset = UNSET
-    """ Optional expected retained source revision. """
+    """Optional expected retained source revision."""
     contract_version: int | Unset = UNSET
-    """ Optional expected selected contract version. """
+    """Optional expected selected contract version."""
 
     def to_dict(self) -> dict[str, Any]:
         scope = self.scope

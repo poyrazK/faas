@@ -38,8 +38,8 @@ class FinancialBudgetStop:
     drain_deadline: datetime.datetime
     resume_rule: FinancialBudgetStopResumeRule
     evaluation: FinancialBudgetEvaluation
-    """ Retained evidence boundary; an absent known_millicents means evaluation unavailable, never zero. Partial
-    known costs can trigger labelled notifications; stale observations cannot create new alerts. """
+    """Retained evidence boundary; an absent known_millicents means evaluation unavailable, never zero. Partial
+    known costs can trigger labelled notifications; stale observations cannot create new alerts."""
     targets: list[FinancialBudgetStopTarget]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

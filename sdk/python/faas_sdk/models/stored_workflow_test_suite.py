@@ -21,7 +21,7 @@ class StoredWorkflowTestSuite:
     """
 
     sample: StoredWorkflowTestInputs
-    """ Saved test data — Explicitly saved synthetic inputs and mocks. Runs always bind the current saved draft. """
+    """Saved test data — Explicitly saved synthetic inputs and mocks. Runs always bind the current saved draft."""
     cases: list[StoredWorkflowTestCase]
 
     def to_dict(self) -> dict[str, Any]:

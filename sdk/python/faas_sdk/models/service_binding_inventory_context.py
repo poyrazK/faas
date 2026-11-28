@@ -30,25 +30,25 @@ class ServiceBindingInventoryContext:
     source: ServiceBindingInventoryContextSource
     caller_deployment_id: UUID
     revision: str
-    """ Opaque digest of reviewed graph identities and public edge facts; changes invalidate a verification review.
-    Not a connectivity receipt or authorization capability. """
+    """Opaque digest of reviewed graph identities and public edge facts; changes invalidate a verification review.
+    Not a connectivity receipt or authorization capability."""
     routing_status: ServiceBindingInventoryContextRoutingStatus
     routing_reason: str
-    """ Stable sanitized reason for managed route resolution. """
+    """Stable sanitized reason for managed route resolution."""
     verification_supported: bool
-    """ True only for an active request/service or worker caller with a supported frozen HTTPS edge to a
-    request/service target. """
+    """True only for an active request/service or worker caller with a supported frozen HTTPS edge to a
+    request/service target."""
     verification_reason: str
-    """ Empty for a supported managed contract; otherwise managed_service_verification_unsupported. """
+    """Empty for a supported managed contract; otherwise managed_service_verification_unsupported."""
     target_app_id: UUID | Unset = UNSET
-    """ Account-owned frozen target app; omitted when unreadable or foreign. """
+    """Account-owned frozen target app; omitted when unreadable or foreign."""
     target_app: str | Unset = UNSET
-    """ Physical target app slug; the binding name remains the logical workload. """
+    """Physical target app slug; the binding name remains the logical workload."""
     release_id: UUID | Unset = UNSET
-    """ Active reviewed release selected by the managed route resolver, when available. """
+    """Active reviewed release selected by the managed route resolver, when available."""
     verification_contract: str | Unset = UNSET
-    """ managed-https-v1 identifies the supported managed guest probe contract. Missing or unknown contracts remain
-    unsupported. """
+    """managed-https-v1 identifies the supported managed guest probe contract. Missing or unknown contracts remain
+    unsupported."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

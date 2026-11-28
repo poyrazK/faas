@@ -16,7 +16,7 @@ class SidecarTCPSocketProbe:
     """TCP connection probe opened from inside the container."""
 
     port: int | Unset = UNSET
-    """ TCP container port; 0/omitted inherits the workload port. """
+    """TCP container port; 0/omitted inherits the workload port."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

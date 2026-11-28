@@ -20,15 +20,14 @@ class AgentActivityEntry:
     id: str
     method: AgentActivityEntryMethod
     path: str
-    """ The request path, without its query string. """
+    """The request path, without its query string."""
     status: int
-    """ The HTTP status the request was answered with. """
+    """The HTTP status the request was answered with."""
     created_at: datetime.datetime
     approval_id: str | Unset = UNSET
-    """ The approval request the write went through on, when it needed one. """
+    """The approval request the write went through on, when it needed one."""
     reason: str | Unset = UNSET
-    """ What the agent said this write was for (its Gregale-Agent-Reason header), if it said. Untrusted agent text.
-    """
+    """What the agent said this write was for (its Gregale-Agent-Reason header), if it said. Untrusted agent text."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

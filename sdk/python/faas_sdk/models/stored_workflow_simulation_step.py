@@ -30,23 +30,23 @@ class StoredWorkflowSimulationStep:
     kind: StoredWorkflowSimulationStepKind
     state: StoredWorkflowSimulationStepState
     reason: str | Unset = UNSET
-    """ Stable decision reason with no referenced customer values. """
+    """Stable decision reason with no referenced customer values."""
     blocked_by: list[str] | Unset = UNSET
     when_matched: bool | Unset = UNSET
     input_: Any | Unset = UNSET
-    """ Resolved action input or materialized loop source; any JSON type is preserved. """
+    """Resolved action input or materialized loop source; any JSON type is preserved."""
     output: Any | Unset = UNSET
-    """ Supplied successful mock, timeout sentinel or control output; omitted when no result is known. """
+    """Supplied successful mock, timeout sentinel or control output; omitted when no result is known."""
     attempts: list[StoredWorkflowSimulationAttempt] | Unset = UNSET
-    """ Safe summary of supplied action or wait outcomes; mocked error text is exposed only through eligible failure
-    context. """
+    """Safe summary of supplied action or wait outcomes; mocked error text is exposed only through eligible failure
+    context."""
     run: str | Unset = UNSET
     path: str | Unset = UNSET
     method: str | Unset = UNSET
     integration_id: str | Unset = UNSET
     raw_query: str | Unset = UNSET
-    """ Canonically URL-encoded outbound query after resolving sample input and dependency outputs; omitted when
-    empty or unresolved. """
+    """Canonically URL-encoded outbound query after resolving sample input and dependency outputs; omitted when
+    empty or unresolved."""
     wait_for: str | Unset = UNSET
     parent_step: str | Unset = UNSET
     item_index: int | Unset = UNSET

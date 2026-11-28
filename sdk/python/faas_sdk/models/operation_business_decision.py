@@ -20,16 +20,16 @@ class OperationBusinessDecision:
 
     workflow: str
     instance_id: str
-    """ UTF-8 byte limit; nonempty text without control characters. """
+    """UTF-8 byte limit; nonempty text without control characters."""
     code: str
     description: str
-    """ Public decision explanation; UTF-8 byte limit; nonempty text without control characters. """
+    """Public decision explanation; UTF-8 byte limit; nonempty text without control characters."""
     rule_id: str
     rule_version: str
-    """ Exact policy rule version; UTF-8 byte limit; nonempty text without control characters. """
+    """Exact policy rule version; UTF-8 byte limit; nonempty text without control characters."""
     conditions: list[OperationBusinessConditionResult] | Unset = UNSET
-    """ Optional unique condition IDs declared by the pinned milestone step. Canonical order is by ID; existing
-    decisions omit this field. """
+    """Optional unique condition IDs declared by the pinned milestone step. Canonical order is by ID; existing
+    decisions omit this field."""
 
     def to_dict(self) -> dict[str, Any]:
         workflow = self.workflow

@@ -28,19 +28,19 @@ class OperationWorkflowStateSLA:
     budget_seconds: int
     status: OperationWorkflowStateSLAStatus
     history_complete: bool
-    """ Retained evidence establishes the current state visit entry. Earlier workflow history can still be
-    incomplete. """
+    """Retained evidence establishes the current state visit entry. Earlier workflow history can still be
+    incomplete."""
     warning_percent: int | Unset = UNSET
-    """ Pinned warning percentage when configured. """
+    """Pinned warning percentage when configured."""
     warning_at: datetime.datetime | Unset = UNSET
-    """ Warning time for a known state visit with a configured threshold. """
+    """Warning time for a known state visit with a configured threshold."""
     entered_at: datetime.datetime | Unset = UNSET
     due_at: datetime.datetime | Unset = UNSET
     elapsed_seconds: int | Unset = UNSET
     remaining_seconds: int | Unset = UNSET
-    """ Ceiling of remaining elapsed time. Zero at or after the due time. """
+    """Ceiling of remaining elapsed time. Zero at or after the due time."""
     breached_seconds: int | Unset = UNSET
-    """ Whole seconds elapsed beyond the budget. """
+    """Whole seconds elapsed beyond the budget."""
 
     def to_dict(self) -> dict[str, Any]:
         evaluated_at = self.evaluated_at.isoformat()

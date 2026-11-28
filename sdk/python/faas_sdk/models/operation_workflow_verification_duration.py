@@ -13,13 +13,13 @@ class OperationWorkflowVerificationDuration:
     """Publication-based proof waiting time and coverage counts for one verification owner within an instance."""
 
     owner: str
-    """ Application-assigned verification owner. Empty means unassigned. """
+    """Application-assigned verification owner. Empty means unassigned."""
     observed_seconds: int
     resolution_count: int
     pending_count: int
     unknown_start_count: int
-    """ Retained obligations whose start report is outside the history window. No wait duration is inferred for
-    these obligations. """
+    """Retained obligations whose start report is outside the history window. No wait duration is inferred for
+    these obligations."""
 
     def to_dict(self) -> dict[str, Any]:
         owner = self.owner

@@ -19,7 +19,7 @@ class ResizeManagedPostgresDatabaseRequest:
     """Canonical UUID request for a compute-class change on an existing managed PostgreSQL database."""
 
     request_id: UUID
-    """ Canonical nonzero UUID; reuse with the same database and target after uncertain responses. """
+    """Canonical nonzero UUID; reuse with the same database and target after uncertain responses."""
     service_class: ResizeManagedPostgresDatabaseRequestServiceClass
 
     def to_dict(self) -> dict[str, Any]:

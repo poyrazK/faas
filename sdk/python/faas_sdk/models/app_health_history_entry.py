@@ -28,9 +28,9 @@ class AppHealthHistoryEntry:
     id: UUID
     kind: AppHealthHistoryEntryKind
     observed_at: datetime.datetime
-    """ Assessment time, or previous evidence expiry for a gap entry. """
+    """Assessment time, or previous evidence expiry for a gap entry."""
     assessment: AppHealthResponse
-    """ Read-only observed health of selected-scope HTTP serving workloads. """
+    """Read-only observed health of selected-scope HTTP serving workloads."""
     previous_status: AppHealthHistoryEntryPreviousStatus | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:

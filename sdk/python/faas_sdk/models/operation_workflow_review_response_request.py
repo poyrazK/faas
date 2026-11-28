@@ -57,83 +57,83 @@ class OperationWorkflowReviewResponseRequest:
     """
 
     owner: str
-    """ OperationWorkflowReviewResponseRequest.owner. Responsible team label; trimmed control-free UTF-8 limited to
-    256 bytes. """
+    """OperationWorkflowReviewResponseRequest.owner. Responsible team label; trimmed control-free UTF-8 limited to
+    256 bytes."""
     plan: str
-    """ OperationWorkflowReviewResponseRequest.plan. Human response plan; nonblank UTF-8 limited to 1024 bytes. Line
-    breaks and tabs are allowed. """
+    """OperationWorkflowReviewResponseRequest.plan. Human response plan; nonblank UTF-8 limited to 1024 bytes. Line
+    breaks and tabs are allowed."""
     status: OperationWorkflowReviewResponseRequestStatus
-    """ OperationWorkflowReviewResponseRequest.status. Active ownership or human resolution after a fresh scoped
-    check of linked source reviews. """
+    """OperationWorkflowReviewResponseRequest.status. Active ownership or human resolution after a fresh scoped
+    check of linked source reviews."""
     scheduled_review_reschedule: OperationWorkflowReviewResponseScheduledReviewRescheduleRequest | Unset = UNSET
-    """ Reschedule a pending evidence check using exact current episode, completion and due timestamps. New time
+    """Reschedule a pending evidence check using exact current episode, completion and due timestamps. New time
     must differ from current due time and be future within seven days. Preserve parent owner, plan and exact check-
     in, even if overdue; omit parent reviews. Cannot combine with other response actions. Published or canceled
-    checks reject rescheduling; no source observation is required. """
+    checks reject rescheduling; no source observation is required."""
     scheduled_review_cancellation: OperationWorkflowReviewResponseScheduledReviewCancellationRequest | Unset = UNSET
-    """ Cancel the pending evidence check for the current completed coordinator action using exact episode,
+    """Cancel the pending evidence check for the current completed coordinator action using exact episode,
     completion and due timestamps. Preserve parent owner, plan and exact check-in, even if overdue; omit parent
     reviews. Cannot combine with other response actions. Cancellation can win while an observation is in flight; a
-    published or already canceled check rejects cancellation. No source observation is required. """
+    published or already canceled check rejects cancellation. No source observation is required."""
     escalation_revision: OperationWorkflowReviewResponseEscalationRevisionRequest | Unset = UNSET
-    """ Explicit scoped review of the current completed coordinator action and creation of a revised commitment only
+    """Explicit scoped review of the current completed coordinator action and creation of a revised commitment only
     while the handoff remains unaccepted and undeclined. Supply current episode timestamps and preserve parent
     owner, plan and exact check-in; omit parent reviews. Cannot combine with other response actions. Evidence
     unavailable is not clear or application success. Requires the recorded non-clear review timestamp and a fresh
-    non-clear recheck; deadline must be future and within seven days. """
+    non-clear recheck; deadline must be future and within seven days."""
     escalation_action_review: OperationWorkflowReviewResponseEscalationActionReviewRequest | Unset = UNSET
-    """ Explicit scoped review of the current completed coordinator action. Supply current episode timestamps and
+    """Explicit scoped review of the current completed coordinator action. Supply current episode timestamps and
     preserve parent owner, plan and exact check-in; omit parent reviews. Cannot combine with other response actions.
-    Evidence unavailable is not clear or application success. """
+    Evidence unavailable is not clear or application success."""
     escalation_completion: OperationWorkflowReviewResponseEscalationCompletionRequest | Unset = UNSET
-    """ Complete one current escalation coordinator commitment with an action summary and saved review evidence.
+    """Complete one current escalation coordinator commitment with an action summary and saved review evidence.
     Preserve parent owner, plan and exact check-in, even if overdue; omit parent reviews. Cannot combine with
     acknowledgment, decision, acceptance, decline or reassignment. Accepted or declined handoffs can still record
     completed work for the same retained episode, but replaced or resolved episodes cannot. Does not establish
-    application success. """
+    application success."""
     escalation_acknowledgment: OperationWorkflowReviewResponseEscalationAcknowledgmentRequest | Unset = UNSET
-    """ One immutable coordination commitment for the current escalated, unaccepted handoff. Preserve the parent
+    """One immutable coordination commitment for the current escalated, unaccepted handoff. Preserve the parent
     response owner, plan and exact check-in, even if overdue. Cannot combine with a decision, acceptance, decline or
     reassignment. Current handoff and escalation timestamps are required. Due date must be in the future and within
-    seven days. """
+    seven days."""
     handoff_acceptance_escalation_owner: str | Unset = UNSET
-    """ OperationWorkflowReviewResponseRequest.handoff_acceptance_escalation_owner. Optional control-free UTF-8 team
+    """OperationWorkflowReviewResponseRequest.handoff_acceptance_escalation_owner. Optional control-free UTF-8 team
     label for future missed acceptance deadlines. Omission preserves policy, empty string clears it; the destination
-    is pinned at each actual handoff. Must differ from the parent request owner when explicitly configured. """
+    is pinned at each actual handoff. Must differ from the parent request owner when explicitly configured."""
     handoff_reassignment: OperationWorkflowReviewResponseHandoffReassignmentRequest | Unset = UNSET
-    """ Reassign a currently declined handoff to a different parent response owner. Preserve plan, check-in and
-    review deadline; start a new acceptance clock. Cannot combine with a decision, acceptance or decline. """
+    """Reassign a currently declined handoff to a different parent response owner. Preserve plan, check-in and
+    review deadline; start a new acceptance clock. Cannot combine with a decision, acceptance or decline."""
     handoff_decline: OperationWorkflowReviewResponseHandoffDeclineRequest | Unset = UNSET
-    """ Decline one current unaccepted handoff without a decision or acceptance. Retain its owner, plan and exact
-    check-in, even if already overdue; deadlines do not restart. """
+    """Decline one current unaccepted handoff without a decision or acceptance. Retain its owner, plan and exact
+    check-in, even if already overdue; deadlines do not restart."""
     handoff_accept_after_seconds: int | Unset = UNSET
-    """ OperationWorkflowReviewResponseRequest.handoff_accept_after_seconds. Future handoff acceptance window,
+    """OperationWorkflowReviewResponseRequest.handoff_accept_after_seconds. Future handoff acceptance window,
     defaulting to 3600 seconds. Request omission preserves current policy; active acceptance deadlines stay pinned.
-    """
+   """
     handoff_acceptance: OperationWorkflowReviewResponseHandoffAcceptanceRequest | Unset = UNSET
-    """ Accept the current reassigned review for its responsible team. Parent response must remain active with the
-    handed-off owner and a future check-in, without an accompanying decision. """
+    """Accept the current reassigned review for its responsible team. Parent response must remain active with the
+    handed-off owner and a future check-in, without an accompanying decision."""
     decision_review_fallback_owner: str | Unset = UNSET
-    """ OperationWorkflowReviewResponseRequest.decision_review_fallback_owner. Optional distinct fallback team for
+    """OperationWorkflowReviewResponseRequest.decision_review_fallback_owner. Optional distinct fallback team for
     future overdue decision reviews. Request omission preserves policy and empty string clears it; active episodes
-    retain their pinned fallback. """
+    retain their pinned fallback."""
     decision_review_after_seconds: int | Unset = UNSET
-    """ OperationWorkflowReviewResponseRequest.decision_review_after_seconds. Future decision revalidation window;
-    defaults to 86400 seconds. Existing deadlines remain pinned; request omission preserves current policy. """
+    """OperationWorkflowReviewResponseRequest.decision_review_after_seconds. Future decision revalidation window;
+    defaults to 86400 seconds. Existing deadlines remain pinned; request omission preserves current policy."""
     decision: OperationWorkflowReviewResponseDecisionRequest | Unset = UNSET
-    """ Explicit advisory continue, revise or pause decision on an existing active response. Saving re-observes
-    scoped sources and checks the reviewed health digest again under the notification lock. """
+    """Explicit advisory continue, revise or pause decision on an existing active response. Saving re-observes
+    scoped sources and checks the reviewed health digest again under the notification lock."""
     fallback_owner: str | Unset = UNSET
-    """ OperationWorkflowReviewResponseRequest.fallback_owner. Optional distinct team for a missed check-in; omit to
+    """OperationWorkflowReviewResponseRequest.fallback_owner. Optional distinct team for a missed check-in; omit to
     preserve existing policy, or send empty to clear it. Explicit ownership changes protect the current check-in
-    from automatic takeover. """
+    from automatic takeover."""
     check_in_at: datetime.datetime | Unset = UNSET
-    """ OperationWorkflowReviewResponseRequest.check_in_at. Required future check-in for active responses; absent
-    when resolved. Replaces inbox attention time without changing the original alert response deadline. """
+    """OperationWorkflowReviewResponseRequest.check_in_at. Required future check-in for active responses; absent
+    when resolved. Replaces inbox attention time without changing the original alert response deadline."""
     reviews: list[OperationWorkflowReviewResponseLinkRequest] | Unset = UNSET
-    """ OperationWorkflowReviewResponseRequest.reviews. Required nonempty link set on first creation. Omit on later
+    """OperationWorkflowReviewResponseRequest.reviews. Required nonempty link set on first creation. Omit on later
     edits to preserve it; supplied sets must exactly match existing links. Links cannot be dropped to manufacture
-    resolution. """
+    resolution."""
 
     def to_dict(self) -> dict[str, Any]:
         owner = self.owner

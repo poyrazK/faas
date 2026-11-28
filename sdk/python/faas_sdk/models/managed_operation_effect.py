@@ -14,13 +14,13 @@ class ManagedOperationEffect:
     """Named business webhook delivery proposed by a managed HTTP operation handler."""
 
     name: str
-    """ Unique within this operation completion. """
+    """Unique within this operation completion."""
     webhook_id: UUID
-    """ Explicit operation.effect subscriber owned by the authenticated operation scope. """
+    """Explicit operation.effect subscriber owned by the authenticated operation scope."""
     type_: str
-    """ Business event type carried inside the operation.effect payload. """
+    """Business event type carried inside the operation.effect payload."""
     payload: Any
-    """ JSON business data bounded to 64 KiB. """
+    """JSON business data bounded to 64 KiB."""
 
     def to_dict(self) -> dict[str, Any]:
         name = self.name

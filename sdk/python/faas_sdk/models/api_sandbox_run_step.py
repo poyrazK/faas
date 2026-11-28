@@ -27,12 +27,12 @@ class APISandboxRunStep:
     method: str
     duration_ms: int
     path: str | Unset = UNSET
-    """ Saved request path without its query string. """
+    """Saved request path without its query string."""
     partner_request: bool | Unset = UNSET
     acknowledgement_dropped: bool | Unset = UNSET
-    """ Gregale intentionally ignored the first successful HTTP response. """
+    """Gregale intentionally ignored the first successful HTTP response."""
     partner_applied_count: int | Unset = UNSET
-    """ Business effects reported by the partner. """
+    """Business effects reported by the partner."""
     kind: APISandboxRunStepKind | Unset = UNSET
     event_type: str | Unset = UNSET
     invocation_id: UUID | Unset = UNSET

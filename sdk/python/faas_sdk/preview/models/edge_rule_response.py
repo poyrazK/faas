@@ -1,0 +1,664 @@
+from __future__ import annotations
+
+import datetime
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, TypeVar, cast
+
+from attrs import define as _attrs_define
+from attrs import field as _attrs_field
+
+from ..models.edge_rule_response_kind import EdgeRuleResponseKind, check_edge_rule_response_kind
+from ..models.edge_rule_response_managed_by import EdgeRuleResponseManagedBy, check_edge_rule_response_managed_by
+from ..models.edge_rule_response_mode import EdgeRuleResponseMode, check_edge_rule_response_mode
+from ..models.edge_rule_response_unreleased_features_item import (
+    EdgeRuleResponseUnreleasedFeaturesItem,
+    check_edge_rule_response_unreleased_features_item,
+)
+from ..models.edge_rule_response_validate_mode import (
+    EdgeRuleResponseValidateMode,
+    check_edge_rule_response_validate_mode,
+)
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.edge_rule_async_action import EdgeRuleAsyncAction
+    from ..models.edge_rule_budget_action import EdgeRuleBudgetAction
+    from ..models.edge_rule_cache_action import EdgeRuleCacheAction
+    from ..models.edge_rule_challenge_action import EdgeRuleChallengeAction
+    from ..models.edge_rule_circuit_breaker_action import EdgeRuleCircuitBreakerAction
+    from ..models.edge_rule_cors_action import EdgeRuleCORSAction
+    from ..models.edge_rule_geo_action import EdgeRuleGeoAction
+    from ..models.edge_rule_headers_action import EdgeRuleHeadersAction
+    from ..models.edge_rule_ip_action import EdgeRuleIPAction
+    from ..models.edge_rule_jwt_action import EdgeRuleJWTAction
+    from ..models.edge_rule_limit_action import EdgeRuleLimitAction
+    from ..models.edge_rule_maintenance_action import EdgeRuleMaintenanceAction
+    from ..models.edge_rule_match_expr import EdgeRuleMatchExpr
+    from ..models.edge_rule_penalty import EdgeRulePenalty
+    from ..models.edge_rule_redirect_action import EdgeRuleRedirectAction
+    from ..models.edge_rule_respond_action import EdgeRuleRespondAction
+    from ..models.edge_rule_response_match_headers import EdgeRuleResponseMatchHeaders
+    from ..models.edge_rule_retry_action import EdgeRuleRetryAction
+    from ..models.edge_rule_rewrite_action import EdgeRuleRewriteAction
+    from ..models.edge_rule_route_action import EdgeRuleRouteAction
+    from ..models.edge_rule_throttle_action import EdgeRuleThrottleAction
+    from ..models.edge_rule_validate_action import EdgeRuleValidateAction
+    from ..models.edge_rule_waf_action import EdgeRuleWAFAction
+
+
+T = TypeVar("T", bound="EdgeRuleResponse")
+
+
+@_attrs_define
+class EdgeRuleResponse:
+    """A customer-configurable edge rule. The `action` blob is a
+    kind-tagged union — the shape varies by `kind`. See
+    CreateEdgeRuleRequest.action for the per-kind shape.
+
+    """
+
+    id: str
+    account_id: str
+    app_id: str
+    match_host: str
+    """Host glob. `*` matches any; `*.example.com` matches any subdomain; `@app` covers every hostname the rule's
+    app serves, including custom domains added later."""
+    match_path: str
+    """Path glob. Trailing `*` matches anything beneath."""
+    match_methods: list[str]
+    """Empty array = match any method."""
+    match_headers: EdgeRuleResponseMatchHeaders
+    """Request headers required to match this rule. Names are case-insensitive; every configured name must have an
+    exact value present, and any repeated request-header value may satisfy it."""
+    kind: EdgeRuleResponseKind
+    action: (
+        EdgeRuleAsyncAction
+        | EdgeRuleBudgetAction
+        | EdgeRuleCacheAction
+        | EdgeRuleChallengeAction
+        | EdgeRuleCircuitBreakerAction
+        | EdgeRuleCORSAction
+        | EdgeRuleGeoAction
+        | EdgeRuleHeadersAction
+        | EdgeRuleIPAction
+        | EdgeRuleJWTAction
+        | EdgeRuleLimitAction
+        | EdgeRuleMaintenanceAction
+        | EdgeRuleRedirectAction
+        | EdgeRuleRespondAction
+        | EdgeRuleRetryAction
+        | EdgeRuleRewriteAction
+        | EdgeRuleRouteAction
+        | EdgeRuleThrottleAction
+        | EdgeRuleValidateAction
+        | EdgeRuleWAFAction
+    )
+    """Kind-tagged union — shape varies by `kind`."""
+    created_at: datetime.datetime
+    updated_at: datetime.datetime
+    priority: int = 100
+    enabled: bool = True
+    validate_mode: EdgeRuleResponseValidateMode | Unset = "block"
+    """Top-level source of truth for kind=validate.
+    Resolved mode; always present on read. Empty on read
+    would be a database invariant violation.
+    """
+    name: str | Unset = UNSET
+    """Operator-facing rule name."""
+    description: str | Unset = UNSET
+    """Operator-facing description."""
+    expires_at: datetime.datetime | Unset = UNSET
+    """When the gateway stops applying the rule."""
+    expired: bool | Unset = UNSET
+    """True once expires_at has passed and the rule no longer applies."""
+    match: EdgeRuleMatchExpr | Unset = UNSET
+    """Match condition, ANDed with the rule's fixed selectors. A node
+    is exactly one of all, any, not, or a field/op leaf. Fields: method,
+    path, host, client_ip, country, asn (the client IP's
+    autonomous system, e.g. 13335 or AS13335), ua_family (the
+    User-Agent's family, one of browser, mobile, bot, tool, other),
+    verified_bot (a known crawler confirmed by its operator's
+    published IP ranges or forward-confirmed reverse DNS of the client
+    IP, one of googlebot, bingbot, applebot, yandexbot, baiduspider,
+    yahoo, petalbot; absent otherwise), ai_crawler (the AI crawler the User-Agent claims, such as gptbot, claudebot,
+    ccbot, perplexitybot, bytespider), ai_crawler_purpose (that
+    crawler's purpose: training, search or assistant),
+    verified_ai_crawler (the claimed AI crawler when the client IP is
+    in its operator's published ranges; only crawlers that publish
+    ranges can verify), header:<name>, cookie:<name>, query:<name>.
+    ua_family, verified_bot and the AI crawler fields take eq, ne, in,
+    not_in, exists, missing. Ops: eq, ne, in, not_in, prefix, suffix, contains,
+    exists, missing, regex (RE2), cidr (client_ip only), in_list (list names an account list whose kind fits the
+    field). Depth at most 4,
+    at most 32 nodes, 64 values per leaf, values and regexes at most 256
+    bytes. An untrusted client IP, or its unknown country or ASN, is absent.
+    """
+    mode: EdgeRuleResponseMode | Unset = UNSET
+    """enforce (default) or log; a log-mode rule is matched and counted but never acts."""
+    managed_by: EdgeRuleResponseManagedBy | Unset = UNSET
+    """Set on the app's attack-mode rule, which changes only through /v1/apps/{slug}/edge-protection/attack-mode;
+    PATCH refuses it. Absent on every other rule."""
+    penalty: EdgeRulePenalty | Unset = UNSET
+    """A rule's penalty box. Once the rule has refused
+    the same client `after` times within `within_seconds`, every request
+    from that client to the app is refused with 403 `penalty_box` and
+    Retry-After for `seconds`, whichever rule or path it targets. The
+    client is its IP address (an IPv6 client is its /64). Boxes are held
+    in each gateway node's memory. Allowed on ip, geo, throttle and waf
+    (block mode) rules; editing the rule's penalty away, disabling it or
+    putting it in log mode releases its clients.
+    """
+    unreleased_features: list[EdgeRuleResponseUnreleasedFeaturesItem] | Unset = UNSET
+    """Gated features this rule uses that are not yet released to the
+    account. The gateway does not enforce them:
+    a challenge rule is inert, a warn or block WAF rule only
+    observes, a penalty boxes nobody, an AI crawler condition never
+    matches, and attack mode challenges nobody. Absent when every
+    feature the rule uses is released.
+    """
+    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        from ..models.edge_rule_async_action import EdgeRuleAsyncAction
+        from ..models.edge_rule_budget_action import EdgeRuleBudgetAction
+        from ..models.edge_rule_cache_action import EdgeRuleCacheAction
+        from ..models.edge_rule_circuit_breaker_action import EdgeRuleCircuitBreakerAction
+        from ..models.edge_rule_cors_action import EdgeRuleCORSAction
+        from ..models.edge_rule_geo_action import EdgeRuleGeoAction
+        from ..models.edge_rule_headers_action import EdgeRuleHeadersAction
+        from ..models.edge_rule_ip_action import EdgeRuleIPAction
+        from ..models.edge_rule_jwt_action import EdgeRuleJWTAction
+        from ..models.edge_rule_limit_action import EdgeRuleLimitAction
+        from ..models.edge_rule_maintenance_action import EdgeRuleMaintenanceAction
+        from ..models.edge_rule_redirect_action import EdgeRuleRedirectAction
+        from ..models.edge_rule_respond_action import EdgeRuleRespondAction
+        from ..models.edge_rule_retry_action import EdgeRuleRetryAction
+        from ..models.edge_rule_rewrite_action import EdgeRuleRewriteAction
+        from ..models.edge_rule_route_action import EdgeRuleRouteAction
+        from ..models.edge_rule_throttle_action import EdgeRuleThrottleAction
+        from ..models.edge_rule_validate_action import EdgeRuleValidateAction
+        from ..models.edge_rule_waf_action import EdgeRuleWAFAction
+
+        id = self.id
+
+        account_id = self.account_id
+
+        app_id = self.app_id
+
+        match_host = self.match_host
+
+        match_path = self.match_path
+
+        match_methods = self.match_methods
+
+        match_headers = self.match_headers.to_dict()
+
+        priority = self.priority
+
+        enabled = self.enabled
+
+        kind: str = self.kind
+
+        action: dict[str, Any]
+        if isinstance(self.action, EdgeRuleRouteAction):
+            action = self.action.to_dict()
+        elif isinstance(self.action, EdgeRuleRewriteAction):
+            action = self.action.to_dict()
+        elif isinstance(self.action, EdgeRuleRedirectAction):
+            action = self.action.to_dict()
+        elif isinstance(self.action, EdgeRuleHeadersAction):
+            action = self.action.to_dict()
+        elif isinstance(self.action, EdgeRuleCORSAction):
+            action = self.action.to_dict()
+        elif isinstance(self.action, EdgeRuleJWTAction):
+            action = self.action.to_dict()
+        elif isinstance(self.action, EdgeRuleIPAction):
+            action = self.action.to_dict()
+        elif isinstance(self.action, EdgeRuleValidateAction):
+            action = self.action.to_dict()
+        elif isinstance(self.action, EdgeRuleLimitAction):
+            action = self.action.to_dict()
+        elif isinstance(self.action, EdgeRuleMaintenanceAction):
+            action = self.action.to_dict()
+        elif isinstance(self.action, EdgeRuleGeoAction):
+            action = self.action.to_dict()
+        elif isinstance(self.action, EdgeRuleThrottleAction):
+            action = self.action.to_dict()
+        elif isinstance(self.action, EdgeRuleBudgetAction):
+            action = self.action.to_dict()
+        elif isinstance(self.action, EdgeRuleCacheAction):
+            action = self.action.to_dict()
+        elif isinstance(self.action, EdgeRuleRespondAction):
+            action = self.action.to_dict()
+        elif isinstance(self.action, EdgeRuleRetryAction):
+            action = self.action.to_dict()
+        elif isinstance(self.action, EdgeRuleCircuitBreakerAction):
+            action = self.action.to_dict()
+        elif isinstance(self.action, EdgeRuleAsyncAction):
+            action = self.action.to_dict()
+        elif isinstance(self.action, EdgeRuleWAFAction):
+            action = self.action.to_dict()
+        else:
+            action = self.action.to_dict()
+
+        created_at = self.created_at.isoformat()
+
+        updated_at = self.updated_at.isoformat()
+
+        validate_mode: str | Unset = UNSET
+        if not isinstance(self.validate_mode, Unset):
+            validate_mode = self.validate_mode
+
+        name = self.name
+
+        description = self.description
+
+        expires_at: str | Unset = UNSET
+        if not isinstance(self.expires_at, Unset):
+            expires_at = self.expires_at.isoformat()
+
+        expired = self.expired
+
+        match: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.match, Unset):
+            match = self.match.to_dict()
+
+        mode: str | Unset = UNSET
+        if not isinstance(self.mode, Unset):
+            mode = self.mode
+
+        managed_by: str | Unset = UNSET
+        if not isinstance(self.managed_by, Unset):
+            managed_by = self.managed_by
+
+        penalty: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.penalty, Unset):
+            penalty = self.penalty.to_dict()
+
+        unreleased_features: list[str] | Unset = UNSET
+        if not isinstance(self.unreleased_features, Unset):
+            unreleased_features = []
+            for unreleased_features_item_data in self.unreleased_features:
+                unreleased_features_item: str = unreleased_features_item_data
+                unreleased_features.append(unreleased_features_item)
+
+        field_dict: dict[str, Any] = {}
+        field_dict.update(self.additional_properties)
+        field_dict.update(
+            {
+                "id": id,
+                "account_id": account_id,
+                "app_id": app_id,
+                "match_host": match_host,
+                "match_path": match_path,
+                "match_methods": match_methods,
+                "match_headers": match_headers,
+                "priority": priority,
+                "enabled": enabled,
+                "kind": kind,
+                "action": action,
+                "created_at": created_at,
+                "updated_at": updated_at,
+            }
+        )
+        if validate_mode is not UNSET:
+            field_dict["validate_mode"] = validate_mode
+        if name is not UNSET:
+            field_dict["name"] = name
+        if description is not UNSET:
+            field_dict["description"] = description
+        if expires_at is not UNSET:
+            field_dict["expires_at"] = expires_at
+        if expired is not UNSET:
+            field_dict["expired"] = expired
+        if match is not UNSET:
+            field_dict["match"] = match
+        if mode is not UNSET:
+            field_dict["mode"] = mode
+        if managed_by is not UNSET:
+            field_dict["managed_by"] = managed_by
+        if penalty is not UNSET:
+            field_dict["penalty"] = penalty
+        if unreleased_features is not UNSET:
+            field_dict["unreleased_features"] = unreleased_features
+
+        return field_dict
+
+    @classmethod
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.edge_rule_async_action import EdgeRuleAsyncAction
+        from ..models.edge_rule_budget_action import EdgeRuleBudgetAction
+        from ..models.edge_rule_cache_action import EdgeRuleCacheAction
+        from ..models.edge_rule_challenge_action import EdgeRuleChallengeAction
+        from ..models.edge_rule_circuit_breaker_action import EdgeRuleCircuitBreakerAction
+        from ..models.edge_rule_cors_action import EdgeRuleCORSAction
+        from ..models.edge_rule_geo_action import EdgeRuleGeoAction
+        from ..models.edge_rule_headers_action import EdgeRuleHeadersAction
+        from ..models.edge_rule_ip_action import EdgeRuleIPAction
+        from ..models.edge_rule_jwt_action import EdgeRuleJWTAction
+        from ..models.edge_rule_limit_action import EdgeRuleLimitAction
+        from ..models.edge_rule_maintenance_action import EdgeRuleMaintenanceAction
+        from ..models.edge_rule_match_expr import EdgeRuleMatchExpr
+        from ..models.edge_rule_penalty import EdgeRulePenalty
+        from ..models.edge_rule_redirect_action import EdgeRuleRedirectAction
+        from ..models.edge_rule_respond_action import EdgeRuleRespondAction
+        from ..models.edge_rule_response_match_headers import EdgeRuleResponseMatchHeaders
+        from ..models.edge_rule_retry_action import EdgeRuleRetryAction
+        from ..models.edge_rule_rewrite_action import EdgeRuleRewriteAction
+        from ..models.edge_rule_route_action import EdgeRuleRouteAction
+        from ..models.edge_rule_throttle_action import EdgeRuleThrottleAction
+        from ..models.edge_rule_validate_action import EdgeRuleValidateAction
+        from ..models.edge_rule_waf_action import EdgeRuleWAFAction
+
+        d = dict(src_dict)
+        id = d.pop("id")
+
+        account_id = d.pop("account_id")
+
+        app_id = d.pop("app_id")
+
+        match_host = d.pop("match_host")
+
+        match_path = d.pop("match_path")
+
+        match_methods = cast(list[str], d.pop("match_methods"))
+
+        match_headers = EdgeRuleResponseMatchHeaders.from_dict(d.pop("match_headers"))
+
+        priority = d.pop("priority")
+
+        enabled = d.pop("enabled")
+
+        kind = check_edge_rule_response_kind(d.pop("kind"))
+
+        def _parse_action(
+            data: object,
+        ) -> (
+            EdgeRuleAsyncAction
+            | EdgeRuleBudgetAction
+            | EdgeRuleCacheAction
+            | EdgeRuleChallengeAction
+            | EdgeRuleCircuitBreakerAction
+            | EdgeRuleCORSAction
+            | EdgeRuleGeoAction
+            | EdgeRuleHeadersAction
+            | EdgeRuleIPAction
+            | EdgeRuleJWTAction
+            | EdgeRuleLimitAction
+            | EdgeRuleMaintenanceAction
+            | EdgeRuleRedirectAction
+            | EdgeRuleRespondAction
+            | EdgeRuleRetryAction
+            | EdgeRuleRewriteAction
+            | EdgeRuleRouteAction
+            | EdgeRuleThrottleAction
+            | EdgeRuleValidateAction
+            | EdgeRuleWAFAction
+        ):
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                action_type_0 = EdgeRuleRouteAction.from_dict(data)
+
+                return action_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                action_type_1 = EdgeRuleRewriteAction.from_dict(data)
+
+                return action_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                action_type_2 = EdgeRuleRedirectAction.from_dict(data)
+
+                return action_type_2
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                action_type_3 = EdgeRuleHeadersAction.from_dict(data)
+
+                return action_type_3
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                action_type_4 = EdgeRuleCORSAction.from_dict(data)
+
+                return action_type_4
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                action_type_5 = EdgeRuleJWTAction.from_dict(data)
+
+                return action_type_5
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                action_type_6 = EdgeRuleIPAction.from_dict(data)
+
+                return action_type_6
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                action_type_7 = EdgeRuleValidateAction.from_dict(data)
+
+                return action_type_7
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                action_type_8 = EdgeRuleLimitAction.from_dict(data)
+
+                return action_type_8
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                action_type_9 = EdgeRuleMaintenanceAction.from_dict(data)
+
+                return action_type_9
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                action_type_10 = EdgeRuleGeoAction.from_dict(data)
+
+                return action_type_10
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                action_type_11 = EdgeRuleThrottleAction.from_dict(data)
+
+                return action_type_11
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                action_type_12 = EdgeRuleBudgetAction.from_dict(data)
+
+                return action_type_12
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                action_type_13 = EdgeRuleCacheAction.from_dict(data)
+
+                return action_type_13
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                action_type_14 = EdgeRuleRespondAction.from_dict(data)
+
+                return action_type_14
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                action_type_15 = EdgeRuleRetryAction.from_dict(data)
+
+                return action_type_15
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                action_type_16 = EdgeRuleCircuitBreakerAction.from_dict(data)
+
+                return action_type_16
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                action_type_17 = EdgeRuleAsyncAction.from_dict(data)
+
+                return action_type_17
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                action_type_18 = EdgeRuleWAFAction.from_dict(data)
+
+                return action_type_18
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            if not isinstance(data, dict):
+                raise TypeError()
+            action_type_19 = EdgeRuleChallengeAction.from_dict(data)
+
+            return action_type_19
+
+        action = _parse_action(d.pop("action"))
+
+        created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
+
+        _validate_mode = d.pop("validate_mode", UNSET)
+        validate_mode: EdgeRuleResponseValidateMode | Unset
+        if isinstance(_validate_mode, Unset):
+            validate_mode = UNSET
+        else:
+            validate_mode = check_edge_rule_response_validate_mode(_validate_mode)
+
+        name = d.pop("name", UNSET)
+
+        description = d.pop("description", UNSET)
+
+        _expires_at = d.pop("expires_at", UNSET)
+        expires_at: datetime.datetime | Unset
+        if isinstance(_expires_at, Unset):
+            expires_at = UNSET
+        else:
+            expires_at = datetime.datetime.fromisoformat(_expires_at)
+
+        expired = d.pop("expired", UNSET)
+
+        _match = d.pop("match", UNSET)
+        match: EdgeRuleMatchExpr | Unset
+        if isinstance(_match, Unset):
+            match = UNSET
+        else:
+            match = EdgeRuleMatchExpr.from_dict(_match)
+
+        _mode = d.pop("mode", UNSET)
+        mode: EdgeRuleResponseMode | Unset
+        if isinstance(_mode, Unset):
+            mode = UNSET
+        else:
+            mode = check_edge_rule_response_mode(_mode)
+
+        _managed_by = d.pop("managed_by", UNSET)
+        managed_by: EdgeRuleResponseManagedBy | Unset
+        if isinstance(_managed_by, Unset):
+            managed_by = UNSET
+        else:
+            managed_by = check_edge_rule_response_managed_by(_managed_by)
+
+        _penalty = d.pop("penalty", UNSET)
+        penalty: EdgeRulePenalty | Unset
+        if isinstance(_penalty, Unset):
+            penalty = UNSET
+        else:
+            penalty = EdgeRulePenalty.from_dict(_penalty)
+
+        _unreleased_features = d.pop("unreleased_features", UNSET)
+        unreleased_features: list[EdgeRuleResponseUnreleasedFeaturesItem] | Unset = UNSET
+        if _unreleased_features is not UNSET:
+            unreleased_features = []
+            for unreleased_features_item_data in _unreleased_features:
+                unreleased_features_item = check_edge_rule_response_unreleased_features_item(
+                    unreleased_features_item_data
+                )
+
+                unreleased_features.append(unreleased_features_item)
+
+        edge_rule_response = cls(
+            id=id,
+            account_id=account_id,
+            app_id=app_id,
+            match_host=match_host,
+            match_path=match_path,
+            match_methods=match_methods,
+            match_headers=match_headers,
+            priority=priority,
+            enabled=enabled,
+            kind=kind,
+            action=action,
+            created_at=created_at,
+            updated_at=updated_at,
+            validate_mode=validate_mode,
+            name=name,
+            description=description,
+            expires_at=expires_at,
+            expired=expired,
+            match=match,
+            mode=mode,
+            managed_by=managed_by,
+            penalty=penalty,
+            unreleased_features=unreleased_features,
+        )
+
+        edge_rule_response.additional_properties = d
+        return edge_rule_response
+
+    @property
+    def additional_keys(self) -> list[str]:
+        return list(self.additional_properties.keys())
+
+    def __getitem__(self, key: str) -> Any:
+        return self.additional_properties[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        self.additional_properties[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del self.additional_properties[key]
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.additional_properties

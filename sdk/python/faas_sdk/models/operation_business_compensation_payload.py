@@ -23,9 +23,9 @@ class OperationBusinessCompensationPayload:
 
     kind: OperationBusinessCompensationPayloadKind
     compensation: OperationBusinessCompensation
-    """ Application-reported compensation workflow observation. Confirmed status requires a nonempty reference. Text
+    """Application-reported compensation workflow observation. Confirmed status requires a nonempty reference. Text
     bounds are UTF-8 bytes without control characters. Source must be a retained confirmed effect in the same
-    account, app, customer, and environment. """
+    account, app, customer, and environment."""
 
     def to_dict(self) -> dict[str, Any]:
         kind: str = self.kind

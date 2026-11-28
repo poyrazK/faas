@@ -21,13 +21,12 @@ class CustomMetricListResponse:
 
     metrics: list[CustomMetricResponse]
     freshness_seconds: int
-    """ A metric older than this reports no signal to the scheduler rather than its last value, so a dead pusher
-    cannot pin the fleet at a frozen backlog. """
+    """A metric older than this reports no signal to the scheduler rather than its last value, so a dead pusher
+    cannot pin the fleet at a frozen backlog."""
     max_metrics: int
-    """ Maximum distinct metric names this app may hold (per plan). """
+    """Maximum distinct metric names this app may hold (per plan)."""
     max_series: int | Unset = UNSET
-    """ Maximum labelled series this app may hold across its metrics (per plan); each metric also holds at most 50.
-    """
+    """Maximum labelled series this app may hold across its metrics (per plan); each metric also holds at most 50."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

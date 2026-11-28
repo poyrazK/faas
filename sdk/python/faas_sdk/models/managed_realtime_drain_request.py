@@ -16,22 +16,22 @@ class ManagedRealtimeDrainRequest:
     """Bounded or explicitly all-matching auditable selection for closing live connections."""
 
     reason: str
-    """ Required reason recorded in the audit event and close request. """
+    """Required reason recorded in the audit event and close request."""
     channel: str | Unset = UNSET
-    """ Only select connections subscribed to this channel. """
+    """Only select connections subscribed to this channel."""
     principal: str | Unset = UNSET
-    """ Only select connections for this authenticated principal. """
+    """Only select connections for this authenticated principal."""
     connection_ids: list[str] | Unset = UNSET
-    """ Explicit connection IDs to select in addition to the filters. """
+    """Explicit connection IDs to select in addition to the filters."""
     limit: int | Unset = 100
-    """ Maximum number of connections to select. """
+    """Maximum number of connections to select."""
     all_: bool | Unset = False
-    """ Select every matching connection up to the server safety cap of 10,000; cannot be combined with
-    connection_ids. Any supplied limit is ignored. """
+    """Select every matching connection up to the server safety cap of 10,000; cannot be combined with
+    connection_ids. Any supplied limit is ignored."""
     dry_run: bool | Unset = False
-    """ Return the selection without closing any connection. """
+    """Return the selection without closing any connection."""
     allow_partial: bool | Unset = False
-    """ Permit closing the reachable subset when some nodes are unavailable. """
+    """Permit closing the reachable subset when some nodes are unavailable."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -25,18 +25,18 @@ class EdgeAttackModeStatus:
     """
 
     active: bool
-    """ Attack mode is on now. """
+    """Attack mode is on now."""
     rule_id: str | Unset = UNSET
-    """ The app-wide challenge rule that carries attack mode (managed_by attack_mode). Still set after attack mode
-    ran out, until it is switched on again or off. """
+    """The app-wide challenge rule that carries attack mode (managed_by attack_mode). Still set after attack mode
+    ran out, until it is switched on again or off."""
     started_at: datetime.datetime | Unset = UNSET
-    """ When attack mode was switched on; extending it keeps this time. """
+    """When attack mode was switched on; extending it keeps this time."""
     expires_at: datetime.datetime | Unset = UNSET
-    """ When attack mode ends """
+    """When attack mode ends"""
     difficulty: int | Unset = UNSET
-    """ Leading zero bits the browser's proof of work must find. """
+    """Leading zero bits the browser's proof of work must find."""
     pass_ttl_seconds: int | Unset = UNSET
-    """ Seconds a browser that solved the attack-mode challenge is let through. """
+    """Seconds a browser that solved the attack-mode challenge is let through."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

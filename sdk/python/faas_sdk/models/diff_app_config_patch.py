@@ -62,22 +62,22 @@ class DiffAppConfigPatch:
     require_authn: bool | Unset = UNSET
     eviction_priority: DiffAppConfigPatchEvictionPriority | Unset = UNSET
     app_protocol: DiffAppConfigPatchAppProtocol | Unset = UNSET
-    """ Per-app wire-protocol selector. Same closed set + plan gate as UpdateAppRequest.app_protocol. Pointer-aware:
-    omitted → no change; non-null → set to this value. """
+    """Per-app wire-protocol selector. Same closed set + plan gate as UpdateAppRequest.app_protocol. Pointer-aware:
+    omitted → no change; non-null → set to this value."""
     execution_mode: DiffAppConfigPatchExecutionMode | Unset = UNSET
-    """ Lifecycle mode. Omitted → no change; worker runs as a long-lived non-HTTP workload. """
+    """Lifecycle mode. Omitted → no change; worker runs as a long-lived non-HTTP workload."""
     restart_policy: DiffAppConfigPatchRestartPolicy | Unset = UNSET
-    """ Supervisor restart policy. Omitted → no change. """
+    """Supervisor restart policy. Omitted → no change."""
     startup_deadline_s: int | None | Unset = UNSET
-    """ Maximum startup deadline in seconds; zero inherits the plan default. """
+    """Maximum startup deadline in seconds; zero inherits the plan default."""
     max_retries: int | None | Unset = UNSET
-    """ Maximum lifecycle restart attempts; zero inherits the plan default. """
+    """Maximum lifecycle restart attempts; zero inherits the plan default."""
     request_timeout_s: int | None | Unset = UNSET
-    """ Per-app request wall-clock timeout in seconds; zero inherits the plan/type default. """
+    """Per-app request wall-clock timeout in seconds; zero inherits the plan/type default."""
     service_replicas: DiffAppConfigPatchServiceReplicasType0 | None | Unset = UNSET
-    """ Replica policy for service mode. """
+    """Replica policy for service mode."""
     scaling_policy: None | ScalingPolicy | Unset = UNSET
-    """ Per-app scaling policy. Omitted → no change. Non-null → atomic full-overwrite of the app scaling policy. """
+    """Per-app scaling policy. Omitted → no change. Non-null → atomic full-overwrite of the app scaling policy."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -25,9 +25,9 @@ class OutboundAISemanticCache:
     embedding_integration_id: UUID
     embedding_model: str
     threshold_basis_points: int | Unset = UNSET
-    """ Cosine similarity a hit needs, in basis points. Absent or 0 means 9500. """
+    """Cosine similarity a hit needs, in basis points. Absent or 0 means 9500."""
     share_across_users: bool | Unset = UNSET
-    """ Let calls of different end users (X-Gregale-AI-User) share answers. Off, each end user has their own. """
+    """Let calls of different end users (X-Gregale-AI-User) share answers. Off, each end user has their own."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

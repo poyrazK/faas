@@ -22,7 +22,7 @@ class ListAuditEventsResponse:
 
     events: list[AuditEventResponse]
     limit: int
-    """ Effective limit applied (always 1..100). """
+    """Effective limit applied (always 1..100)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

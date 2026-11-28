@@ -22,8 +22,7 @@ class ObjectNotificationRule:
     """
 
     destination: str
-    """ arn:gregale:lambda:REGION:ACCOUNT:function:APP_UUID or arn:gregale:sqs:REGION:ACCOUNT:APP_UUID/QUEUE_NAME
-    """
+    """arn:gregale:lambda:REGION:ACCOUNT:function:APP_UUID or arn:gregale:sqs:REGION:ACCOUNT:APP_UUID/QUEUE_NAME"""
     events: list[ObjectNotificationRuleEventsItem]
     id: str | Unset = UNSET
     prefix: str | Unset = UNSET

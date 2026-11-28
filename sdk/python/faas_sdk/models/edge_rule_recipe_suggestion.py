@@ -21,15 +21,15 @@ class EdgeRuleRecipeSuggestion:
     """One suggested protection recipe and why."""
 
     recipe: str
-    """ Recipe id to add. """
+    """Recipe id to add."""
     title: str
-    """ The recipe's title. """
+    """The recipe's title."""
     reason: str
-    """ What in the app's traffic led to the suggestion. """
+    """What in the app's traffic led to the suggestion."""
     params: EdgeRuleRecipeSuggestionParams | Unset = UNSET
-    """ Recipe parameters to add it with; required parameters not listed must be supplied. """
+    """Recipe parameters to add it with; required parameters not listed must be supplied."""
     alternative: EdgeRuleRecipeSuggestionAlternative | Unset = UNSET
-    """ A softer recipe for the same observation, such as challenging browsers instead of rate-limiting. """
+    """A softer recipe for the same observation, such as challenging browsers instead of rate-limiting."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

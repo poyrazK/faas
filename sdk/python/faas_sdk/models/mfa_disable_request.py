@@ -24,7 +24,7 @@ class MFADisableRequest:
     password: str | Unset = UNSET
     recovery_code: str | Unset = UNSET
     csrf_token: str | Unset = UNSET
-    """ Dashboard CSRF token for the disable mutation. """
+    """Dashboard CSRF token for the disable mutation."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

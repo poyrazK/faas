@@ -17,10 +17,10 @@ class SetMCPReadinessReminderDefaultsRequest:
     """Complete replacement of rule reminder defaults with optimistic concurrency control."""
 
     expected_version: int
-    """ Current rule defaults version; required even when it is zero. """
+    """Current rule defaults version; required even when it is zero."""
     reminder_policy: MCPReadinessReminderPolicy
-    """ Per-incident lifetime creation budget. Both zero disables; otherwise interval is 60–86400 seconds and budget
-    is 1–10. Reconfiguration never resets the count. """
+    """Per-incident lifetime creation budget. Both zero disables; otherwise interval is 60–86400 seconds and budget
+    is 1–10. Reconfiguration never resets the count."""
 
     def to_dict(self) -> dict[str, Any]:
         expected_version = self.expected_version

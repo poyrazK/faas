@@ -16,11 +16,11 @@ class ProjectEnvironmentSharedSecret:
 
     key: str
     version: int
-    """ Increases on every value change. """
+    """Increases on every value change."""
     kid: str
-    """ Recipient of the fleet key that sealed the value. """
+    """Recipient of the fleet key that sealed the value."""
     value_hash: str
-    """ HMAC fingerprint of the value, for comparing values without revealing them. """
+    """HMAC fingerprint of the value, for comparing values without revealing them."""
     created_at: datetime.datetime
     updated_at: datetime.datetime
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

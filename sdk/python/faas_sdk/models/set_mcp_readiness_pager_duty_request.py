@@ -19,13 +19,13 @@ class SetMCPReadinessPagerDutyRequest:
     """Version-fenced PagerDuty primary receiver configuration with write-only credentials."""
 
     expected_version: int
-    """ Current native PagerDuty policy version; zero is valid for first configuration. """
+    """Current native PagerDuty policy version; zero is valid for first configuration."""
     enabled: bool
-    """ Select PagerDuty primary for incidents not yet attempted; false restores webhook primary. """
+    """Select PagerDuty primary for incidents not yet attempted; false restores webhook primary."""
     integration_key: str | Unset = UNSET
-    """ Events API v2 key for the selected region; required when enabling and omitted when disabling. """
+    """Events API v2 key for the selected region; required when enabling and omitted when disabling."""
     region: SetMCPReadinessPagerDutyRequestRegion | Unset = UNSET
-    """ Events API region for this replacement configuration; defaults to US when omitted. Omit when disabling. """
+    """Events API region for this replacement configuration; defaults to US when omitted. Omit when disabling."""
 
     def to_dict(self) -> dict[str, Any]:
         expected_version = self.expected_version

@@ -27,7 +27,7 @@ class OperationWorkflowAttentionSummary:
     group_by: OperationWorkflowAttentionSummaryGroupBy
     evaluated_at: datetime.datetime
     totals: OperationWorkflowAttentionStats
-    """ Aggregate counts and age measurements for workflows, blockers, deadlines, and unresolved dependencies. """
+    """Aggregate counts and age measurements for workflows, blockers, deadlines, and unresolved dependencies."""
     groups: list[OperationWorkflowAttentionGroup]
     next_cursor: str | Unset = UNSET
 

@@ -15,7 +15,7 @@ class AppRestartResponse:
     """Correlation handle for an accepted app restart."""
 
     wake_id: UUID
-    """ Wake id stamped on the replacement instance and wake timeline. """
+    """Wake id stamped on the replacement instance and wake timeline."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

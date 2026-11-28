@@ -3,10 +3,10 @@ from uuid import UUID
 
 import httpx
 import pytest
-from faas_sdk.preview.api.storage import sign_bucket_object
-from faas_sdk.preview.models import ObjectSignedRequest, ObjectSignRequest
 
+from faas_sdk.preview.api.storage import sign_bucket_object
 from faas_sdk.client import AuthenticatedClient
+from faas_sdk.preview.models import ObjectSignedRequest, ObjectSignRequest
 
 
 @pytest.mark.parametrize("condition", [{"if_match": '"old"'}, {"if_none_match": "*"}])

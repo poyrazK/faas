@@ -22,7 +22,7 @@ class OperationWorkflowUnmetInvariant:
     """An invariant requirement that the proposed evidence cannot satisfy, with its failure reason."""
 
     requirement: OperationWorkflowInvariantRequirement
-    """ Exact invariant code and version that must pass in a milestone committed with the transition. """
+    """Exact invariant code and version that must pass in a milestone committed with the transition."""
     reason: OperationWorkflowUnmetInvariantReason
 
     def to_dict(self) -> dict[str, Any]:

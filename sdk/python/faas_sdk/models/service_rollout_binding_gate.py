@@ -37,8 +37,8 @@ class ServiceRolloutBindingGate:
     deployment_id: UUID
     status: ServiceRolloutBindingGateStatus
     traffic_percent: int | Unset = UNSET
-    """ Exact recipient traffic percentage authorized by this routing check. Omission denotes the legacy full
-    cutover. """
+    """Exact recipient traffic percentage authorized by this routing check. Omission denotes the legacy full
+    cutover."""
     code: str | Unset = UNSET
     blockers: list[BindingCheckFinding] | Unset = UNSET
     checked_at: datetime.datetime | None | Unset = UNSET

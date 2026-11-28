@@ -21,8 +21,7 @@ class RotateOrgAPIKeyRequest:
 
     label: str | Unset = UNSET
     grace_window_days: int | Unset = UNSET
-    """ Days the predecessor stays valid after rotation. `0` is atomic; omitted/null falls back to the plan default.
-    """
+    """Days the predecessor stays valid after rotation. `0` is atomic; omitted/null falls back to the plan default."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

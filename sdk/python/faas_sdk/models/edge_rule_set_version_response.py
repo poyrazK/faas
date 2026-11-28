@@ -23,12 +23,12 @@ class EdgeRuleSetVersionResponse:
     version: int
     rule_count: int
     rules_sha256: str
-    """ Digest of the recorded rule set. """
+    """Digest of the recorded rule set."""
     created_at: datetime.datetime
     current: bool
-    """ True for the app's latest version. """
+    """True for the app's latest version."""
     rules: list[EdgeRuleResponse] | Unset = UNSET
-    """ The recorded rules; present only when a single version is fetched. """
+    """The recorded rules; present only when a single version is fetched."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
