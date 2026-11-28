@@ -82,6 +82,7 @@ const (
 	secretNewDeviceAlerts = "AUTH_NEW_DEVICE_ALERTS"
 	secretMessagesPerTo   = "AUTH_MESSAGES_PER_RECIPIENT"
 	secretMessagesPerNet  = "AUTH_MESSAGES_PER_NETWORK"
+	secretSecurityLogDays = "AUTH_SECURITY_LOG_DAYS"
 )
 
 // SignupAccessModes are who may sign up: anyone, invited or approved
@@ -210,6 +211,9 @@ type Change struct {
 	// turns the limit off, as it is by default).
 	MessagesPerRecipient *int
 	MessagesPerNetwork   *int
+	// SecurityLogDays is how long security events are kept (0 returns to
+	// the default, api.AuthSecurityLogDaysDefault).
+	SecurityLogDays *int
 }
 
 var sessionLimit = regexp.MustCompile(`^([1-9][0-9]{0,5})([mhd])$`)
@@ -457,6 +461,17 @@ func (c Change) Secrets() (map[string]string, []string, error) {
 			return nil, nil, fmt.Errorf("%s must be 1 to %d an hour; got %d", limit.name, limit.max, *limit.count)
 		default:
 			set[limit.secret] = strconv.Itoa(*limit.count)
+		}
+	}
+	if c.SecurityLogDays != nil {
+		days := *c.SecurityLogDays
+		switch {
+		case days == 0:
+			unset = append(unset, secretSecurityLogDays)
+		case days < 0 || days > api.AuthSecurityLogMaxDays:
+			return nil, nil, fmt.Errorf("security events must be kept 1 to %d days; got %d", api.AuthSecurityLogMaxDays, days)
+		default:
+			set[secretSecurityLogDays] = strconv.Itoa(days)
 		}
 	}
 	if c.AnonymousRetentionDays != nil {
