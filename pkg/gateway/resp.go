@@ -186,11 +186,14 @@ func respReadBulk(r *bufio.Reader, limit int64) ([]byte, []byte, error) {
 	if n < 0 || n > limit {
 		return nil, nil, fmt.Errorf("%w: argument of %d bytes", errRESPProtocol, n)
 	}
+	// line aliases the reader's buffer, which reading the payload may refill
+	// and shift: copy it first.
+	raw := append(append([]byte(nil), line...), '\r', '\n')
 	payload := make([]byte, n+2)
 	if _, err := io.ReadFull(r, payload); err != nil {
 		return nil, nil, err
 	}
-	raw := append(append(append([]byte(nil), line...), '\r', '\n'), payload...)
+	raw = append(raw, payload...)
 	return payload[:n], raw, nil
 }
 
