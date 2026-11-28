@@ -29,8 +29,10 @@ func captureAuditStdout(t *testing.T) func() string {
 	if err != nil {
 		t.Fatalf("pipe: %v", err)
 	}
-	oldOut := os.Stdout
-	os.Stdout = w
+	// The audit commands now write through the osStdout seam (prod hunt
+	// r63); swap both so either path lands in the pipe.
+	oldOut, oldSeam := os.Stdout, *main.OsStdout
+	os.Stdout, *main.OsStdout = w, w
 	var buf bytes.Buffer
 	done := make(chan struct{})
 	go func() {
@@ -39,7 +41,7 @@ func captureAuditStdout(t *testing.T) func() string {
 	}()
 	return func() string {
 		_ = w.Close()
-		os.Stdout = oldOut
+		os.Stdout, *main.OsStdout = oldOut, oldSeam
 		<-done
 		return buf.String()
 	}

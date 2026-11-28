@@ -33,6 +33,12 @@ var (
 	// "delete a database you no longer need" sent a 4-of-10 account hunting
 	// for a count problem it did not have (ChronoLake finding 18).
 	ErrUsageLimitReached = fmt.Errorf("%w: monthly usage ceiling reached", pgerrors.ErrQuotaExceeded)
+	// ErrUsageNotReported is a provider that found the resource but reported
+	// no consumption at all for the window. It is an ErrUnavailable, since
+	// missing coverage does not prove zero use; the usage collector settles it
+	// only for a deleted database's closed final window
+	// (UsageCollector.settlesUnreportedWindow).
+	ErrUsageNotReported = fmt.Errorf("%w: no usage reported for the window", pgerrors.ErrUnavailable)
 )
 
 // ErrReleaseSecretsPinned refuses a binding for an app whose project

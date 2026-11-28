@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -70,10 +71,43 @@ func ExecMigration(ctx context.Context, t *testing.T, pool *pgxpool.Pool, raw st
 	defer conn.Release()
 	// A failed run must not leave its session lock_timeout on a pooled connection.
 	defer func() { _, _ = conn.Exec(context.WithoutCancel(ctx), "RESET lock_timeout") }()
+	// Tests in other schemas of the same database apply these files at the
+	// same time; a migration that looks indexes up by name in the catalogue
+	// (an invalid concurrent build, say) would see theirs. One at a time: the
+	// lock is polled rather than waited on, because CREATE INDEX
+	// CONCURRENTLY waits for every open snapshot, a blocked lock call's too.
+	if err := lockMigrations(ctx, conn); err != nil {
+		return err
+	}
+	defer func() {
+		_, _ = conn.Exec(context.WithoutCancel(ctx), "SELECT pg_advisory_unlock($1)", migrationLockKey)
+	}()
 	for _, statement := range MigrationStatements(raw, up) {
 		if _, err := conn.Exec(ctx, statement); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// migrationLockKey serializes ExecMigration across a database's test schemas.
+const migrationLockKey int64 = 0x7067746573746d67 // "pgtestmg"
+
+// lockMigrations takes migrationLockKey on conn, polling so that no
+// statement waits while another test's concurrent index build runs.
+func lockMigrations(ctx context.Context, conn *pgxpool.Conn) error {
+	for {
+		var ok bool
+		if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", migrationLockKey).Scan(&ok); err != nil {
+			return err
+		}
+		if ok {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
 }

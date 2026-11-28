@@ -717,6 +717,7 @@ func TestUpdateAlertRule_MetricFamilySwapRejected(t *testing.T) {
 	mustSeedApp(t, e, "alerts-swap")
 	req := alertRuleReq()
 	req.Metric = "error_rate_pct"
+	req.Threshold = 5 // a percentage; the default 500 (ms) never fires
 	req.FailureSource = ""
 	created := mustCreateAlertRule(t, e, "alerts-swap", req)
 	newMetric := "failed_invocations"
@@ -744,6 +745,7 @@ func TestCreateAlertRule_FailureSourceXorRejected(t *testing.T) {
 	t.Run("error_rate_with_source", func(t *testing.T) {
 		req := alertRuleReq()
 		req.Metric = "error_rate_pct"
+		req.Threshold = 5 // reachable, so only the failure source is wrong
 		req.FailureSource = "cron"
 		rec := e.do(t, "POST", "/v1/apps/alerts-xor/alerts", req, nil)
 		assertProblem(t, rec, 400, api.CodeAlertRuleInvalid)

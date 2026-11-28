@@ -2046,6 +2046,11 @@ func (b *PGBackend) recordTargetLocked(appID string, target Target) {
 	if b.targetQuarantinedLocked(appID, target, time.Now()) {
 		return
 	}
+	if b.metrics != nil {
+		// A new release's request series start at zero from its first
+		// routed instance, not its first request (prod hunt r58 follow-up).
+		b.metrics.deploymentLabels.admitSeen(appID, target.DeploymentID)
+	}
 	if target.ReadinessGates != nil && len(target.ReadinessGates.RequiredSources) > 0 {
 		target.RequiresReadiness = true
 	}

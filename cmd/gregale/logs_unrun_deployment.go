@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -22,7 +23,7 @@ import (
 // stdout and the stream ends with a summary record carrying the failure: a
 // failed deploy's recovery command points here, and AGENTS.md has agents run
 // every command with --json (#6635).
-func buildLogsForUnrunDeployment(ctx context.Context, client *api.Client, deploymentID string, follow bool) (code int, handled bool) {
+func buildLogsForUnrunDeployment(ctx context.Context, client *api.Client, slug, deploymentID string, follow bool) (code int, handled bool) {
 	dep, err := client.GetDeployment(ctx, deploymentID)
 	if err != nil {
 		return 0, false
@@ -65,10 +66,10 @@ func buildLogsForUnrunDeployment(ctx context.Context, client *api.Client, deploy
 				}
 			}
 		case "end":
-			return finishUnrunDeploymentLogs(ctx, client, dep), true
+			return finishUnrunDeploymentLogs(ctx, client, slug, dep), true
 		}
 	}
-	return finishUnrunDeploymentLogs(ctx, client, dep), true
+	return finishUnrunDeploymentLogs(ctx, client, slug, dep), true
 }
 
 // unrunDeploymentLogRecord is one --json record of a never-served
@@ -87,10 +88,11 @@ type unrunDeploymentLogRecord struct {
 
 // finishUnrunDeploymentLogs ends the log with the deployment's persisted
 // failure reason, which the log rows alone may not state.
-func finishUnrunDeploymentLogs(ctx context.Context, client *api.Client, dep api.DeploymentResponse) int {
+func finishUnrunDeploymentLogs(ctx context.Context, client *api.Client, slug string, dep api.DeploymentResponse) int {
 	if fresh, err := client.GetDeployment(ctx, dep.ID); err == nil {
 		dep = fresh
 	}
+	printFailedDeploymentGuestLogs(ctx, client, slug, dep, time.Now())
 	if jsonOutput {
 		message := "This deployment never served, so it has build and deploy logs only; runtime and HTTP logs are separate."
 		if !isTerminalDeploymentStatus(dep.Status) {
