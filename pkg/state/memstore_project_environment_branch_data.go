@@ -58,6 +58,18 @@ func (m *MemStore) CompleteProjectEnvironmentBranchData(_ context.Context, envir
 	return nil
 }
 
+func (m *MemStore) ReopenProjectEnvironmentBranchData(_ context.Context, environmentID string, now time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.projectEnvironmentBranches[environmentID]
+	if !ok || b.DataState != EnvironmentBranchDataReady {
+		return false, nil
+	}
+	b.DataState, b.DataError, b.DataAttempts, b.dataNextAttemptAt = EnvironmentBranchDataPending, "", 0, now
+	m.projectEnvironmentBranches[environmentID] = b
+	return true, nil
+}
+
 func (m *MemStore) RetryProjectEnvironmentBranchData(_ context.Context, environmentID, leaseToken string, next time.Time, message string, failed bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -182,17 +194,47 @@ func (m *MemStore) ProjectEnvironmentBranchDeploymentsAwaitingActivation(_ conte
 			out = append(out, d)
 		}
 	}
+	// Builds into the branch's scope with no release command (PgStore).
+	for _, d := range m.deployments {
+		if _, linked := m.projectEnvironmentBranchDeployments[d.ID]; linked || d.Status != DeploySnapshotting || len(d.ReleaseCommand) > 0 {
+			continue
+		}
+		if b, ok := m.environmentBranchOfScopeLocked(d); ok && b.EnvironmentID == environmentID {
+			out = append(out, d)
+		}
+	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
+}
+
+// environmentBranchOfScopeLocked is the branch of d's app's project whose
+// slug is d's scope.
+func (m *MemStore) environmentBranchOfScopeLocked(d Deployment) (ProjectEnvironmentBranch, bool) {
+	app, ok := m.apps[d.AppID]
+	if !ok || app.ProjectID == "" {
+		return ProjectEnvironmentBranch{}, false
+	}
+	for _, b := range m.projectEnvironmentBranches {
+		if b.ProjectID == app.ProjectID && b.Slug == d.Scope {
+			return b, true
+		}
+	}
+	return ProjectEnvironmentBranch{}, false
 }
 
 func (m *MemStore) EnvironmentBranchDataReady(_ context.Context, deploymentID string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	row, ok := m.projectEnvironmentBranchDeployments[deploymentID]
+	if row, ok := m.projectEnvironmentBranchDeployments[deploymentID]; ok {
+		b, ok := m.projectEnvironmentBranches[row.EnvironmentID]
+		return ok && b.DataState == EnvironmentBranchDataReady, nil
+	}
+	d, ok := m.deployments[deploymentID]
 	if !ok {
 		return true, nil
 	}
-	b, ok := m.projectEnvironmentBranches[row.EnvironmentID]
-	return ok && b.DataState == EnvironmentBranchDataReady, nil
+	if b, ok := m.environmentBranchOfScopeLocked(d); ok {
+		return b.DataState == EnvironmentBranchDataReady, nil
+	}
+	return true, nil
 }

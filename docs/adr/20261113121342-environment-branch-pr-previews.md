@@ -122,6 +122,24 @@ For each production database the PR branch's parent binds:
 - The restore lag (2 s after the branch point) applies only when the branch copies a
   database.
 
+### Amendment 2026-11-28: production trial fixes
+
+The slice 4 trial (2026-11-28) found three gaps, now closed:
+
+- **PR builds wait for the branch's data.** A PR build into a branch whose data is still pending
+  went live with no database URL. A build in a branch's scope now waits like the branch's own
+  deployments: imaged holds its release command (the release sweep resumes it), schedd does
+  not prime it, and the branch data reconciler primes one without a release command once the
+  data is ready (`EnvironmentBranchDataReady` covers deployments in the branch's scope).
+- **Bindings made after the copy.** A PR build reopens a ready branch's data when the app has a
+  production binding, of a database with previews copy or empty, under a key the branch's
+  scope does not bind. The reconciler's pass is idempotent and adds the binding; the build
+  waits for it. App previews set up their databases on every build the same way.
+- **In-progress budget.** A copy or binding still being made is checked without spending an
+  attempt for 10 minutes from when it was made, not from the branch's creation. A branch whose
+  copy could not start for two hours (stale usage) spent its last attempts on a database that
+  was only provisioning.
+
 ## Consequences
 
 - A branch preview serves production's configuration and, per database, a copy of its data,

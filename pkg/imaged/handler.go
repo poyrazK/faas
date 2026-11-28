@@ -2249,6 +2249,13 @@ func (h *Handler) handoffSnapshotPrime(ctx context.Context, app state.App, dep s
 		// command, queue consumer or serving deployment to execute.
 		return nil
 	}
+	// A pull request's build into its environment branch waits for the
+	// branch's data: its release command and workloads read the branch's
+	// binding URLs. The release approval sweep resumes one with a release
+	// command, and the branch data reconciler primes one without.
+	if held, err := h.holdForEnvironmentBranchData(ctx, dep); err != nil || held {
+		return err
+	}
 	if len(dep.ReleaseCommand) > 0 {
 		if !h.releasePhaseEnabled {
 			return h.failReleasePhaseUnavailable(ctx, dep)

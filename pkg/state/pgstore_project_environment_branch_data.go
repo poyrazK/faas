@@ -82,6 +82,20 @@ func (s *PgStore) RetryProjectEnvironmentBranchData(ctx context.Context, environ
 		environmentID, leaseToken, next.UTC(), message, state)
 }
 
+func (s *PgStore) ReopenProjectEnvironmentBranchData(ctx context.Context, environmentID string, now time.Time) (bool, error) {
+	if !validUUID(environmentID) {
+		return false, ErrNotFound
+	}
+	tag, err := s.pool.Exec(ctx, `
+		update project_environment_branches
+		   set data_state = 'pending', data_error = '', data_attempts = 0, data_next_attempt_at = $2
+		 where environment_id = $1 and data_state = 'ready'`, environmentID, now.UTC())
+	if err != nil {
+		return false, mapErr(err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 func (s *PgStore) DeferProjectEnvironmentBranchData(ctx context.Context, environmentID, leaseToken string, next time.Time) error {
 	return s.releaseProjectEnvironmentBranchData(ctx, `
 		update project_environment_branches
@@ -241,11 +255,21 @@ func (s *PgStore) ProjectEnvironmentBranchDeploymentsAwaitingActivation(ctx cont
 	if !validUUID(environmentID) {
 		return nil, nil
 	}
+	// The branch's own deployments, and builds into its scope that wait for
+	// the data with no release command; one with a release command resumes
+	// through imaged, which runs the command first.
 	rows, err := s.pool.Query(ctx, `
 		select l.deployment_id::text from project_environment_branch_deployments l
 		  join deployments d on d.id = l.deployment_id
 		 where l.environment_id = $1 and d.status = 'snapshotting'
-		 order by l.deployment_id`, environmentID)
+		union
+		select d.id::text from project_environment_branches b
+		  join project_environments e on e.id = b.environment_id
+		  join apps a on a.project_id = e.project_id
+		  join deployments d on d.app_id = a.id and d.scope = e.slug
+		 where b.environment_id = $1 and d.status = 'snapshotting'
+		   and coalesce(cardinality(d.release_command), 0) = 0
+		 order by 1`, environmentID)
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -277,14 +301,21 @@ func (s *PgStore) EnvironmentBranchDataReady(ctx context.Context, deploymentID s
 	if !validUUID(deploymentID) {
 		return true, nil
 	}
+	// A deployment the branch created names its branch; any other deployment
+	// in a branch's scope (a pull request's build) belongs to the branch of
+	// its app's project with that slug.
 	var state string
 	err := s.pool.QueryRow(ctx, `
-		select coalesce(b.data_state, 'missing') from project_environment_branch_deployments l
-		  left join project_environment_branches b on b.environment_id = l.environment_id
-		 where l.deployment_id = $1`, deploymentID).Scan(&state)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return true, nil
-	}
+		select coalesce(
+		  (select coalesce(b.data_state, 'missing') from project_environment_branch_deployments l
+		     left join project_environment_branches b on b.environment_id = l.environment_id
+		    where l.deployment_id = $1),
+		  (select b.data_state from deployments d
+		     join apps a on a.id = d.app_id
+		     join project_environments e on e.project_id = a.project_id and e.slug = d.scope
+		     join project_environment_branches b on b.environment_id = e.id
+		    where d.id = $1),
+		  'ready')`, deploymentID).Scan(&state)
 	if err != nil {
 		return false, mapErr(err)
 	}
