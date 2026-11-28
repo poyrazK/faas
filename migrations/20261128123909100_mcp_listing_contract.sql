@@ -14,12 +14,22 @@ ALTER TABLE mcp_listings
     ADD COLUMN IF NOT EXISTS contract jsonb,
     ADD COLUMN IF NOT EXISTS contract_sha256 text,
     ADD COLUMN IF NOT EXISTS probe_secret text NOT NULL DEFAULT '';
-ALTER TABLE mcp_listings ADD CONSTRAINT mcp_listings_contract_chk CHECK (
-    (contract IS NULL AND contract_sha256 IS NULL)
-    OR (jsonb_typeof(contract) = 'object' AND octet_length(contract::text) <= 2097152
-        AND contract_sha256 ~ '^[0-9a-f]{64}$')) NOT VALID;
-ALTER TABLE mcp_listings ADD CONSTRAINT mcp_listings_probe_secret_chk CHECK (
-    probe_secret = '' OR probe_secret ~ '^[A-Za-z][A-Za-z0-9_]{0,127}$') NOT VALID;
+-- Guarded so a replay over an already-applied schema is a no-op.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'mcp_listings_contract_chk'
+                   AND conrelid = 'mcp_listings'::regclass) THEN
+        ALTER TABLE mcp_listings ADD CONSTRAINT mcp_listings_contract_chk CHECK (
+            (contract IS NULL AND contract_sha256 IS NULL)
+            OR (jsonb_typeof(contract) = 'object' AND octet_length(contract::text) <= 2097152
+                AND contract_sha256 ~ '^[0-9a-f]{64}$')) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'mcp_listings_probe_secret_chk'
+                   AND conrelid = 'mcp_listings'::regclass) THEN
+        ALTER TABLE mcp_listings ADD CONSTRAINT mcp_listings_probe_secret_chk CHECK (
+            probe_secret = '' OR probe_secret ~ '^[A-Za-z][A-Za-z0-9_]{0,127}$') NOT VALID;
+    END IF;
+END $$;
 -- +goose StatementEnd
 
 -- +goose Down
