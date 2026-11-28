@@ -107,3 +107,56 @@ moves large customer bytes to apid, resumably and within a size cap.
 - arm64 images are refused, as they are for registry deploys.
 - Signed-image apps keep the registry-only path. Supporting them would need
   client-side signatures that builderd verifies, which is out of scope here.
+
+## Amendment 1 · 2026-11-28 · Reuse the app's previous layers
+
+A redeploy of a local image usually changes one small top layer, yet the CLI
+uploads every layer again: hundreds of megabytes over the customer's link
+for a one-line change. This amendment lets a redeploy skip the layers the
+app's previous uploaded image already has.
+
+1. **Scope: the same app.** Layers are reused only from the app's own previous
+   uploaded image, never across apps or accounts. Nobody can learn whether
+   another tenant's image holds a layer, and no shared blob store needs
+   accounting or garbage collection.
+2. **The base is the app's latest uploaded image.** After a commit enqueues
+   a deployment, apid stores the full canonical archive it accepted as the
+   app's **image base**, together with a small JSON summary: the manifest
+   digest and each layer's digest and size. Each base replaces the one
+   before it, so an app holds at most one archive, no larger than the plan's
+   image cap (256 MB to 2 GB). With a remote storage backend
+   (`FAAS_STORAGE_BACKEND` oci, gcs or s3) the keys are
+   `image-bases/<app_id>.tar` and `image-bases/<app_id>.json`. A single-box
+   install keeps them under the upload spool. They sit outside `sources/`, so
+   the 24-hour source retention does not remove them. Purging an app deletes
+   its base. A soft-deleted app keeps it, so a restore can reuse it.
+   Storing the base is best effort: if it fails, the deploy goes on and the
+   next upload sends every layer.
+3. **The CLI asks, then sends a thin archive.** `GET /v1/apps/{app}/image-base`
+   returns the summary to anyone who may deploy the app, or 404 when there is
+   none. The CLI converts the image as before, leaves out the layer blobs the
+   base lists with the same digest and size, and uploads the result. The
+   `oci-layout`, `index.json`, manifest and config entries always stay.
+   The upload sets `deploy_options.reuse_image_base = true` beside
+   `source_format = "oci_image_archive"`. The session's size cap applies to
+   the thin upload, and the plan's image cap applies again to the rebuilt
+   archive.
+4. **apid rebuilds the full archive at commit.** Before inspecting, apid
+   fetches the base archive and writes a new canonical archive in the
+   canonical order. Each layer comes from the upload when it carries the
+   layer, otherwise from the base. Then the existing `Inspect` checks run on
+   the result, which re-hashes every blob, and the full archive becomes the
+   deployment's source. builderd and imaged see exactly what a full upload
+   produces and do not change. A layer that is in neither the upload nor the
+   current base (for example, another deploy replaced the base in between)
+   refuses the commit with `409 image_base_changed`. The CLI then uploads the
+   full archive. Without `reuse_image_base`, a missing blob is refused as
+   before.
+5. **Rollout.** This rides on the `local_image_deploys` flag. The CLI uses a
+   thin archive only when the image-base endpoint answers. An older apid has
+   no endpoint, so the CLI falls back to a full upload. An older CLI never
+   sets `reuse_image_base` and always uploads in full.
+
+Consequences: a redeploy uploads only the changed layers, at the cost of up to
+one stored image per app and one internal fetch of that image on each reusing
+commit. Internal transfer is cheap next to the customer's upload link.
