@@ -2164,7 +2164,7 @@ See [Errors](errors.md).
 
 ### `outbound_provider_cooldown`
 
-Outbound provider requested a cooldown
+Outbound provider requested a cooldown; The provider is cooling down after failing calls
 
 ### `outbound_provider_cooldown_unavailable`
 
@@ -2179,6 +2179,10 @@ See [Outbound integrations](outbound-integrations.md).
 ### `outbound_qualification_not_authorized`
 
 The qualification probe cannot use this outbound integration
+
+### `outbound_rate_limited`
+
+Outbound integration rate limit reached
 
 ### `outbound_relay_not_supported`
 

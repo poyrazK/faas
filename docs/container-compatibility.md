@@ -132,10 +132,11 @@ This makes existing Go, Rust, Java, Spring, .NET, Node, Python, nginx, custom
 binaries, and Docker applications portable. Images can come from a Dockerfile
 or an OCI registry. A multi-platform index resolves to its Linux/amd64 image.
 
-Images that do not share a Gregale-optimized base deploy as a self-contained
-full-rootfs workload automatically on every plan, within the plan's app-layer
-size limit. The resulting workload still uses the same Firecracker isolation,
-snapshots, metering, routing, and scale-to-zero lifecycle.
+Images that do not share a Gregale-optimized base can use a self-contained
+full-rootfs deployment. Paid plans enable that path automatically; Free plans
+currently require an explicit opt-in. The resulting workload still uses the
+same Firecracker isolation, snapshots, metering, routing, and scale-to-zero
+lifecycle.
 
 The portability boundary is intentionally small: Linux/amd64, a stateless HTTP
 listener reachable on `0.0.0.0`, and a process that honors `PORT` (default
