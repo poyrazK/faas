@@ -90,6 +90,39 @@ func BenchmarkEvaluate(b *testing.B) {
 	}
 }
 
+// BenchmarkInlineBody measures the strict in-path check with the body prefix
+// of ADR-831 amendment 22: no body, a tiny body (the fixed cost of body
+// processing), and 512 B and 2 KiB prefixes of JSON, form and plain text.
+func BenchmarkInlineBody(b *testing.B) {
+	waf, err := New(&recordingObserver{}, nil).inlineWAF(true)
+	if err != nil {
+		b.Fatal(err)
+	}
+	form := strings.Repeat("field=value+for+the+account&", 64)
+	text := strings.Repeat("lorem ipsum dolor sit amet ", 128)
+	for _, tc := range []struct{ name, body, contentType string }{
+		{"none", "", ""},
+		{"json-tiny", `{"a":1}`, "application/json"},
+		{"json-512", jsonBody(512, ""), "application/json"},
+		{"json-2KiB", jsonBody(2048, ""), "application/json"},
+		{"form-512", form[:512], "application/x-www-form-urlencoded"},
+		{"text-512", text[:512], "text/plain"},
+	} {
+		s := benchSample(1, tc.body)
+		if tc.contentType != "" {
+			s.Header.Set("Content-Type", tc.contentType)
+		}
+		b.Run(tc.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for range b.N {
+				if _, err := evaluate(waf, s); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 // BenchmarkEvaluateBodyShape separates body size from field count: CRS runs
 // its rules once per parsed argument, so many small JSON fields may cost far
 // more than one long string of the same size.

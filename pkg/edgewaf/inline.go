@@ -113,6 +113,11 @@ func (i *Inspector) CheckInline(s gateway.WAFSample) gateway.WAFInlineResult {
 		if len(s.Body) > api.EdgeWAFMaxInlineBodyBytes {
 			s.Body, s.BodyTruncated = s.Body[:api.EdgeWAFMaxInlineBodyBytes], true
 		}
+		// The cost grows with parsed fields, so score at most
+		// EdgeWAFMaxInlineBodyFields of them; the sampled check scores the rest.
+		if b, cut := boundBodyFields(s.Body, s.Header.Get("Content-Type"), api.EdgeWAFMaxInlineBodyFields); cut {
+			s.Body, s.BodyTruncated = b, true
+		}
 	} else {
 		s.Body, s.BodyTruncated = nil, false
 		// Without edge_waf_strict_inspection a long URI is not refused, but
