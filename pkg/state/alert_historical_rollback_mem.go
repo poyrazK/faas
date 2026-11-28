@@ -62,9 +62,15 @@ func (m *MemStore) requestHistoricalAlertRollbackLocked(_ context.Context, r api
 	if !historicalAlertWindowOpen(r, f, time.Now().UTC()) || m.alertHistoricalClaims[r.CandidateDeploymentID] != "" {
 		return r, ErrAlertRollbackChanged
 	}
-	// ADR-127 request telemetry is PostgreSQL-only. An in-memory store must
-	// never treat an app-wide alert value as evidence for this deployment.
-	r, _ = qualifyHistoricalAlertEvidence(r, 0, 0, nil, false, time.Now().UTC())
+	// ADR-127 request telemetry and the ADR-605 amendment 2 boot evidence are
+	// PostgreSQL-only. An in-memory store must never treat an app-wide alert
+	// value as evidence for this deployment, and builds no rollback operation
+	// that could carry a qualified intent forward.
+	if e := r.DeploymentEvidence; e != nil && e.Metric == string(AlertMetricBootFailures) {
+		r, _ = qualifyBootFailureEvidence(r, 0, 0, false, time.Now().UTC())
+	} else {
+		r, _ = qualifyHistoricalAlertEvidence(r, 0, 0, nil, false, time.Now().UTC())
+	}
 	m.alertRollbacks[r.ID] = r
 	return cloneAlertRollback(r), nil
 }

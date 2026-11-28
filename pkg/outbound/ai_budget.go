@@ -128,12 +128,32 @@ func aiBudgetExhausted(utcNow time.Time, state aiBudgetState, limits aiBudgetLim
 		if check.limit == nil {
 			continue
 		}
-		if check.used >= *check.limit || check.used+check.held+check.call > *check.limit {
+		switch {
+		case check.used >= *check.limit:
 			return check.reason, retryUntil(utcNow, check.resets), true
+		case check.used+check.call > *check.limit:
+			// The budget is not spent, but this call's own reservation does
+			// not fit what is left: a smaller output ceiling would (prod
+			// hunt 2026-11-28: a call naming no max_tokens was told the
+			// budget was exhausted, retry in 15 h, at 9% used).
+			return check.reason + ReasonReservationSuffix, retryUntil(utcNow, check.resets), true
+		case check.used+check.held+check.call > *check.limit:
+			// Calls in flight hold the rest; it frees as they settle.
+			return check.reason, aiBudgetHeldRetry, true
 		}
 	}
 	return "", 0, false
 }
+
+// ReasonReservationSuffix marks a budget refusal caused by the call's own
+// reservation rather than spent budget: daily_cost_limit_reservation.
+const ReasonReservationSuffix = "_reservation"
+
+// aiBudgetHeldRetry is the Retry-After of a call refused because calls in
+// flight hold the budget it needs: most settle within seconds, not at the
+// budget's reset; a few stream for minutes, so clients back off rather than
+// retry each second.
+const aiBudgetHeldRetry = 5 * time.Second
 
 // aiMinuteState is an app's usage in the current UTC minute.
 type aiMinuteState struct {

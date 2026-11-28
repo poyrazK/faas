@@ -27,7 +27,12 @@ directory, for example:
   python3 -I scripts/gen_ai_price_catalog.py \
       --input /tmp/litellm/model_prices_and_context_window.json \
       --commit <litellm commit sha> --generated 2026-10-19 \
-      --output pkg/outbound/aiprices/catalog.json
+      --output pkg/outbound/aiprices/catalog.json \\
+      --max-output pkg/outbound/aiprices/max_output.json \\
+      --max-input pkg/outbound/aiprices/max_input.json
+
+`make ai-prices-check` (weekly, workflow ai-prices.yml) runs it on LiteLLM's
+newest commit and fails when that adds models the catalog lacks.
 """
 
 import argparse
@@ -173,6 +178,7 @@ def model_name(key, prefixes):
 
 GENERATION_MODES = {"chat", "completion", "responses"}
 MAX_OUTPUT_TOKENS = 1_000_000
+MAX_INPUT_TOKENS = 10_000_000
 
 
 def output_limit(entry):
@@ -184,14 +190,22 @@ def output_limit(entry):
     return None
 
 
-def render_max_outputs(meta, max_outputs):
+def input_limit(entry):
+    """The model's context window in input tokens, or None when LiteLLM does not say."""
+    value = entry.get("max_input_tokens")
+    if isinstance(value, (int, Decimal)) and not isinstance(value, bool) and 0 < value <= MAX_INPUT_TOKENS:
+        return int(value)
+    return None
+
+
+def render_max_outputs(meta, max_outputs, unit="tokens: the longest response a generation model returns"):
     out = dict(meta)
-    out["unit"] = "tokens: the longest response a generation model returns"
+    out["unit"] = unit
     out["providers"] = {gateway: dict(sorted(models.items())) for gateway, models in sorted(max_outputs.items())}
     return json.dumps(out, indent=1, sort_keys=False) + "\n"
 
 
-def build(data, max_outputs=None):
+def build(data, max_outputs=None, max_inputs=None):
     container = data.get(CONTAINER_ENTRY, {}).get("code_interpreter_cost_per_session")
     container_usd = None if container is None else Decimal(container)
     providers = {}
@@ -239,6 +253,13 @@ def build(data, max_outputs=None):
                 limit = output_limit(entry)
                 if limit is not None and limit > max_outputs.setdefault(gateway, {}).get(name, 0):
                     max_outputs[gateway][name] = limit
+            # Its context window: a call that continues context stored at
+            # the provider (previous_response_id, a conversation, cached
+            # content) reserves it, since its body does not show that input.
+            if max_inputs is not None and entry.get("mode") in GENERATION_MODES:
+                limit = input_limit(entry)
+                if limit is not None and limit > max_inputs.setdefault(gateway, {}).get(name, 0):
+                    max_inputs[gateway][name] = limit
             if video:
                 for resolution, price in video_tiers(entry).items():
                     tier_name = name + "@" + resolution
@@ -248,6 +269,18 @@ def build(data, max_outputs=None):
                         models[tier_name] = tier_row
         providers[gateway] = dict(sorted(models.items()))
     return providers
+
+
+def keep_previous(previous, current):
+    """current plus every model previous has and current lacks, per provider."""
+    if not previous:
+        return current
+    merged = {gateway: dict(models) for gateway, models in current.items()}
+    for gateway, models in previous.items():
+        target = merged.setdefault(gateway, {})
+        for name, value in models.items():
+            target.setdefault(name, value)
+    return {gateway: dict(sorted(models.items())) for gateway, models in sorted(merged.items())}
 
 
 def price_weight(row):
@@ -279,6 +312,10 @@ def main():
     parser.add_argument("--generated", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--max-output", help="also write each generation model's longest response here (max_output.json)")
+    parser.add_argument("--max-input", help="also write each generation model's context window here (max_input.json)")
+    parser.add_argument("--keep", action="store_true",
+                        help="keep the rows of models already in the output files that LiteLLM no longer lists: "
+                             "dropping one would refuse its calls under a cost cap")
     args = parser.parse_args()
     with open(args.input, encoding="utf-8") as handle:
         data = json.load(handle, parse_float=Decimal)
@@ -292,13 +329,29 @@ def main():
         "fields": ["input", "cached_input", "cache_write", "output", "input_image", "output_image", "image", "audio_minute", "characters",
                    "video_second", "web_search", "file_search", "code_session_gb", "input_audio", "cached_input_audio", "output_audio"],
     }
+    previous = {}
+    if args.keep:
+        for name, path in (("catalog", args.output), ("max_output", args.max_output), ("max_input", args.max_input)):
+            try:
+                with open(path, encoding="utf-8") as handle:
+                    previous[name] = json.load(handle)["providers"]
+            except (TypeError, OSError, ValueError, KeyError):
+                previous[name] = None
     with open(args.output, "w", encoding="utf-8") as handle:
         max_outputs = {} if args.max_output else None
-        handle.write(render(meta, build(data, max_outputs)))
+        max_inputs = {} if args.max_input else None
+        providers = build(data, max_outputs, max_inputs)
+        if args.keep:
+            providers = keep_previous(previous.get("catalog"), providers)
+        handle.write(render(meta, providers))
+    limits_meta = {key: meta[key] for key in ("source", "license", "generated")}
     if args.max_output:
-        limits_meta = {key: meta[key] for key in ("source", "license", "generated")}
         with open(args.max_output, "w", encoding="utf-8") as handle:
-            handle.write(render_max_outputs(limits_meta, max_outputs))
+            handle.write(render_max_outputs(limits_meta, keep_previous(previous.get("max_output"), max_outputs)))
+    if args.max_input:
+        with open(args.max_input, "w", encoding="utf-8") as handle:
+            handle.write(render_max_outputs(limits_meta, keep_previous(previous.get("max_input"), max_inputs),
+                                            "tokens: the context window of a generation model"))
 
 
 if __name__ == "__main__":

@@ -49,7 +49,7 @@ func (q *Queries) DeleteMCPListing(ctx context.Context, db DBTX, arg DeleteMCPLi
 }
 
 const getMCPListing = `-- name: GetMCPListing :one
-SELECT app_id, account_id, title, summary, endpoint, tools, registry_name, show_usage, version, published_at, updated_at FROM mcp_listings WHERE account_id = $1 AND app_id = $2
+SELECT app_id, account_id, title, summary, endpoint, tools, registry_name, show_usage, version, published_at, updated_at, contract, contract_sha256, probe_secret FROM mcp_listings WHERE account_id = $1 AND app_id = $2
 `
 
 type GetMCPListingParams struct {
@@ -72,30 +72,38 @@ func (q *Queries) GetMCPListing(ctx context.Context, db DBTX, arg GetMCPListingP
 		&i.Version,
 		&i.PublishedAt,
 		&i.UpdatedAt,
+		&i.Contract,
+		&i.ContractSha256,
+		&i.ProbeSecret,
 	)
 	return i, err
 }
 
 const putMCPListing = `-- name: PutMCPListing :one
-INSERT INTO mcp_listings (app_id, account_id, title, summary, endpoint, tools, registry_name, show_usage)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO mcp_listings (app_id, account_id, title, summary, endpoint, tools, registry_name, show_usage,
+    contract, contract_sha256, probe_secret)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 ON CONFLICT (app_id) DO UPDATE SET
     title = excluded.title, summary = excluded.summary, endpoint = excluded.endpoint, tools = excluded.tools,
     registry_name = excluded.registry_name, show_usage = excluded.show_usage,
+    contract = excluded.contract, contract_sha256 = excluded.contract_sha256, probe_secret = excluded.probe_secret,
     version = mcp_listings.version + 1, published_at = now(), updated_at = now()
 WHERE mcp_listings.account_id = excluded.account_id
-RETURNING app_id, account_id, title, summary, endpoint, tools, registry_name, show_usage, version, published_at, updated_at
+RETURNING app_id, account_id, title, summary, endpoint, tools, registry_name, show_usage, version, published_at, updated_at, contract, contract_sha256, probe_secret
 `
 
 type PutMCPListingParams struct {
-	AppID        pgtype.UUID
-	AccountID    pgtype.UUID
-	Title        string
-	Summary      string
-	Endpoint     string
-	Tools        []byte
-	RegistryName string
-	ShowUsage    bool
+	AppID          pgtype.UUID
+	AccountID      pgtype.UUID
+	Title          string
+	Summary        string
+	Endpoint       string
+	Tools          []byte
+	RegistryName   string
+	ShowUsage      bool
+	Contract       []byte
+	ContractSha256 pgtype.Text
+	ProbeSecret    string
 }
 
 func (q *Queries) PutMCPListing(ctx context.Context, db DBTX, arg PutMCPListingParams) (McpListing, error) {
@@ -108,6 +116,9 @@ func (q *Queries) PutMCPListing(ctx context.Context, db DBTX, arg PutMCPListingP
 		arg.Tools,
 		arg.RegistryName,
 		arg.ShowUsage,
+		arg.Contract,
+		arg.ContractSha256,
+		arg.ProbeSecret,
 	)
 	var i McpListing
 	err := row.Scan(
@@ -122,6 +133,9 @@ func (q *Queries) PutMCPListing(ctx context.Context, db DBTX, arg PutMCPListingP
 		&i.Version,
 		&i.PublishedAt,
 		&i.UpdatedAt,
+		&i.Contract,
+		&i.ContractSha256,
+		&i.ProbeSecret,
 	)
 	return i, err
 }

@@ -73,6 +73,26 @@ caches included, without a binding. Keep data that one app must not see from
 another in a separate account, or put the apps in projects and bind only the
 apps that need each cache.
 
+## Run a command from your machine
+
+```bash
+gregale redis cli sessions PING
+gregale redis cli sessions LRANGE queue 0 -1
+gregale redis cli sessions --app worker -- GET user:42
+```
+
+A cache has no public address, so `gregale redis cli` sends the command from a
+short task in an app bound to the cache (`gregale redis get` lists them under
+*Bound to*). It uses the only bound app, or the one named with `--app`. The
+command goes through the same private address and binding as the app's own
+connections, and the reply prints the way `redis-cli` prints it. The app's image
+needs no Redis client; an app deployed before this command existed needs one
+redeploy.
+
+It sends one command per call and waits for one reply, so commands that stream
+(`SUBSCRIBE`, `MONITOR`) are refused. Put `--` before a command whose first
+word starts with a dash.
+
 ## Docker Compose
 
 When you deploy a Compose project, a `redis` or `valkey` service becomes a

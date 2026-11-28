@@ -35,16 +35,18 @@ func deployBootFlagProblem(localImageName string, boot, createOnly bool, explici
 	return nil
 }
 
-// deployBootModeProblem refuses --boot for a deploy the boot check cannot
-// judge: a gRPC-health service, which the local probe cannot ask, and an
-// HTTP health path on a worker or job, which serves none (as doctor does).
-// Workers and jobs are otherwise checked without HTTP (doctor_boot_mode.go).
+// deployBootModeProblem refuses --boot with a readiness probe on a worker or
+// job, which serves none (as doctor does). Workers and jobs are otherwise
+// checked without a server (doctor_boot_mode.go).
 func deployBootModeProblem(mode string, healthcheck *api.DeploymentHealthcheck) error {
-	if healthcheck != nil && healthcheck.Path != "" && doctorBootNoListener(mode) {
-		return fmt.Errorf("--healthcheck-path probes HTTP, which a %s does not serve", strings.TrimSpace(mode))
+	if healthcheck == nil || !doctorBootNoListener(mode) {
+		return nil
 	}
-	if healthcheck != nil && healthcheck.GRPC != nil {
-		return errors.New("--boot probes HTTP, and this deploy checks readiness with gRPC health; deploy without --boot")
+	if healthcheck.GRPC != nil {
+		return fmt.Errorf("--healthcheck-grpc probes a server, which a %s does not serve", strings.TrimSpace(mode))
+	}
+	if healthcheck.Path != "" {
+		return fmt.Errorf("--healthcheck-path probes HTTP, which a %s does not serve", strings.TrimSpace(mode))
 	}
 	return nil
 }
@@ -62,8 +64,18 @@ type deployBootFlags struct {
 	image, app, healthPath, envFile string
 	// mode is the deploy's resolved execution mode (flag or gregale.yaml).
 	mode string
+	// grpc is the deploy's gRPC readiness probe, nil for HTTP.
+	grpc *api.DeploymentGRPCHealthcheck
 	// ramMB is the RAM of the deploy's --size, 0 to use the app's.
 	ramMB int
+}
+
+// deployBootGRPC is the deploy's gRPC readiness probe, nil for HTTP.
+func deployBootGRPC(healthcheck *api.DeploymentHealthcheck) *api.DeploymentGRPCHealthcheck {
+	if healthcheck == nil {
+		return nil
+	}
+	return healthcheck.GRPC
 }
 
 // deployBootRAMMB is the RAM a --size profile gives the app, 0 when none.
@@ -82,6 +94,9 @@ func runDeployBootCheck(ctx context.Context, in deployBootFlags) int {
 	}
 	report := runDoctorImageChecksWithLocal(ctx, in.image, nil, localOnlyInspector{}, readLocalDockerImage)
 	flags := &doctorImageFlags{image: in.image, boot: true, app: in.app, healthPath: in.healthPath, envFile: in.envFile, ramMB: in.ramMB, deploy: true, executionMode: in.mode}
+	if in.grpc != nil {
+		flags.grpcHealth, flags.grpcService = true, in.grpc.Service
+	}
 	if addDoctorBootChecks(ctx, &report, flags) {
 		// Ctrl-C was meant to stop the deploy, not to skip the check.
 		return printErr("Deploy interrupted", errors.New("the local boot check was interrupted; nothing was uploaded"))

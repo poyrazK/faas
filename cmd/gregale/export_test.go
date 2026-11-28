@@ -598,6 +598,10 @@ var ApplyDeployLifecycleToCreateRequest = applyDeployLifecycleToCreateRequest
 var ApplyDevManifestDefaults = applyDevManifestDefaults
 var ApplyJSONFlag = applyJSONFlag
 var ApplyMCPGatewayPolicy = applyMCPGatewayPolicy
+var SyncExternalOAuthGatewayPolicy = syncExternalOAuthGatewayPolicy
+
+type MCPAccessAuditOptions = mcpAccessAuditOptions
+
 var ApplyMCPTasksStatusChecks = applyMCPTasksStatusChecks
 var ApplyRolloutFlag = applyRolloutFlag
 var SafeFlagName = safeFlagName
@@ -3258,6 +3262,9 @@ var WarnShellLineCommand = warnShellLineCommand
 // MCPListingKeep exposes mcpListingKeep.
 var MCPListingKeep = mcpListingKeep
 
+// MCPListingContractCheckable exposes mcpListingContractCheckable.
+var MCPListingContractCheckable = mcpListingContractCheckable
+
 // SetDoctorBootTimings shortens `doctor --boot` waits for the test.
 func SetDoctorBootTimings(cleanup func(func()), startup, stayUp, poll time.Duration) {
 	oldStartup, oldStay, oldPoll := doctorBootStartupTimeout, doctorBootStayUp, doctorBootPoll
@@ -3319,3 +3326,5 @@ func RunDeployBootCheck(ctx context.Context, image string) int {
 
 // RetainedLineMatches applies `logs --grep` to an archived log frame.
 var RetainedLineMatches = retainedLineMatches
+
+var CmdAppTasks = cmdAppTasks

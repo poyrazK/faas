@@ -142,6 +142,12 @@ type ManagedPostgresDatabase struct {
 	PostgresMajor      int16
 }
 
+type McpListing struct {
+	AppID       pgtype.UUID
+	Contract    []byte
+	ProbeSecret string
+}
+
 type SandboxSession struct {
 	ID           pgtype.UUID
 	AccountID    pgtype.UUID

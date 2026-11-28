@@ -85,6 +85,13 @@ func WithVerificationRecoveryDeadline(ctx context.Context, deadline time.Time) c
 	return context.WithValue(ctx, verificationRecoveryDeadlineKey{}, deadline)
 }
 
+// VerificationRecoveryDeadline is the deadline WithVerificationRecoveryDeadline
+// put on ctx; ok is false on a context without one.
+func VerificationRecoveryDeadline(ctx context.Context) (time.Time, bool) {
+	deadline, ok := ctx.Value(verificationRecoveryDeadlineKey{}).(time.Time)
+	return deadline, ok && !deadline.IsZero()
+}
+
 func unavailableSmoke(result SmokeResult, code string, cause error) (SmokeResult, error) {
 	return unavailableSmokeProblem(result, code, "", cause)
 }

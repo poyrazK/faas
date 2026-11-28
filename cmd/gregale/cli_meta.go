@@ -1166,10 +1166,19 @@ var cliCommands = []cliCommand{
 				{Name: "min-calls", Short: "canary: calls needed before judging (default 50)", Value: "N"},
 				{Name: "window", Short: "canary: minutes of calls to judge (default 30)", Value: "N"},
 			}},
-			{Name: "keys", Short: "List, add (value from stdin) or remove (rm) extra provider keys", Positionals: []string{"<list|add|rm>", "<integration-id>", "[<key-id>]"}, Flags: []cliFlag{
-				{Name: "label", Short: "key label for add", Value: "LABEL"},
-				{Name: "from-stdin", Short: "read the key value from stdin for add", Bool: true},
-			}},
+			{Name: "keys", Short: "List, add or remove (rm) extra provider keys", Notes: []string{
+				"add needs --label and --from-stdin, and reads the whole Authorization value from stdin, such as Bearer sk-...; rm takes the key ID that list prints."},
+				Positionals: []string{"<list|add|rm>", "<integration-id>", "[<key-id>]"}, Flags: []cliFlag{
+					{Name: "label", Short: "key label for add (required)", Value: "LABEL"},
+					{Name: "from-stdin", Short: "read the key value from stdin for add (required)", Bool: true},
+				},
+				Examples: []string{
+					"echo \"Bearer $OPENAI_KEY_2\" | gregale ai keys add <integration-id> --label second --from-stdin",
+					"gregale ai keys rm <integration-id> <key-id>",
+				}},
+			{Name: "integrations", Short: "List AI integrations, or remove one (rm)", Positionals: []string{"<list|rm>", "[<integration-id>]"}, Flags: []cliFlag{
+				{Name: "yes", Short: "rm: remove without asking", Bool: true},
+			}, Examples: []string{"gregale ai integrations list", "gregale ai integrations rm <integration-id> --yes"}},
 			{Name: "alerts", Short: "List budget alerts recorded at 80% and 100%", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "limit", Short: "alerts to show, 1 to 100", Value: "N"},
 			}},
@@ -1960,6 +1969,17 @@ var cliCommands = []cliCommand{
 			{Name: "port-forward", Short: "Forward a local port to a host and port inside the app's network", Positionals: []string{"[LOCAL_PORT:]HOST:PORT"}, Flags: []cliFlag{
 				{Name: "address", Short: "local address to listen on (default 127.0.0.1)", Value: "A"},
 				{Name: "wait-timeout", Short: "maximum time to wait for the task VM to start", Value: "D"},
+			}},
+			{Name: "tasks", Short: "List, show or cancel one-off tasks (app exec, release commands)", Flags: []cliFlag{
+				{Name: "limit", Short: "tasks per page (1..200, default 20)", Value: "N"},
+				{Name: "offset", Short: "tasks to skip", Value: "N"},
+			}, Subcommands: []cliSub{
+				{Name: "list", Short: "List the app's tasks, newest first", Flags: []cliFlag{
+					{Name: "limit", Short: "tasks per page (1..200, default 20)", Value: "N"},
+					{Name: "offset", Short: "tasks to skip", Value: "N"},
+				}},
+				{Name: "show", Short: "Show one task's status, exit code and output tail", Positionals: []string{"<task-id>"}},
+				{Name: "cancel", Short: "Cancel a queued or running task", Positionals: []string{"<task-id>"}},
 			}},
 			{Name: "security", Short: "Show posture or configure deploy enforcement", Flags: []cliFlag{
 				{Name: "posture", Short: "show the read-only security posture"},
@@ -2946,10 +2966,12 @@ var cliCommands = []cliCommand{
 			{Name: "registry-user", Value: "USER", Short: "registry username; requires --registry-password-stdin"},
 			{Name: "registry-password-stdin", Short: "read registry password/token from stdin; requires --image and --registry-user"},
 			{Name: "docker-config", Value: "PATH", Short: "with --image, use the credentials `docker login` stored for the image's registry, from this config.json or its directory, including credential helpers"},
-			{Name: "boot", Short: "with --image, also run the image with local Docker (linux/amd64, PORT set) and check it starts, answers GET / on 0.0.0.0:$PORT and stays up 10 s; the container is removed"},
+			{Name: "boot", Short: "with --image, also run the image with local Docker (linux/amd64, PORT set) and check it starts, answers GET / on 0.0.0.0:$PORT (gRPC health with --healthcheck-grpc; no listener for a worker or job) and stays up; the container is removed"},
 			{Name: "env-file", Value: "FILE", Short: "with --boot, pass KEY=VALUE lines from this file to the container (docker env-file format)"},
 			{Name: "ram", Value: "MB", Short: "with --boot, the container's memory limit (default: --app's RAM, else your plan's default for a new app; no swap)"},
 			{Name: "healthcheck-path", Value: "PATH", Short: "with --boot, probe this readiness path instead of / and require 2xx, as Gregale does"},
+			{Name: "healthcheck-grpc", Short: "with --boot, probe standard gRPC health (grpc.health.v1) on $PORT over plaintext and require SERVING, as Gregale does"},
+			{Name: "healthcheck-grpc-service", Value: "NAME", Short: "with --healthcheck-grpc, the service name to check (default: the whole server)"},
 			{Name: "execution-mode", Value: "MODE", Short: "with --boot, the app's lifecycle mode (request|service|worker|job): a worker must keep running and a job exit 0, with no HTTP check"},
 			{Name: "strict", Short: "exit 1 on warn (default: exit 0 on warn)"},
 			{Name: "json", Short: "machine output (default: human prose)"},
@@ -3187,7 +3209,7 @@ var cliCommands = []cliCommand{
 			{Name: "image", Group: "Source and build", Short: "deploy a digest-pinned container image", Value: "REF"},
 			{Name: "docker-config", Group: "Source and build", Short: "with --image, save the credential `docker login` stored for the image's registry (config.json or its directory, credential helpers included) to the app before deploying", Value: "PATH"},
 			{Name: "local-image", Group: "Source and build", Short: "deploy a linux/amd64 image from this machine's Docker without a registry (uploads `docker save` output)", Value: "NAME"},
-			{Name: "boot", Group: "Source and build", Short: "with --local-image, first run the image with local Docker (as `doctor --boot` does) and stop before saving or uploading it if it crashes, listens on the wrong address, runs out of memory or fails --healthcheck-path or its HEALTHCHECK"},
+			{Name: "boot", Group: "Source and build", Short: "with --local-image, first run the image with local Docker (as `doctor --boot` does) and stop before saving or uploading it if it crashes, listens on the wrong address, runs out of memory or fails --healthcheck-path, --healthcheck-grpc or its HEALTHCHECK"},
 			{Name: "boot-env-file", Group: "Source and build", Short: "with --boot, KEY=VALUE lines for the local boot only (docker env-file format); nothing in it is uploaded", Value: "FILE"},
 			{Name: "image-archive", Group: "Source and build", Short: "deploy a linux/amd64 image from a `docker save` archive without a registry", Value: "PATH"},
 			{Name: "tarball", Group: "Source and build", Short: "deploy from a source tarball", Value: "PATH"},
@@ -5931,6 +5953,9 @@ var cliCommands = []cliCommand{
 				{Name: "single-session", Value: "on|off", Short: "keep only each user's most recently used session", ClosedSet: []string{"on", "off"}},
 				{Name: "org-domains", Value: "on|off", Short: "let organizations verify email domains and let people at them join (needs --autoconfirm off)", ClosedSet: []string{"on", "off"}},
 				{Name: "service-accounts", Value: "on|off", Short: "let organizations make service accounts that get tokens with the client-credentials grant", ClosedSet: []string{"on", "off"}},
+				{Name: "new-device-alerts", Value: "on|off", Short: "email people when their account signs in from a new network and device", ClosedSet: []string{"on", "off"}},
+				{Name: "messages-per-recipient", Value: "N|default", Short: "sign-in codes, links and resets one address or number may be sent an hour"},
+				{Name: "messages-per-network", Value: "N|off", Short: "sign-in messages one network may ask for an hour (off by default)"},
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 			}, Examples: []string{"gregale auth config shop-auth", "gregale auth config shop-auth --events on", "gregale auth config shop-auth --password-min-length 12 --password-require lower,upper,digit --mfa on"}},
 			{Name: "providers", Short: "Manage OAuth sign-in providers such as Google or GitHub", Subcommands: []cliSub{
@@ -6510,6 +6535,13 @@ var cliCommands = []cliCommand{
 				{Name: "eviction-policy", Short: "new eviction policy", Value: "POLICY", ClosedSet: api.ManagedValkeyEvictionPolicies},
 				{Name: "evict", Short: "allow shrinking below the data the cache holds"},
 			}, Examples: []string{"gregale redis resize sessions --memory 256"}},
+			{Name: "cli", Short: "Send one Redis command to a cache through a bound app", Positionals: []string{"<name>", "<command>", "[arg...]"}, Flags: []cliFlag{
+				{Name: "app", Short: "bound app the command runs through (defaults to the only bound app)", Value: "APP"},
+				{Name: "wait-timeout", Short: "how long to wait for the reply (default 5m)", Value: "DURATION"},
+			}, Notes: []string{
+				"The command runs in a short task VM of the bound app and reaches the cache over its private address, so it obeys the same binding and command rules as the app.",
+				"One command per call; commands that stream (SUBSCRIBE, MONITOR) are refused. Put `--` before a command whose first word starts with a dash.",
+			}, Examples: []string{"gregale redis cli sessions PING", "gregale redis cli sessions --app web LRANGE queue 0 -1"}},
 			{Name: "update", Short: "Move a cache to the current Valkey release; its data is kept", Positionals: []string{"<name>"}},
 			{Name: "restart", Short: "Restart a managed Redis cache; its data is kept", Positionals: []string{"<name>"}},
 			{Name: "delete", Short: "Delete a managed Redis cache and its data", Positionals: []string{"<name>"}, Flags: []cliFlag{

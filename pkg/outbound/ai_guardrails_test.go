@@ -188,7 +188,7 @@ func TestReservationAppliesToCostAndBindingTokens(t *testing.T) {
 		IntegrationID: "integration-2", RatePerSecond: 100, Burst: 100, MaxInFlight: 100, LeaseTTL: time.Minute,
 		MonthlyAICostLimit: int64Ref(100), AIReservedCostMillicents: 101,
 	}
-	if got, _ := backend.Admit(context.Background(), cost); got.Granted || got.Reason != ReasonMonthlyCostLimit {
+	if got, _ := backend.Admit(context.Background(), cost); got.Granted || got.Reason != ReasonMonthlyCostLimit+ReasonReservationSuffix {
 		t.Fatalf("cost reservation above the limit = %+v", got)
 	}
 }

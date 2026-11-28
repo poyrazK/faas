@@ -207,7 +207,7 @@ func TestLiveTurnRefusedByACapClosesTheSession(t *testing.T) {
 	liveClientTurn(t, conn, "hello")
 	// The first turn reserves more than the limit: the caller gets close
 	// code 1008 naming the refusal, with no message before it.
-	if closeErr := readLiveClose(t, conn); closeErr.Code != websocket.ClosePolicyViolation || closeErr.Text != "outbound_budget_exhausted" {
+	if closeErr := readLiveClose(t, conn); closeErr.Code != websocket.ClosePolicyViolation || closeErr.Text != "outbound_ai_reservation_exceeds_budget" {
 		t.Fatalf("close = %v", closeErr)
 	}
 	if row, ok := fixture.backend.AIUsageRollup("llm", fixture.token.AppID, "gemini-2.5-flash-native-audio-preview-12-2025"); ok {
