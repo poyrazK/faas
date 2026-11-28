@@ -53,6 +53,8 @@ func testDeploymentOutcomesExcludeCustomerCausedFailures(t *testing.T, fx *Fixtu
 	time.Sleep(5 * time.Millisecond)
 	fail(api.CodeAppNotListening)
 	fail(api.CodeAppStartupCrash)
+	fail(api.CodeAppLayerTooBig)
+	fail(api.CodeSourceRefStale)
 
 	counts, err := outcomes.CountDeploymentOutcomesSince(fx.Ctx, since)
 	if err != nil {
