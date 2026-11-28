@@ -75,7 +75,7 @@ var monetizationVerbs = map[string][]string{
 
 // monetizationFlags are monetization flags of released verbs, keyed by
 // "command verb".
-var monetizationFlags = map[string][]string{"consumers create": {"trial-days"}, "mcp deploy": {"allow-breaking", "reason"}}
+var monetizationFlags = map[string][]string{"consumers create": {"trial-days"}, "mcp deploy": {"allow-breaking", "accept-scan-findings", "reason"}}
 
 // hiddenMonetizationFlagText replaces released flag descriptions that name
 // monetization while it is hidden, keyed by "command verb --flag".

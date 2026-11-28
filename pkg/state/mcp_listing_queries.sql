@@ -10,12 +10,16 @@ SELECT * FROM mcp_listings WHERE account_id = $1 AND app_id = $2;
 
 -- name: PutMCPListing :one
 INSERT INTO mcp_listings (app_id, account_id, title, summary, endpoint, tools, registry_name, show_usage,
-    contract, contract_sha256, probe_secret)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    contract, contract_sha256, probe_secret, tool_scan, tool_scan_at, tool_scan_high, tool_scan_review, tool_scan_reviewed_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, sqlc.narg(tool_scan),
+    CASE WHEN sqlc.narg(tool_scan)::jsonb IS NULL THEN NULL ELSE now() END,
+    sqlc.arg(tool_scan_high), sqlc.arg(tool_scan_review), sqlc.arg(tool_scan_reviewed_by))
 ON CONFLICT (app_id) DO UPDATE SET
     title = excluded.title, summary = excluded.summary, endpoint = excluded.endpoint, tools = excluded.tools,
     registry_name = excluded.registry_name, show_usage = excluded.show_usage,
     contract = excluded.contract, contract_sha256 = excluded.contract_sha256, probe_secret = excluded.probe_secret,
+    tool_scan = excluded.tool_scan, tool_scan_at = excluded.tool_scan_at, tool_scan_high = excluded.tool_scan_high,
+    tool_scan_review = excluded.tool_scan_review, tool_scan_reviewed_by = excluded.tool_scan_reviewed_by,
     version = mcp_listings.version + 1, published_at = now(), updated_at = now()
 WHERE mcp_listings.account_id = excluded.account_id
 RETURNING *;

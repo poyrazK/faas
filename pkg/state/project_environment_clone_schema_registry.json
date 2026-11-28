@@ -12973,6 +12973,11 @@
       "deployment_id",
       "live_at",
       "override_id",
+      "tool_scan",
+      "tool_scan_high",
+      "tool_scan_new_high",
+      "tool_scan_override_id",
+      "tool_scan_reviewed",
       "verdict"
     ],
     "kind": "operational"
@@ -12987,6 +12992,7 @@
       "deployment_id",
       "expires_at",
       "id",
+      "kind",
       "reason",
       "used_at",
       "used_by_deployment"
@@ -13007,6 +13013,11 @@
       "show_usage",
       "summary",
       "title",
+      "tool_scan",
+      "tool_scan_at",
+      "tool_scan_high",
+      "tool_scan_review",
+      "tool_scan_reviewed_by",
       "tools",
       "updated_at",
       "version"

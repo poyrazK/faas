@@ -596,8 +596,8 @@ type Querier interface {
 	ClaimImmediateNotificationForNode(ctx context.Context, db DBTX, arg ClaimImmediateNotificationForNodeParams) (ClaimImmediateNotificationForNodeRow, error)
 	ClaimLayerArtifactDeletion(ctx context.Context, db DBTX, arg ClaimLayerArtifactDeletionParams) (int64, error)
 	ClaimLegacyPendingWorkflowRun(ctx context.Context, db DBTX) (WorkflowRun, error)
-	// Consumes an open override of the app for one candidate: one bound to this
-	// deployment first, else the oldest unbound one.
+	// Consumes an open override of the app of one kind for one candidate: one
+	// bound to this deployment first, else the oldest unbound one.
 	ClaimMCPContractOverride(ctx context.Context, db DBTX, arg ClaimMCPContractOverrideParams) (McpContractOverride, error)
 	ClaimMCPRouteEvent(ctx context.Context, db DBTX, arg ClaimMCPRouteEventParams) error
 	ClaimManagedPostgresBindingRetirement(ctx context.Context, db DBTX, arg ClaimManagedPostgresBindingRetirementParams) (ClaimManagedPostgresBindingRetirementRow, error)

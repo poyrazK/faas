@@ -10821,18 +10821,23 @@ type McpCatalogMonitor struct {
 }
 
 type McpContractCheck struct {
-	DeploymentID    pgtype.UUID
-	AppID           pgtype.UUID
-	AccountID       pgtype.UUID
-	BaselineSha256  string
-	CandidateSha256 pgtype.Text
-	Candidate       []byte
-	Verdict         string
-	Changes         []byte
-	OverrideID      pgtype.UUID
-	CheckedAt       pgtype.Timestamptz
-	AcceptedAt      pgtype.Timestamptz
-	LiveAt          pgtype.Timestamptz
+	DeploymentID       pgtype.UUID
+	AppID              pgtype.UUID
+	AccountID          pgtype.UUID
+	BaselineSha256     string
+	CandidateSha256    pgtype.Text
+	Candidate          []byte
+	Verdict            string
+	Changes            []byte
+	OverrideID         pgtype.UUID
+	CheckedAt          pgtype.Timestamptz
+	AcceptedAt         pgtype.Timestamptz
+	LiveAt             pgtype.Timestamptz
+	ToolScan           []byte
+	ToolScanHigh       int32
+	ToolScanNewHigh    int32
+	ToolScanOverrideID pgtype.UUID
+	ToolScanReviewed   bool
 }
 
 type McpContractOverride struct {
@@ -10846,23 +10851,29 @@ type McpContractOverride struct {
 	DeploymentID     pgtype.UUID
 	UsedByDeployment pgtype.UUID
 	UsedAt           pgtype.Timestamptz
+	Kind             string
 }
 
 type McpListing struct {
-	AppID          pgtype.UUID
-	AccountID      pgtype.UUID
-	Title          string
-	Summary        string
-	Endpoint       string
-	Tools          []byte
-	RegistryName   string
-	ShowUsage      bool
-	Version        int32
-	PublishedAt    pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
-	Contract       []byte
-	ContractSha256 pgtype.Text
-	ProbeSecret    string
+	AppID              pgtype.UUID
+	AccountID          pgtype.UUID
+	Title              string
+	Summary            string
+	Endpoint           string
+	Tools              []byte
+	RegistryName       string
+	ShowUsage          bool
+	Version            int32
+	PublishedAt        pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	Contract           []byte
+	ContractSha256     pgtype.Text
+	ProbeSecret        string
+	ToolScan           []byte
+	ToolScanAt         pgtype.Timestamptz
+	ToolScanHigh       int32
+	ToolScanReview     string
+	ToolScanReviewedBy string
 }
 
 type McpOauthRetirement struct {

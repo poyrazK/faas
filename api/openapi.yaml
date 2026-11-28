@@ -25769,7 +25769,10 @@ paths:
         now; the page shows this snapshot until the next publish, which bumps
         version. The endpoint must be https on the app's own host. The page
         serves while the app takes sign-ups. With registry_name set, the
-        listing also serves an MCP registry server.json.
+        listing also serves an MCP registry server.json. The tools are
+        scanned for prompt injection; high-severity findings refuse the
+        publish (422 `mcp_tool_scan_blocked`, with `tool_scan_findings`)
+        unless scan_review_reason says why they are safe.
       requestBody:
         required: true
         content:
@@ -137067,6 +137070,7 @@ components:
           description: "The live server's format-2 MCP catalog contract, at most 1,000,000 bytes. Production deploys are then held to it. Without it a republish keeps the contract production deploys are held to now, and its probe_secret, unless drop_contract is set."
         drop_contract: { type: boolean, description: "Republish without a contract, which ends the tool contract gate. Exclusive with contract." }
         probe_secret: { type: string, maxLength: 128, pattern: '^[A-Za-z][A-Za-z0-9_]*$', description: "App secret holding a bearer token the gate sends when listing a candidate's tools, for a server that checks credentials itself. Needs a contract, sent or kept; empty on a republish that keeps the contract keeps the current one." }
+        scan_review_reason: { type: string, maxLength: 512, description: "Publish despite high-severity tool safety scan findings: the seller's audited reason the flagged text is safe. Without it such findings refuse the publish (422 mcp_tool_scan_blocked)." }
     MCPListingResponse:
       description: "A sold MCP server's published listing, as its owner sees it."
       type: object
@@ -137087,6 +137091,43 @@ components:
         server_json_url: { type: string, description: "The registry server.json, when registry_name is set." }
         contract_sha256: { type: string, description: "The published tool contract's digest; absent when the listing is not gated." }
         probe_secret: { type: string, description: "The app secret the gate sends as a bearer token." }
+        tool_scan: { $ref: '#/components/schemas/MCPToolScan' }
+    MCPToolScan:
+      description: "A deterministic tool safety scan of the tool, prompt and resource text clients' models read (ADR-20261128135329)."
+      type: object
+      required: [rule_set, scanned_at, high, medium, low, findings]
+      properties:
+        rule_set: { type: integer, description: "The scanner rule set version." }
+        scanned_at: { type: string, format: date-time }
+        high: { type: integer }
+        medium: { type: integer }
+        low: { type: integer }
+        truncated: { type: boolean, description: "More findings matched than the 100 kept." }
+        findings:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/MCPToolScanFinding' }
+        review: { type: string, description: "The seller's reason for publishing despite high findings." }
+    MCPToolScanFinding:
+      description: "One rule match of a tool safety scan."
+      type: object
+      required: [rule, severity, kind, name, path]
+      properties:
+        rule: { type: string, description: "Such as instruction_override, concealment, sensitive_file or exfiltration." }
+        severity: { type: string, enum: [high, medium, low] }
+        kind: { type: string, enum: [tool, prompt, resource, resource_template] }
+        name: { type: string }
+        path: { type: string, description: "JSON pointer to the matched text within the item." }
+        excerpt: { type: string, description: "The matched text, escaped and at most 120 characters." }
+    MCPToolScanBadge:
+      description: "What a public listing shows of the tool safety scan."
+      type: object
+      required: [rule_set, scanned_at, status]
+      properties:
+        rule_set: { type: integer }
+        scanned_at: { type: string, format: date-time }
+        status: { type: string, enum: [clean, reviewed], description: "clean: no high-severity findings; reviewed: the seller shipped reviewed_high findings with an audited reason." }
+        reviewed_high: { type: integer }
     MCPListingInstall:
       description: "Ways to add a listed MCP server to a client."
       type: object
@@ -137122,6 +137163,7 @@ components:
           maxItems: 20
           description: "Tool contract changes shipped since the listing was published, newest first."
           items: { $ref: '#/components/schemas/MCPContractChangelogEntry' }
+        tool_scan: { $ref: '#/components/schemas/MCPToolScanBadge' }
     MCPContractChange:
       description: "One difference between a candidate's MCP catalog and the promised contract."
       type: object
@@ -137150,12 +137192,16 @@ components:
           items: { $ref: '#/components/schemas/MCPContractChange' }
         checked_at: { type: string, format: date-time }
         accepted_at: { type: string, format: date-time, description: "When the candidate went live." }
+        tool_scan: { $ref: '#/components/schemas/MCPToolScan' }
+        tool_scan_new_high: { type: integer, description: "High scan findings the baseline had not reviewed; they need a tool_scan override." }
+        tool_scan_overridden: { type: boolean }
     MCPContractOverride:
-      description: "An audited permission for one breaking or unverified candidate."
+      description: "An audited permission for one breaking or unverified candidate (kind contract) or one candidate with unreviewed high tool safety scan findings (kind tool_scan)."
       type: object
-      required: [id, reason, created_by, created_at, expires_at]
+      required: [id, kind, reason, created_by, created_at, expires_at]
       properties:
         id: { type: string, format: uuid }
+        kind: { type: string, enum: [contract, tool_scan] }
         reason: { type: string }
         created_by: { type: string }
         created_at: { type: string, format: date-time }
@@ -137169,6 +137215,7 @@ components:
         reason: { type: string, minLength: 1, maxLength: 512 }
         expires_in_seconds: { type: integer, minimum: 60, maximum: 86400, description: "Defaults to 3600." }
         deployment_id: { type: string, format: uuid, description: "Bind the override to one of the app's deployments; without it the app's next breaking production candidate uses it, or an unverified one late in its recovery window." }
+        kind: { type: string, enum: [contract, tool_scan], description: "contract (the default) admits a breaking or unverified candidate; tool_scan admits unreviewed high tool safety scan findings." }
     MCPContractResponse:
       description: "The tool contract a listed MCP server's production deploys are held to."
       type: object
@@ -137180,6 +137227,7 @@ components:
         listing_version: { type: integer }
         tools: { type: array, items: { type: string } }
         probe_secret: { type: string }
+        baseline_tool_scan: { $ref: '#/components/schemas/MCPToolScan' }
         checks:
           type: array
           maxItems: 20
@@ -140957,6 +141005,12 @@ components:
             programmatic consumer can render the same UI for both
             rejection paths. Optional + omitempty.
           items: { $ref: '#/components/schemas/SecretFinding' }
+        tool_scan_findings:
+          type: array
+          description: |
+            High-severity tool safety scan findings. Populated by 422
+            `code: mcp_tool_scan_blocked` (ADR-20261128135329).
+          items: { $ref: '#/components/schemas/MCPToolScanFinding' }
         secret_hint:
           type: string
           description: |

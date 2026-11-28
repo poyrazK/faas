@@ -194,6 +194,10 @@ type Problem struct {
 	// the dashboard / SDK can render the hint as a one-line footer
 	// without parsing prose. Optional + omitempty.
 	SecretHint string `json:"secret_hint,omitempty"`
+	// ToolScanFindings lists the high-severity tool safety scan findings
+	// that refused an MCP listing publish (mcp_tool_scan_blocked,
+	// ADR-20261128135329). Optional + omitempty.
+	ToolScanFindings []MCPToolScanFinding `json:"tool_scan_findings,omitempty"`
 	// Hint is the single short next-action line shown on the CLI's
 	// 3-5 line renderer (spec §6.4 amendment 1). Mirrors SecretHint
 	// shape — a one-line remediation nudge. Distinct from SecretHint:
@@ -406,6 +410,12 @@ func (p *Problem) WithDocs(url string) *Problem {
 func (p *Problem) WithSecretScan(findings []SecretFinding, hint string) *Problem {
 	p.SecretFindings = findings
 	p.SecretHint = hint
+	return p
+}
+
+// WithToolScan attaches the findings that refused an MCP listing publish.
+func (p *Problem) WithToolScan(findings []MCPToolScanFinding) *Problem {
+	p.ToolScanFindings = findings
 	return p
 }
 
@@ -2012,6 +2022,11 @@ const (
 	// the tool contract its paying customers were promised, so it was not
 	// promoted (ADR-20261127191645). The hosting receipt lists the changes.
 	CodeMCPContractBreaking = "mcp_contract_breaking"
+	// CodeMCPToolScanBlocked means a sold MCP server's tools have
+	// high-severity tool safety scan findings the seller has not reviewed:
+	// the listing was not published, or the candidate was not promoted
+	// (ADR-20261128135329). The problem or hosting receipt lists them.
+	CodeMCPToolScanBlocked = "mcp_tool_scan_blocked"
 	// CodePromotionRolledBack means an environment promotion was rolled back
 	// and this release, the first in its environment, had no earlier release
 	// to restore, so it was retired. The release itself did not fail.
@@ -2566,6 +2581,7 @@ func StatusForCode(code string) int {
 		CodeDeploymentSmokeFailed,
 		CodeDeploymentVerificationContractFailed,
 		CodeMCPContractBreaking,
+		CodeMCPToolScanBlocked,
 		CodeReleaseCommandFailed,
 		CodeReleasePhaseUnavailable,
 		CodeReleaseOutcomeUncertain:

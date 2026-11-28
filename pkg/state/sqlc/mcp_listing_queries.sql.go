@@ -49,7 +49,7 @@ func (q *Queries) DeleteMCPListing(ctx context.Context, db DBTX, arg DeleteMCPLi
 }
 
 const getMCPListing = `-- name: GetMCPListing :one
-SELECT app_id, account_id, title, summary, endpoint, tools, registry_name, show_usage, version, published_at, updated_at, contract, contract_sha256, probe_secret FROM mcp_listings WHERE account_id = $1 AND app_id = $2
+SELECT app_id, account_id, title, summary, endpoint, tools, registry_name, show_usage, version, published_at, updated_at, contract, contract_sha256, probe_secret, tool_scan, tool_scan_at, tool_scan_high, tool_scan_review, tool_scan_reviewed_by FROM mcp_listings WHERE account_id = $1 AND app_id = $2
 `
 
 type GetMCPListingParams struct {
@@ -75,35 +75,48 @@ func (q *Queries) GetMCPListing(ctx context.Context, db DBTX, arg GetMCPListingP
 		&i.Contract,
 		&i.ContractSha256,
 		&i.ProbeSecret,
+		&i.ToolScan,
+		&i.ToolScanAt,
+		&i.ToolScanHigh,
+		&i.ToolScanReview,
+		&i.ToolScanReviewedBy,
 	)
 	return i, err
 }
 
 const putMCPListing = `-- name: PutMCPListing :one
 INSERT INTO mcp_listings (app_id, account_id, title, summary, endpoint, tools, registry_name, show_usage,
-    contract, contract_sha256, probe_secret)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    contract, contract_sha256, probe_secret, tool_scan, tool_scan_at, tool_scan_high, tool_scan_review, tool_scan_reviewed_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+    CASE WHEN $12::jsonb IS NULL THEN NULL ELSE now() END,
+    $13, $14, $15)
 ON CONFLICT (app_id) DO UPDATE SET
     title = excluded.title, summary = excluded.summary, endpoint = excluded.endpoint, tools = excluded.tools,
     registry_name = excluded.registry_name, show_usage = excluded.show_usage,
     contract = excluded.contract, contract_sha256 = excluded.contract_sha256, probe_secret = excluded.probe_secret,
+    tool_scan = excluded.tool_scan, tool_scan_at = excluded.tool_scan_at, tool_scan_high = excluded.tool_scan_high,
+    tool_scan_review = excluded.tool_scan_review, tool_scan_reviewed_by = excluded.tool_scan_reviewed_by,
     version = mcp_listings.version + 1, published_at = now(), updated_at = now()
 WHERE mcp_listings.account_id = excluded.account_id
-RETURNING app_id, account_id, title, summary, endpoint, tools, registry_name, show_usage, version, published_at, updated_at, contract, contract_sha256, probe_secret
+RETURNING app_id, account_id, title, summary, endpoint, tools, registry_name, show_usage, version, published_at, updated_at, contract, contract_sha256, probe_secret, tool_scan, tool_scan_at, tool_scan_high, tool_scan_review, tool_scan_reviewed_by
 `
 
 type PutMCPListingParams struct {
-	AppID          pgtype.UUID
-	AccountID      pgtype.UUID
-	Title          string
-	Summary        string
-	Endpoint       string
-	Tools          []byte
-	RegistryName   string
-	ShowUsage      bool
-	Contract       []byte
-	ContractSha256 pgtype.Text
-	ProbeSecret    string
+	AppID              pgtype.UUID
+	AccountID          pgtype.UUID
+	Title              string
+	Summary            string
+	Endpoint           string
+	Tools              []byte
+	RegistryName       string
+	ShowUsage          bool
+	Contract           []byte
+	ContractSha256     pgtype.Text
+	ProbeSecret        string
+	ToolScan           []byte
+	ToolScanHigh       int32
+	ToolScanReview     string
+	ToolScanReviewedBy string
 }
 
 func (q *Queries) PutMCPListing(ctx context.Context, db DBTX, arg PutMCPListingParams) (McpListing, error) {
@@ -119,6 +132,10 @@ func (q *Queries) PutMCPListing(ctx context.Context, db DBTX, arg PutMCPListingP
 		arg.Contract,
 		arg.ContractSha256,
 		arg.ProbeSecret,
+		arg.ToolScan,
+		arg.ToolScanHigh,
+		arg.ToolScanReview,
+		arg.ToolScanReviewedBy,
 	)
 	var i McpListing
 	err := row.Scan(
@@ -136,6 +153,11 @@ func (q *Queries) PutMCPListing(ctx context.Context, db DBTX, arg PutMCPListingP
 		&i.Contract,
 		&i.ContractSha256,
 		&i.ProbeSecret,
+		&i.ToolScan,
+		&i.ToolScanAt,
+		&i.ToolScanHigh,
+		&i.ToolScanReview,
+		&i.ToolScanReviewedBy,
 	)
 	return i, err
 }

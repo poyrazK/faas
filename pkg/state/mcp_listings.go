@@ -34,6 +34,15 @@ type MCPListing struct {
 	// ProbeSecret names the app secret imaged sends as the bearer token
 	// when it lists a candidate's tools; "" sends none.
 	ProbeSecret string
+	// ToolScan is the tool safety scan (mcptoolscan.Report JSON) of what was
+	// published (ADR-20261128135329); nil when not scanned. ToolScanReview
+	// is the seller's reason for publishing despite ToolScanHigh high
+	// findings, by ToolScanReviewedBy.
+	ToolScan           json.RawMessage
+	ToolScanAt         *time.Time
+	ToolScanHigh       int
+	ToolScanReview     string
+	ToolScanReviewedBy string
 }
 
 // MCPListingTool is one tool of the published snapshot.
@@ -69,7 +78,7 @@ func (m *MemStore) GetMCPListing(_ context.Context, accountID, appID string) (MC
 		return MCPListing{}, ErrNotFound
 	}
 	l.Tools = append([]MCPListingTool{}, l.Tools...)
-	l.Contract = slices.Clone(l.Contract)
+	l.Contract, l.ToolScan = slices.Clone(l.Contract), slices.Clone(l.ToolScan)
 	return l, nil
 }
 
@@ -89,7 +98,10 @@ func (m *MemStore) PutMCPListing(_ context.Context, l MCPListing) (MCPListing, e
 	now := time.Now().UTC()
 	l.Version, l.PublishedAt, l.UpdatedAt = prev.Version+1, now, now
 	l.Tools = append([]MCPListingTool{}, l.Tools...)
-	l.Contract = slices.Clone(l.Contract)
+	l.Contract, l.ToolScan, l.ToolScanAt = slices.Clone(l.Contract), slices.Clone(l.ToolScan), nil
+	if l.ToolScan != nil {
+		l.ToolScanAt = &now
+	}
 	m.mcpListings[l.AppID] = l
 	return l, nil
 }
@@ -121,9 +133,17 @@ func fromMCPListing(row sqlc.McpListing) (MCPListing, error) {
 	l := MCPListing{AccountID: pgUUIDString(row.AccountID), AppID: pgUUIDString(row.AppID), Title: row.Title, Summary: row.Summary,
 		Endpoint: row.Endpoint, RegistryName: row.RegistryName, ShowUsage: row.ShowUsage, Version: int(row.Version),
 		PublishedAt: row.PublishedAt.Time.UTC(), UpdatedAt: row.UpdatedAt.Time.UTC(),
-		ContractSHA256: row.ContractSha256.String, ProbeSecret: row.ProbeSecret}
+		ContractSHA256: row.ContractSha256.String, ProbeSecret: row.ProbeSecret, ToolScanHigh: int(row.ToolScanHigh),
+		ToolScanReview: row.ToolScanReview, ToolScanReviewedBy: row.ToolScanReviewedBy}
 	if row.Contract != nil {
 		l.Contract = json.RawMessage(row.Contract)
+	}
+	if row.ToolScan != nil {
+		l.ToolScan = json.RawMessage(row.ToolScan)
+	}
+	if row.ToolScanAt.Valid {
+		t := row.ToolScanAt.Time.UTC()
+		l.ToolScanAt = &t
 	}
 	if err := json.Unmarshal(row.Tools, &l.Tools); err != nil {
 		return MCPListing{}, fmt.Errorf("decode MCP listing tools: %w", err)
@@ -155,7 +175,9 @@ func (s *PgStore) PutMCPListing(ctx context.Context, l MCPListing) (MCPListing, 
 	}
 	row, err := sqlc.New().PutMCPListing(ctx, s.pool, sqlc.PutMCPListingParams{AppID: uuidToPgtype(l.AppID), AccountID: uuidToPgtype(l.AccountID),
 		Title: l.Title, Summary: l.Summary, Endpoint: l.Endpoint, Tools: tools, RegistryName: l.RegistryName, ShowUsage: l.ShowUsage,
-		Contract: []byte(l.Contract), ContractSha256: pgText(l.ContractSHA256), ProbeSecret: l.ProbeSecret})
+		Contract: []byte(l.Contract), ContractSha256: pgText(l.ContractSHA256), ProbeSecret: l.ProbeSecret,
+		ToolScan: []byte(l.ToolScan), ToolScanHigh: int32(l.ToolScanHigh), ToolScanReview: l.ToolScanReview,
+		ToolScanReviewedBy: l.ToolScanReviewedBy})
 	if errors.Is(err, pgx.ErrNoRows) {
 		// The app's row belongs to another account.
 		return MCPListing{}, ErrNotFound

@@ -49,6 +49,10 @@ const (
 	// breaks the tool contract its paying customers were promised and the
 	// seller holds no override (ADR-20261127191645).
 	SmokeErrorMCPContractBreaking = "smoke_mcp_contract_breaking"
+	// SmokeErrorMCPToolScanBlocked means the candidate's tools have
+	// high-severity tool safety scan findings the baseline had not reviewed
+	// and the seller holds no tool_scan override (ADR-20261128135329).
+	SmokeErrorMCPToolScanBlocked = "smoke_mcp_tool_scan_blocked"
 )
 
 const (

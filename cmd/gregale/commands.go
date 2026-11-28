@@ -814,6 +814,9 @@ func renderAPIError(w io.Writer, e *APIError) {
 	for _, f := range p.SecretFindings {
 		_, _ = fmt.Fprintf(w, "  %s:%d [%s] %s\n", f.File, f.Line, f.Provider, f.Snippet)
 	}
+	for _, f := range p.ToolScanFindings {
+		_, _ = fmt.Fprintf(w, "  %s\n", toolScanFindingLine(f))
+	}
 	if p.RetryAfterSeconds != nil {
 		retryAfter := time.Duration(*p.RetryAfterSeconds) * time.Second
 		_, _ = fmt.Fprintf(w, "  Retry after: %s (%d seconds)\n", retryAfter, *p.RetryAfterSeconds)

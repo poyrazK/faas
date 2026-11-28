@@ -15,27 +15,30 @@ const claimMCPContractOverride = `-- name: ClaimMCPContractOverride :one
 UPDATE mcp_contract_overrides SET used_by_deployment = $1, used_at = now()
  WHERE id = (SELECT o.id FROM mcp_contract_overrides o
               WHERE o.app_id = $2 AND o.account_id = $3
+                AND o.kind = $4
                 AND o.used_at IS NULL AND o.expires_at > now()
                 AND (o.deployment_id = $1
-                     OR o.deployment_id IS NULL AND $4::boolean)
+                     OR o.deployment_id IS NULL AND $5::boolean)
               ORDER BY (o.deployment_id IS NULL), o.created_at LIMIT 1 FOR UPDATE SKIP LOCKED)
-RETURNING id, app_id, account_id, reason, created_by, created_at, expires_at, deployment_id, used_by_deployment, used_at
+RETURNING id, app_id, account_id, reason, created_by, created_at, expires_at, deployment_id, used_by_deployment, used_at, kind
 `
 
 type ClaimMCPContractOverrideParams struct {
 	DeploymentID pgtype.UUID
 	AppID        pgtype.UUID
 	AccountID    pgtype.UUID
+	Kind         string
 	AllowUnbound bool
 }
 
-// Consumes an open override of the app for one candidate: one bound to this
-// deployment first, else the oldest unbound one.
+// Consumes an open override of the app of one kind for one candidate: one
+// bound to this deployment first, else the oldest unbound one.
 func (q *Queries) ClaimMCPContractOverride(ctx context.Context, db DBTX, arg ClaimMCPContractOverrideParams) (McpContractOverride, error) {
 	row := db.QueryRow(ctx, claimMCPContractOverride,
 		arg.DeploymentID,
 		arg.AppID,
 		arg.AccountID,
+		arg.Kind,
 		arg.AllowUnbound,
 	)
 	var i McpContractOverride
@@ -50,18 +53,19 @@ func (q *Queries) ClaimMCPContractOverride(ctx context.Context, db DBTX, arg Cla
 		&i.DeploymentID,
 		&i.UsedByDeployment,
 		&i.UsedAt,
+		&i.Kind,
 	)
 	return i, err
 }
 
 const createMCPContractOverride = `-- name: CreateMCPContractOverride :one
-INSERT INTO mcp_contract_overrides (app_id, account_id, reason, created_by, expires_at, deployment_id)
-SELECT $1, $2, $3, $4, $5, $6
+INSERT INTO mcp_contract_overrides (app_id, account_id, reason, created_by, expires_at, deployment_id, kind)
+SELECT $1, $2, $3, $4, $5, $6, $7
  WHERE (SELECT count(*) FROM mcp_contract_overrides o
            LEFT JOIN deployments d ON d.id = o.deployment_id
          WHERE o.app_id = $1 AND o.used_at IS NULL AND o.expires_at > now()
-           AND (o.deployment_id IS NULL OR d.status IN ('pending', 'building', 'imaging', 'snapshotting'))) < $7::bigint
-RETURNING id, app_id, account_id, reason, created_by, created_at, expires_at, deployment_id, used_by_deployment, used_at
+           AND (o.deployment_id IS NULL OR d.status IN ('pending', 'building', 'imaging', 'snapshotting'))) < $8::bigint
+RETURNING id, app_id, account_id, reason, created_by, created_at, expires_at, deployment_id, used_by_deployment, used_at, kind
 `
 
 type CreateMCPContractOverrideParams struct {
@@ -71,6 +75,7 @@ type CreateMCPContractOverrideParams struct {
 	CreatedBy    string
 	ExpiresAt    pgtype.Timestamptz
 	DeploymentID pgtype.UUID
+	Kind         string
 	OpenCap      int64
 }
 
@@ -84,6 +89,7 @@ func (q *Queries) CreateMCPContractOverride(ctx context.Context, db DBTX, arg Cr
 		arg.CreatedBy,
 		arg.ExpiresAt,
 		arg.DeploymentID,
+		arg.Kind,
 		arg.OpenCap,
 	)
 	var i McpContractOverride
@@ -98,6 +104,7 @@ func (q *Queries) CreateMCPContractOverride(ctx context.Context, db DBTX, arg Cr
 		&i.DeploymentID,
 		&i.UsedByDeployment,
 		&i.UsedAt,
+		&i.Kind,
 	)
 	return i, err
 }
@@ -107,10 +114,16 @@ const getMCPContractBaseline = `-- name: GetMCPContractBaseline :one
 SELECT l.account_id, l.version AS listing_version, l.endpoint, l.probe_secret, l.published_at,
        COALESCE(c.candidate, l.contract)::jsonb AS contract,
        COALESCE(c.candidate_sha256, l.contract_sha256)::text AS contract_sha256,
-       (CASE WHEN c.candidate IS NULL THEN '' ELSE c.deployment_id::text END)::text AS from_deployment
+       (CASE WHEN c.candidate IS NULL THEN '' ELSE c.deployment_id::text END)::text AS from_deployment,
+       -- ADR-20261128135329: the scan of the same source, and whether its
+       -- high findings were reviewed.
+       (CASE WHEN c.candidate IS NULL THEN l.tool_scan ELSE c.tool_scan END)::jsonb AS tool_scan,
+       (CASE WHEN c.candidate IS NULL THEN l.tool_scan_at ELSE c.checked_at END)::timestamptz AS tool_scan_at,
+       (CASE WHEN c.candidate IS NULL THEN l.tool_scan_review <> '' ELSE c.tool_scan_reviewed END)::boolean AS tool_scan_reviewed
   FROM mcp_listings l
   LEFT JOIN LATERAL (
-       SELECT k.candidate, k.candidate_sha256, k.deployment_id FROM mcp_contract_checks k
+       SELECT k.candidate, k.candidate_sha256, k.deployment_id, k.tool_scan, k.checked_at, k.tool_scan_reviewed
+         FROM mcp_contract_checks k
         WHERE k.app_id = l.app_id AND k.account_id = l.account_id AND k.live_at IS NOT NULL
           AND k.live_at >= l.published_at
         ORDER BY k.live_at DESC LIMIT 1) c ON true
@@ -118,14 +131,17 @@ SELECT l.account_id, l.version AS listing_version, l.endpoint, l.probe_secret, l
 `
 
 type GetMCPContractBaselineRow struct {
-	AccountID      pgtype.UUID
-	ListingVersion int32
-	Endpoint       string
-	ProbeSecret    string
-	PublishedAt    pgtype.Timestamptz
-	Contract       []byte
-	ContractSha256 string
-	FromDeployment string
+	AccountID        pgtype.UUID
+	ListingVersion   int32
+	Endpoint         string
+	ProbeSecret      string
+	PublishedAt      pgtype.Timestamptz
+	Contract         []byte
+	ContractSha256   string
+	FromDeployment   string
+	ToolScan         []byte
+	ToolScanAt       pgtype.Timestamptz
+	ToolScanReviewed bool
 }
 
 // ADR-20261127191645: the tool contract gate for sold MCP servers.
@@ -145,12 +161,15 @@ func (q *Queries) GetMCPContractBaseline(ctx context.Context, db DBTX, appID pgt
 		&i.Contract,
 		&i.ContractSha256,
 		&i.FromDeployment,
+		&i.ToolScan,
+		&i.ToolScanAt,
+		&i.ToolScanReviewed,
 	)
 	return i, err
 }
 
 const getMCPContractCheck = `-- name: GetMCPContractCheck :one
-SELECT deployment_id, app_id, account_id, baseline_sha256, candidate_sha256, candidate, verdict, changes, override_id, checked_at, accepted_at, live_at FROM mcp_contract_checks WHERE deployment_id = $1
+SELECT deployment_id, app_id, account_id, baseline_sha256, candidate_sha256, candidate, verdict, changes, override_id, checked_at, accepted_at, live_at, tool_scan, tool_scan_high, tool_scan_new_high, tool_scan_override_id, tool_scan_reviewed FROM mcp_contract_checks WHERE deployment_id = $1
 `
 
 func (q *Queries) GetMCPContractCheck(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (McpContractCheck, error) {
@@ -169,12 +188,17 @@ func (q *Queries) GetMCPContractCheck(ctx context.Context, db DBTX, deploymentID
 		&i.CheckedAt,
 		&i.AcceptedAt,
 		&i.LiveAt,
+		&i.ToolScan,
+		&i.ToolScanHigh,
+		&i.ToolScanNewHigh,
+		&i.ToolScanOverrideID,
+		&i.ToolScanReviewed,
 	)
 	return i, err
 }
 
 const listMCPContractChangelog = `-- name: ListMCPContractChangelog :many
-SELECT k.deployment_id, k.app_id, k.account_id, k.baseline_sha256, k.candidate_sha256, k.candidate, k.verdict, k.changes, k.override_id, k.checked_at, k.accepted_at, k.live_at FROM mcp_contract_checks k
+SELECT k.deployment_id, k.app_id, k.account_id, k.baseline_sha256, k.candidate_sha256, k.candidate, k.verdict, k.changes, k.override_id, k.checked_at, k.accepted_at, k.live_at, k.tool_scan, k.tool_scan_high, k.tool_scan_new_high, k.tool_scan_override_id, k.tool_scan_reviewed FROM mcp_contract_checks k
   JOIN mcp_listings l ON l.app_id = k.app_id AND l.account_id = k.account_id
  WHERE k.account_id = $1 AND k.app_id = $2 AND k.accepted_at IS NOT NULL
    AND k.accepted_at >= l.published_at AND k.verdict NOT IN ('unchanged', 'unknown')
@@ -210,6 +234,11 @@ func (q *Queries) ListMCPContractChangelog(ctx context.Context, db DBTX, arg Lis
 			&i.CheckedAt,
 			&i.AcceptedAt,
 			&i.LiveAt,
+			&i.ToolScan,
+			&i.ToolScanHigh,
+			&i.ToolScanNewHigh,
+			&i.ToolScanOverrideID,
+			&i.ToolScanReviewed,
 		); err != nil {
 			return nil, err
 		}
@@ -222,7 +251,7 @@ func (q *Queries) ListMCPContractChangelog(ctx context.Context, db DBTX, arg Lis
 }
 
 const listMCPContractChecks = `-- name: ListMCPContractChecks :many
-SELECT deployment_id, app_id, account_id, baseline_sha256, candidate_sha256, candidate, verdict, changes, override_id, checked_at, accepted_at, live_at FROM mcp_contract_checks WHERE account_id = $1 AND app_id = $2
+SELECT deployment_id, app_id, account_id, baseline_sha256, candidate_sha256, candidate, verdict, changes, override_id, checked_at, accepted_at, live_at, tool_scan, tool_scan_high, tool_scan_new_high, tool_scan_override_id, tool_scan_reviewed FROM mcp_contract_checks WHERE account_id = $1 AND app_id = $2
  ORDER BY checked_at DESC LIMIT $3
 `
 
@@ -254,6 +283,11 @@ func (q *Queries) ListMCPContractChecks(ctx context.Context, db DBTX, arg ListMC
 			&i.CheckedAt,
 			&i.AcceptedAt,
 			&i.LiveAt,
+			&i.ToolScan,
+			&i.ToolScanHigh,
+			&i.ToolScanNewHigh,
+			&i.ToolScanOverrideID,
+			&i.ToolScanReviewed,
 		); err != nil {
 			return nil, err
 		}
@@ -266,7 +300,7 @@ func (q *Queries) ListMCPContractChecks(ctx context.Context, db DBTX, arg ListMC
 }
 
 const listOpenMCPContractOverrides = `-- name: ListOpenMCPContractOverrides :many
-SELECT o.id, o.app_id, o.account_id, o.reason, o.created_by, o.created_at, o.expires_at, o.deployment_id, o.used_by_deployment, o.used_at FROM mcp_contract_overrides o
+SELECT o.id, o.app_id, o.account_id, o.reason, o.created_by, o.created_at, o.expires_at, o.deployment_id, o.used_by_deployment, o.used_at, o.kind FROM mcp_contract_overrides o
   LEFT JOIN deployments d ON d.id = o.deployment_id
  WHERE o.account_id = $1 AND o.app_id = $2 AND o.used_at IS NULL AND o.expires_at > now()
    AND (o.deployment_id IS NULL OR d.status IN ('pending', 'building', 'imaging', 'snapshotting'))
@@ -300,6 +334,7 @@ func (q *Queries) ListOpenMCPContractOverrides(ctx context.Context, db DBTX, arg
 			&i.DeploymentID,
 			&i.UsedByDeployment,
 			&i.UsedAt,
+			&i.Kind,
 		); err != nil {
 			return nil, err
 		}
@@ -322,26 +357,36 @@ func (q *Queries) LockMCPContractOverrides(ctx context.Context, db DBTX, appID p
 }
 
 const upsertMCPContractCheck = `-- name: UpsertMCPContractCheck :one
-INSERT INTO mcp_contract_checks (deployment_id, app_id, account_id, baseline_sha256, candidate_sha256, candidate, verdict, changes, override_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+INSERT INTO mcp_contract_checks (deployment_id, app_id, account_id, baseline_sha256, candidate_sha256, candidate, verdict, changes, override_id,
+    tool_scan, tool_scan_high, tool_scan_new_high, tool_scan_override_id, tool_scan_reviewed)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+    $13, $14)
 ON CONFLICT (deployment_id) DO UPDATE SET
     baseline_sha256 = excluded.baseline_sha256, candidate_sha256 = excluded.candidate_sha256,
     candidate = excluded.candidate, verdict = excluded.verdict, changes = excluded.changes,
-    override_id = COALESCE(excluded.override_id, mcp_contract_checks.override_id), checked_at = now()
+    override_id = COALESCE(excluded.override_id, mcp_contract_checks.override_id),
+    tool_scan = excluded.tool_scan, tool_scan_high = excluded.tool_scan_high, tool_scan_new_high = excluded.tool_scan_new_high,
+    tool_scan_override_id = COALESCE(excluded.tool_scan_override_id, mcp_contract_checks.tool_scan_override_id),
+    tool_scan_reviewed = excluded.tool_scan_reviewed, checked_at = now()
 WHERE mcp_contract_checks.accepted_at IS NULL AND mcp_contract_checks.app_id = excluded.app_id
-RETURNING deployment_id, app_id, account_id, baseline_sha256, candidate_sha256, candidate, verdict, changes, override_id, checked_at, accepted_at, live_at
+RETURNING deployment_id, app_id, account_id, baseline_sha256, candidate_sha256, candidate, verdict, changes, override_id, checked_at, accepted_at, live_at, tool_scan, tool_scan_high, tool_scan_new_high, tool_scan_override_id, tool_scan_reviewed
 `
 
 type UpsertMCPContractCheckParams struct {
-	DeploymentID    pgtype.UUID
-	AppID           pgtype.UUID
-	AccountID       pgtype.UUID
-	BaselineSha256  string
-	CandidateSha256 pgtype.Text
-	Candidate       []byte
-	Verdict         string
-	Changes         []byte
-	OverrideID      pgtype.UUID
+	DeploymentID       pgtype.UUID
+	AppID              pgtype.UUID
+	AccountID          pgtype.UUID
+	BaselineSha256     string
+	CandidateSha256    pgtype.Text
+	Candidate          []byte
+	Verdict            string
+	Changes            []byte
+	OverrideID         pgtype.UUID
+	ToolScan           []byte
+	ToolScanHigh       int32
+	ToolScanNewHigh    int32
+	ToolScanOverrideID pgtype.UUID
+	ToolScanReviewed   bool
 }
 
 func (q *Queries) UpsertMCPContractCheck(ctx context.Context, db DBTX, arg UpsertMCPContractCheckParams) (McpContractCheck, error) {
@@ -355,6 +400,11 @@ func (q *Queries) UpsertMCPContractCheck(ctx context.Context, db DBTX, arg Upser
 		arg.Verdict,
 		arg.Changes,
 		arg.OverrideID,
+		arg.ToolScan,
+		arg.ToolScanHigh,
+		arg.ToolScanNewHigh,
+		arg.ToolScanOverrideID,
+		arg.ToolScanReviewed,
 	)
 	var i McpContractCheck
 	err := row.Scan(
@@ -370,6 +420,11 @@ func (q *Queries) UpsertMCPContractCheck(ctx context.Context, db DBTX, arg Upser
 		&i.CheckedAt,
 		&i.AcceptedAt,
 		&i.LiveAt,
+		&i.ToolScan,
+		&i.ToolScanHigh,
+		&i.ToolScanNewHigh,
+		&i.ToolScanOverrideID,
+		&i.ToolScanReviewed,
 	)
 	return i, err
 }

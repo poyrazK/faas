@@ -41,6 +41,10 @@ type PutMCPListingRequest struct {
 	// candidate's tools. Empty on a republish that keeps the contract keeps
 	// the current one.
 	ProbeSecret string `json:"probe_secret,omitempty"`
+	// ScanReviewReason publishes despite high-severity tool safety scan
+	// findings (ADR-20261128135329): the seller's audited reason, at most
+	// MCPContractReasonMax bytes.
+	ScanReviewReason string `json:"scan_review_reason,omitempty"`
 }
 
 // MCPListingResponse is the owner's view of a published listing.
@@ -61,7 +65,50 @@ type MCPListingResponse struct {
 	// the listing is not gated.
 	ContractSHA256 string `json:"contract_sha256,omitempty"`
 	ProbeSecret    string `json:"probe_secret,omitempty"`
+	// ToolScan is the tool safety scan of what was published.
+	ToolScan *MCPToolScan `json:"tool_scan,omitempty"`
 }
+
+// MCPToolScan is a tool safety scan as the seller sees it
+// (ADR-20261128135329).
+type MCPToolScan struct {
+	RuleSet   int                  `json:"rule_set"`
+	ScannedAt time.Time            `json:"scanned_at"`
+	High      int                  `json:"high"`
+	Medium    int                  `json:"medium"`
+	Low       int                  `json:"low"`
+	Truncated bool                 `json:"truncated,omitempty"`
+	Findings  []MCPToolScanFinding `json:"findings"`
+	// Review is the seller's reason for publishing despite high findings.
+	Review string `json:"review,omitempty"`
+}
+
+// MCPToolScanFinding is one rule match of a tool safety scan.
+type MCPToolScanFinding struct {
+	Rule     string `json:"rule"`
+	Severity string `json:"severity"`
+	Kind     string `json:"kind"`
+	Name     string `json:"name"`
+	Path     string `json:"path"`
+	Excerpt  string `json:"excerpt,omitempty"`
+}
+
+// MCPToolScanBadge is what the public listing shows of the scan: no rules
+// or excerpts.
+type MCPToolScanBadge struct {
+	RuleSet   int       `json:"rule_set"`
+	ScannedAt time.Time `json:"scanned_at"`
+	// Status is "clean" (no high-severity findings) or "reviewed" (the
+	// seller shipped ReviewedHigh high findings with an audited reason).
+	Status       string `json:"status"`
+	ReviewedHigh int    `json:"reviewed_high,omitempty"`
+}
+
+// MCPToolScanBadge statuses.
+const (
+	MCPToolScanClean    = "clean"
+	MCPToolScanReviewed = "reviewed"
+)
 
 // MCPListingInstall is how a client adds the server.
 type MCPListingInstall struct {
@@ -91,6 +138,9 @@ type PublicMCPListingResponse struct {
 	// Changelog lists the tool contract changes shipped since the listing
 	// was published, newest first (ADR-20261127191645).
 	Changelog []MCPContractChangelogEntry `json:"changelog,omitempty"`
+	// ToolScan is the tool safety scan badge of the tools the server serves
+	// now (ADR-20261128135329).
+	ToolScan *MCPToolScanBadge `json:"tool_scan,omitempty"`
 }
 
 // GetMCPListing reads an app's published listing.

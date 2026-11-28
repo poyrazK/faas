@@ -78,6 +78,11 @@ BEGIN
         IF prior.verdict IN ('breaking', 'unverified') AND prior.override_id IS NULL THEN
             RETURN NEW;
         END IF;
+        -- ADR-20261128135329: high scan findings the baseline had not
+        -- reviewed need a tool_scan override.
+        IF prior.tool_scan_new_high > 0 AND prior.tool_scan_override_id IS NULL THEN
+            RETURN NEW;
+        END IF;
         -- The baseline GetMCPContractBaseline returns right now.
         SELECT COALESCE(k.candidate_sha256, listing_sha) INTO current_sha
           FROM mcp_contract_checks k
@@ -51908,6 +51913,11 @@ CREATE TABLE public.mcp_contract_checks (
     checked_at timestamp with time zone DEFAULT now() NOT NULL,
     accepted_at timestamp with time zone,
     live_at timestamp with time zone,
+    tool_scan jsonb,
+    tool_scan_high integer DEFAULT 0 NOT NULL,
+    tool_scan_new_high integer DEFAULT 0 NOT NULL,
+    tool_scan_override_id uuid,
+    tool_scan_reviewed boolean DEFAULT false NOT NULL,
     CONSTRAINT mcp_contract_checks_baseline_sha256_check CHECK ((baseline_sha256 ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT mcp_contract_checks_candidate_check CHECK (((candidate IS NULL) OR ((jsonb_typeof(candidate) = 'object'::text) AND (octet_length((candidate)::text) <= 2097152)))),
     CONSTRAINT mcp_contract_checks_candidate_sha256_check CHECK ((candidate_sha256 ~ '^[0-9a-f]{64}$'::text)),
@@ -51934,6 +51944,7 @@ CREATE TABLE public.mcp_contract_overrides (
     deployment_id uuid,
     used_by_deployment uuid,
     used_at timestamp with time zone,
+    kind text DEFAULT 'contract'::text NOT NULL,
     CONSTRAINT mcp_contract_overrides_check CHECK ((expires_at > created_at)),
     CONSTRAINT mcp_contract_overrides_check1 CHECK (((used_by_deployment IS NULL) = (used_at IS NULL))),
     CONSTRAINT mcp_contract_overrides_created_by_check CHECK (((char_length(created_by) >= 1) AND (char_length(created_by) <= 200))),
@@ -51960,6 +51971,11 @@ CREATE TABLE public.mcp_listings (
     contract jsonb,
     contract_sha256 text,
     probe_secret text DEFAULT ''::text NOT NULL,
+    tool_scan jsonb,
+    tool_scan_at timestamp with time zone,
+    tool_scan_high integer DEFAULT 0 NOT NULL,
+    tool_scan_review text DEFAULT ''::text NOT NULL,
+    tool_scan_reviewed_by text DEFAULT ''::text NOT NULL,
     CONSTRAINT mcp_listings_endpoint_check CHECK (((endpoint ~~ 'https://%'::text) AND (char_length(endpoint) <= 2048))),
     CONSTRAINT mcp_listings_registry_name_check CHECK (((registry_name = ''::text) OR (registry_name ~ '^[a-zA-Z0-9.-]+/[a-zA-Z0-9._-]+$'::text))),
     CONSTRAINT mcp_listings_summary_check CHECK ((char_length(summary) <= 500)),
@@ -75737,6 +75753,22 @@ ALTER TABLE ONLY public.mcp_contract_checks
 
 
 --
+-- Name: mcp_contract_checks mcp_contract_checks_tool_scan_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.mcp_contract_checks
+    ADD CONSTRAINT mcp_contract_checks_tool_scan_chk CHECK ((((tool_scan IS NULL) OR ((jsonb_typeof(tool_scan) = 'object'::text) AND (octet_length((tool_scan)::text) <= 262144))) AND (tool_scan_high >= 0) AND ((tool_scan_new_high >= 0) AND (tool_scan_new_high <= tool_scan_high)) AND ((tool_scan IS NOT NULL) OR (tool_scan_high = 0)) AND ((NOT tool_scan_reviewed) OR (tool_scan_high > 0)))) NOT VALID;
+
+
+--
+-- Name: mcp_contract_overrides mcp_contract_overrides_kind_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.mcp_contract_overrides
+    ADD CONSTRAINT mcp_contract_overrides_kind_chk CHECK ((kind = ANY (ARRAY['contract'::text, 'tool_scan'::text]))) NOT VALID;
+
+
+--
 -- Name: mcp_contract_overrides mcp_contract_overrides_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -75766,6 +75798,14 @@ ALTER TABLE ONLY public.mcp_listings
 
 ALTER TABLE public.mcp_listings
     ADD CONSTRAINT mcp_listings_probe_secret_chk CHECK (((probe_secret = ''::text) OR (probe_secret ~ '^[A-Za-z][A-Za-z0-9_]{0,127}$'::text))) NOT VALID;
+
+
+--
+-- Name: mcp_listings mcp_listings_tool_scan_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.mcp_listings
+    ADD CONSTRAINT mcp_listings_tool_scan_chk CHECK ((((tool_scan IS NULL) = (tool_scan_at IS NULL)) AND ((tool_scan IS NULL) OR ((jsonb_typeof(tool_scan) = 'object'::text) AND (octet_length((tool_scan)::text) <= 262144))) AND (tool_scan_high >= 0) AND (octet_length(tool_scan_review) <= 512) AND (char_length(tool_scan_reviewed_by) <= 200) AND ((tool_scan_review = ''::text) = (tool_scan_reviewed_by = ''::text)))) NOT VALID;
 
 
 --
@@ -113500,6 +113540,14 @@ ALTER TABLE ONLY public.mcp_contract_checks
 
 ALTER TABLE ONLY public.mcp_contract_checks
     ADD CONSTRAINT mcp_contract_checks_override_id_fkey FOREIGN KEY (override_id) REFERENCES public.mcp_contract_overrides(id) ON DELETE SET NULL;
+
+
+--
+-- Name: mcp_contract_checks mcp_contract_checks_tool_scan_override_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_contract_checks
+    ADD CONSTRAINT mcp_contract_checks_tool_scan_override_id_fkey FOREIGN KEY (tool_scan_override_id) REFERENCES public.mcp_contract_overrides(id) ON DELETE SET NULL;
 
 
 --

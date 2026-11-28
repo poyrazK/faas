@@ -34,6 +34,7 @@ func cmdMCPListing(args []string) int {
 	summary := fs.String("summary", "", "one or two sentences on what the server does (publish)")
 	registry := fs.String("registry-name", "", "MCP registry name, such as io.github.<user>/<server> (publish)")
 	showUsage := fs.Bool("show-usage", false, "show the open customer count on the page (publish)")
+	scanReview := fs.String("scan-review", "", "why high-severity tool safety scan findings are safe for customers' models; publishes despite them (publish, audited)")
 	probeSecret := fs.String("probe-secret", "", "app secret holding a bearer token the deploy gate sends to list a candidate's tools, for a server that checks credentials itself (publish)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
@@ -51,7 +52,7 @@ func cmdMCPListing(args []string) int {
 	case "publish":
 		set := map[string]bool{}
 		fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
-		req := api.PutMCPListingRequest{Title: *title, Summary: *summary, RegistryName: *registry, ShowUsage: *showUsage, ProbeSecret: *probeSecret}
+		req := api.PutMCPListingRequest{Title: *title, Summary: *summary, RegistryName: *registry, ShowUsage: *showUsage, ProbeSecret: *probeSecret, ScanReviewReason: *scanReview}
 		// Republishing refreshes the tools and keeps what the flags leave out.
 		current, err := c.GetMCPListing(ctx, *slug)
 		switch {
@@ -201,5 +202,11 @@ func renderMCPListing(w io.Writer, l api.MCPListingResponse) {
 	}
 	if l.ProbeSecret != "" {
 		_, _ = fmt.Fprintf(w, "Probe:     bearer token from app secret %s\n", l.ProbeSecret)
+	}
+	if l.ToolScan != nil {
+		_, _ = fmt.Fprintf(w, "Scan:      %s\n", toolScanLine(l.ToolScan))
+		for _, f := range l.ToolScan.Findings {
+			_, _ = fmt.Fprintf(w, "  %-6s %s\n", f.Severity, toolScanFindingLine(f))
+		}
 	}
 }

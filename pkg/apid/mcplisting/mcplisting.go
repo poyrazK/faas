@@ -224,7 +224,8 @@ func Tools(in []state.MCPListingTool) []api.MCPListingTool {
 func Response(l state.MCPListing, slug, origin string) api.MCPListingResponse {
 	out := api.MCPListingResponse{App: slug, Title: l.Title, Summary: l.Summary, Endpoint: l.Endpoint, Tools: Tools(l.Tools),
 		RegistryName: l.RegistryName, ShowUsage: l.ShowUsage, Version: l.Version, PublishedAt: l.PublishedAt,
-		PageURL: PageURL(origin, slug), ContractSHA256: l.ContractSHA256, ProbeSecret: l.ProbeSecret}
+		PageURL: PageURL(origin, slug), ContractSHA256: l.ContractSHA256, ProbeSecret: l.ProbeSecret,
+		ToolScan: ToolScanView(l.ToolScan, l.ToolScanAt, l.ToolScanReview)}
 	if l.RegistryName != "" {
 		out.ServerJSONURL = ServerJSONURL(origin, slug)
 	}

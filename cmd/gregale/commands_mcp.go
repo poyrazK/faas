@@ -939,6 +939,7 @@ type mcpDeployOptions struct {
 	accessAudit, accessAuditAlgorithms         string
 	mcpTaskMigrationOverride                   bool
 	allowBreaking                              bool
+	acceptScanFindings                         bool
 	breakingReason                             string
 	// onCandidateQueued sees every candidate deployment this command queues
 	// (the discovery one and the catalog-pinned one).
@@ -949,6 +950,19 @@ type mcpDeployOptions struct {
 	requireCatalogPin    bool
 	requireReviewedTools bool
 	replay               bool
+}
+
+// overrideKinds are the tool contract override kinds the deploy records for
+// each candidate it queues.
+func (o mcpDeployOptions) overrideKinds() []string {
+	var kinds []string
+	if o.allowBreaking {
+		kinds = append(kinds, api.MCPContractOverrideKindContract)
+	}
+	if o.acceptScanFindings {
+		kinds = append(kinds, api.MCPContractOverrideKindToolScan)
+	}
+	return kinds
 }
 
 func cmdMCPDeploy(args []string) int {
@@ -968,7 +982,8 @@ func cmdMCPDeploy(args []string) int {
 	fs.StringVar(&o.accessAuditAlgorithms, "access-audit-algorithms", "", "reviewed gateway algorithms (default RS256,ES256; requires --access-audit)")
 	fs.BoolVar(&o.mcpTaskMigrationOverride, "mcp-task-migration-override", false, "allow this deployment to replace incompatible MCP task workers once")
 	fs.BoolVar(&o.allowBreaking, "allow-breaking", false, "let this deploy break the listing's tool contract; records an audited override (needs --reason)")
-	fs.StringVar(&o.breakingReason, "reason", "", "why paying customers' tools may break (with --allow-breaking)")
+	fs.BoolVar(&o.acceptScanFindings, "accept-scan-findings", false, "ship despite unreviewed high-severity tool safety scan findings; records an audited override (needs --reason)")
+	fs.StringVar(&o.breakingReason, "reason", "", "why paying customers' tools may break or the flagged tool text is safe (with --allow-breaking or --accept-scan-findings)")
 	fs.IntVar(&o.timeout, "timeout", 1200, "deployment and verification wait timeout in seconds")
 	// A failed submission's recovery hint tells the user to retry with this
 	// flag; without it the documented retry was an unknown-flag error
@@ -985,8 +1000,8 @@ func cmdMCPDeploy(args []string) int {
 	if fs.NArg() != 0 || o.slug == "" || o.timeout <= 0 || o.timeout > int((24*time.Hour)/time.Second) {
 		return printErr("Invalid MCP deploy", errors.New("--name and a --timeout from 1s to 24h are required"))
 	}
-	if o.allowBreaking != (strings.TrimSpace(o.breakingReason) != "") {
-		return printErr("Invalid MCP deploy", errors.New("--allow-breaking and --reason go together: say why paying customers' tools may break"))
+	if (o.allowBreaking || o.acceptScanFindings) != (strings.TrimSpace(o.breakingReason) != "") {
+		return printErr("Invalid MCP deploy", errors.New("--allow-breaking or --accept-scan-findings and --reason go together: say why paying customers' tools may break or the flagged tool text is safe"))
 	}
 	return runMCPDeploy(o)
 }
@@ -1068,8 +1083,8 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	if err := requireMCPGatewayPolicy(ctx, c, o.slug, cfg); err != nil {
 		return printErr("MCP gateway policy", err)
 	}
-	if o.allowBreaking {
-		if o.onCandidateQueued, err = mcpDeployAllowBreaking(ctx, c, o.slug, o.breakingReason); err != nil {
+	if kinds := o.overrideKinds(); len(kinds) > 0 {
+		if o.onCandidateQueued, err = mcpDeployOverrides(ctx, c, o.slug, o.breakingReason, kinds); err != nil {
 			return printErr("MCP tool contract override", err)
 		}
 	}

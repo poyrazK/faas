@@ -1166,6 +1166,63 @@ contract. The owner API is
 `POST /v1/apps/my-mcp/mcp-contract/overrides`
 ([ADR-20261127191645](adr/20261127191645-mcp-tool-contract-gate.md)).
 
+### Tool safety scan
+
+Your customers' models read your tools' names, descriptions and input
+schemas, and the names and descriptions of your prompts and resources. A
+fixed, versioned rule set scans that text for prompt injection when you
+publish a listing and on every production deploy the tool contract checks.
+It looks at no code and no tool output, and the same text always gives the
+same findings.
+
+| Severity | Rule | Matches |
+|---|---|---|
+| high | `invisible_characters` | invisible, bidirectional or control characters that hide text from people |
+| high | `instruction_override` | text that tries to override the model's instructions |
+| high | `concealment` | text that tells the model to hide something from the user |
+| high | `sensitive_file` | a reference to credential or key files on the user's machine |
+| high | `exfiltration` | text that tells the model to send data to a fixed address |
+| medium | `system_prompt_reference` | a reference to the model's system prompt or hidden context |
+| medium | `conversation_request` | text that asks for the whole conversation or earlier messages |
+| medium | `credential_request` | text that asks for passwords, keys or tokens |
+| medium | `hidden_markup` | comments or markup a person reading the description would not see |
+| medium | `encoded_payload` | a long base64 or hex string |
+| medium | `cross_tool_steering` | one entry tells the model how to use another tool |
+| medium | `conversation_parameter` | an input parameter asks for the conversation or system prompt |
+| low | `oversized_text` | text longer than 4,096 bytes |
+
+High findings refuse the publish with `mcp_tool_scan_blocked`; the error
+lists each one with its tool, JSON path and the matched text. Change the
+text, or, when it is safe (a search tool whose example query says "ignore
+previous results"), publish with your reason. The reason is audited:
+
+```bash
+gregale mcp server listing publish --app my-mcp --scan-review "the example query quotes user input"
+gregale mcp server listing get --app my-mcp   # the scan, its findings and your review
+```
+
+A production deploy whose tools have high findings the current baseline
+did not already have is refused the same way (`mcp_tool_scan_blocked`), and
+the previous release keeps serving. Findings you reviewed at publish, or
+that an earlier deploy shipped with an override, don't refuse it again. To
+ship new ones, record a `tool_scan` override, which works like a contract
+override:
+
+```bash
+gregale mcp server deploy --name my-mcp --accept-scan-findings --reason "the example query quotes user input"
+# or, before a git push or gregale deploy:
+gregale mcp server contract allow --app my-mcp --tool-scan --reason "the example query quotes user input"
+```
+
+`--allow-breaking` and `--accept-scan-findings` can be used together with
+one `--reason`. `contract show` lists each check's high findings and
+whether a scan override admitted it.
+
+The listing page says when the tools were last scanned and with which rule
+set version: "no high-severity findings", or how many findings the seller
+reviewed. It never shows the rules that matched, the text or your reason
+([ADR-20261128135329](adr/20261128135329-mcp-tool-safety-scan.md)).
+
 ### Know when customers sign up or change
 
 Subscribe an app webhook to these events to provision accounts, send

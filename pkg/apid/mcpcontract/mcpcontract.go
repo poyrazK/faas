@@ -22,6 +22,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/apid/mcplisting"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -133,7 +134,8 @@ func (o Owner) CreateOverride(w http.ResponseWriter, r *http.Request, acct state
 		return
 	}
 	created, err := store.CreateMCPContractOverride(r.Context(), state.MCPContractOverride{AppID: app.ID, AccountID: app.AccountID,
-		Reason: reason, CreatedBy: o.Host.Actor(r, acct), ExpiresAt: o.now().Add(ttl), DeploymentID: req.DeploymentID}, api.MCPContractOverrideOpenCap)
+		Reason: reason, CreatedBy: o.Host.Actor(r, acct), ExpiresAt: o.now().Add(ttl), DeploymentID: req.DeploymentID, Kind: overrideKind(req.Kind)},
+		api.MCPContractOverrideOpenCap)
 	if errors.Is(err, state.ErrMCPContractOverrideCap) {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Too many open overrides",
 			fmt.Sprintf("this app already has %d open overrides; each admits one candidate, so deploy or let them expire", api.MCPContractOverrideOpenCap)).
@@ -146,7 +148,7 @@ func (o Owner) CreateOverride(w http.ResponseWriter, r *http.Request, acct state
 		return
 	}
 	o.Host.Audit(r.Context(), "mcp_contract.override_created", acct.ID, map[string]any{"app_id": app.ID, "override_id": created.ID,
-		"reason": created.Reason, "expires_at": created.ExpiresAt, "deployment_id": created.DeploymentID})
+		"reason": created.Reason, "expires_at": created.ExpiresAt, "deployment_id": created.DeploymentID, "kind": created.Kind})
 	httpkit.WriteJSON(w, http.StatusCreated, Override(created))
 }
 
@@ -177,6 +179,9 @@ func ValidateOverride(req api.CreateMCPContractOverrideRequest) (string, time.Du
 	if reason == "" {
 		return "", 0, invalid("reason is required: say why paying customers' tools may break")
 	}
+	if !state.ValidMCPContractOverrideKind(overrideKind(req.Kind)) {
+		return "", 0, invalid("kind must be contract or tool_scan")
+	}
 	if n := len(reason); n > api.MCPContractReasonMax || !utf8.ValidString(reason) {
 		return "", 0, invalid(fmt.Sprintf("reason must be valid UTF-8 of at most %d bytes", api.MCPContractReasonMax)).
 			WithLimit(api.MCPContractReasonMax, int64(n))
@@ -193,6 +198,14 @@ func ValidateOverride(req api.CreateMCPContractOverrideRequest) (string, time.Du
 	return reason, ttl, nil
 }
 
+// overrideKind defaults an empty kind to contract.
+func overrideKind(kind string) string {
+	if kind == "" {
+		return state.MCPContractOverrideKindContract
+	}
+	return kind
+}
+
 func invalid(detail string) *api.Problem {
 	return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid MCP contract override", detail).WithDocs(DocsURL)
 }
@@ -201,7 +214,8 @@ func invalid(detail string) *api.Problem {
 func Response(slug string, b state.MCPContractBaseline, checks []state.MCPContractCheck, overrides []state.MCPContractOverride) api.MCPContractResponse {
 	out := api.MCPContractResponse{App: slug, BaselineSHA256: b.SHA256, BaselineDeploymentID: b.FromDeployment, ListingVersion: b.ListingVersion,
 		Tools: contractTools(b.Contract), ProbeSecret: b.ProbeSecret, Checks: make([]api.MCPContractCheck, 0, len(checks)),
-		Overrides: make([]api.MCPContractOverride, 0, len(overrides))}
+		BaselineToolScan: mcplisting.ToolScanView(b.ToolScan, b.ToolScanAt, ""),
+		Overrides:        make([]api.MCPContractOverride, 0, len(overrides))}
 	for _, c := range checks {
 		out.Checks = append(out.Checks, Check(c))
 	}
@@ -215,13 +229,16 @@ func Response(slug string, b state.MCPContractBaseline, checks []state.MCPContra
 func Check(c state.MCPContractCheck) api.MCPContractCheck {
 	changes := []api.MCPContractChange{}
 	_ = json.Unmarshal(c.Changes, &changes)
+	checked := c.CheckedAt
 	return api.MCPContractCheck{DeploymentID: c.DeploymentID, Verdict: c.Verdict, BaselineSHA256: c.BaselineSHA256,
-		ContractSHA256: c.CandidateSHA256, Overridden: c.OverrideID != "", Changes: changes, CheckedAt: c.CheckedAt, AcceptedAt: c.AcceptedAt}
+		ContractSHA256: c.CandidateSHA256, Overridden: c.OverrideID != "", Changes: changes, CheckedAt: c.CheckedAt, AcceptedAt: c.AcceptedAt,
+		ToolScan: mcplisting.ToolScanView(c.ToolScan, &checked, ""), ToolScanNewHigh: c.ToolScanNewHigh,
+		ToolScanOverridden: c.ToolScanOverrideID != ""}
 }
 
 // Override converts a stored override to the wire form.
 func Override(o state.MCPContractOverride) api.MCPContractOverride {
-	return api.MCPContractOverride{ID: o.ID, Reason: o.Reason, CreatedBy: o.CreatedBy, CreatedAt: o.CreatedAt, ExpiresAt: o.ExpiresAt,
+	return api.MCPContractOverride{ID: o.ID, Kind: overrideKind(o.Kind), Reason: o.Reason, CreatedBy: o.CreatedBy, CreatedAt: o.CreatedAt, ExpiresAt: o.ExpiresAt,
 		DeploymentID: o.DeploymentID}
 }
 

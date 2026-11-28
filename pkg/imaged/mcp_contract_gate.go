@@ -22,6 +22,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
+	"github.com/onebox-faas/faas/pkg/mcptoolscan"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -84,6 +85,9 @@ func ApplyMCPToolContract(ctx context.Context, g ToolContractGate, app state.App
 		if check.Changes, err = storedChanges(diff.Changes); err != nil {
 			return contractUnavailable(smoke, apihostingreceipt.SmokeErrorContractUnavailable, fmt.Errorf("encode MCP contract changes: %w", err))
 		}
+		if report.ToolScan, err = scanCandidate(&check, candidate, baseline); err != nil {
+			return contractUnavailable(smoke, apihostingreceipt.SmokeErrorContractUnavailable, err)
+		}
 	}
 	report.Verdict, report.ContractSHA256 = check.Verdict, check.CandidateSHA256
 	// The report carries the changes the check stores, so the receipt, the
@@ -95,7 +99,11 @@ func ApplyMCPToolContract(ctx context.Context, g ToolContractGate, app state.App
 	for _, c := range stored {
 		report.Changes = append(report.Changes, apihostingreceipt.MCPContractChange(c))
 	}
-	recorded, err := store.RecordMCPContractCheck(ctx, check, contractClaim(ctx, check.Verdict))
+	claims := state.MCPContractClaims{Contract: contractClaim(ctx, check.Verdict)}
+	if check.ToolScanNewHigh > 0 {
+		claims.ToolScan = state.MCPContractClaimAny
+	}
+	recorded, err := store.RecordMCPContractCheck(ctx, check, claims)
 	switch {
 	case errors.Is(err, state.ErrMCPContractOverrideRequired) && check.Verdict == state.MCPContractUnverified:
 		// Without an override, a catalog the platform cannot list is
@@ -110,6 +118,12 @@ func ApplyMCPToolContract(ctx context.Context, g ToolContractGate, app state.App
 		smoke.ErrorCode = apihostingreceipt.SmokeErrorMCPContractBreaking
 		smoke.Error = breakingSummary(diff)
 		return smoke, nil
+	case errors.Is(err, state.ErrMCPToolScanOverrideRequired):
+		smoke.MCPContract = report
+		smoke.Status = apihostingreceipt.SmokeFailed
+		smoke.ErrorCode = apihostingreceipt.SmokeErrorMCPToolScanBlocked
+		smoke.Error = toolScanSummary(report.ToolScan)
+		return smoke, nil
 	case errors.Is(err, state.ErrConflict):
 		// Already accepted: an earlier attempt promoted this deployment.
 		return smoke, nil
@@ -117,6 +131,9 @@ func ApplyMCPToolContract(ctx context.Context, g ToolContractGate, app state.App
 		return contractUnavailable(smoke, apihostingreceipt.SmokeErrorContractUnavailable, fmt.Errorf("record MCP contract check: %w", err))
 	}
 	report.Overridden = recorded.OverrideID != ""
+	if report.ToolScan != nil {
+		report.ToolScan.Overridden = recorded.ToolScanOverrideID != ""
+	}
 	smoke.MCPContract = report
 	return smoke, nil
 }
@@ -143,6 +160,65 @@ func listCandidateContract(ctx context.Context, g ToolContractGate, app state.Ap
 	defer release()
 	candidate, err := discoverCandidateContract(runCtx, session, baseline.Endpoint, token, version)
 	return candidate, apihostingreceipt.SmokeErrorContractUnavailable, err
+}
+
+// scanCandidate runs the tool safety scan (ADR-20261128135329) over the
+// candidate's catalog, stores it on the check, and counts the high findings
+// the effective baseline had not already reviewed.
+func scanCandidate(check *state.MCPContractCheck, candidate mcphosting.Contract, baseline state.MCPContractBaseline) (*apihostingreceipt.MCPToolScanReport, error) {
+	scan := mcptoolscan.Scan(candidate)
+	raw, err := json.Marshal(scan)
+	if err != nil {
+		return nil, fmt.Errorf("encode MCP tool scan: %w", err)
+	}
+	reviewed := map[string]bool{}
+	if baseline.ToolScanReviewed && len(baseline.ToolScan) > 0 {
+		var prior mcptoolscan.Report
+		if json.Unmarshal(baseline.ToolScan, &prior) == nil {
+			for _, f := range prior.Findings {
+				if f.Severity == mcptoolscan.SeverityHigh {
+					reviewed[findingKey(f)] = true
+				}
+			}
+		}
+	}
+	out := &apihostingreceipt.MCPToolScanReport{RuleSet: scan.RuleSet}
+	for _, f := range scan.Findings {
+		switch f.Severity {
+		case mcptoolscan.SeverityHigh:
+			out.High++
+			if !reviewed[findingKey(f)] {
+				out.NewHigh++
+				out.Findings = append(out.Findings, apihostingreceipt.MCPToolScanFinding(f))
+			}
+		case mcptoolscan.SeverityMedium:
+			out.Medium++
+		default:
+			out.Low++
+		}
+	}
+	check.ToolScan, check.ToolScanHigh, check.ToolScanNewHigh = raw, out.High, out.NewHigh
+	return out, nil
+}
+
+// findingKey identifies a finding across scans: the same rule on the same
+// text of the same entry.
+func findingKey(f mcptoolscan.Finding) string {
+	return f.Rule + "\x00" + f.Kind + "\x00" + f.Name + "\x00" + f.Path + "\x00" + f.Excerpt
+}
+
+// toolScanSummary names the unreviewed high findings, at most
+// api.MCPContractBreakingSummaryMax, for the deployment's failure detail.
+func toolScanSummary(r *apihostingreceipt.MCPToolScanReport) string {
+	var parts []string
+	for i, f := range r.Findings {
+		if i == api.MCPContractBreakingSummaryMax {
+			parts = append(parts, "…")
+			break
+		}
+		parts = append(parts, fmt.Sprintf("%s %s: %s at %s", f.Kind, f.Name, f.Rule, f.Path))
+	}
+	return "tool safety scan found high-severity issues in tools paying customers' models read: " + strings.Join(parts, "; ")
 }
 
 // contractClaim is the override a check may consume. A breaking candidate

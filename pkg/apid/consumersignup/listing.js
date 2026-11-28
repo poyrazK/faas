@@ -105,7 +105,23 @@
     for (const t of tools) item($("tools"), t.name, "code", [t.title, t.description]);
     $("published").textContent = "Tools as of " + new Date(l.published_at).toLocaleDateString();
     renderChangelog(l.changelog || []);
+    renderToolScan(l.tool_scan);
     $("listing-view").hidden = false;
+  }
+
+  // ADR-20261128135329: the tool safety scan badge.
+  function renderToolScan(s) {
+    if (!s) return;
+    const when = new Date(s.scanned_at).toLocaleDateString();
+    let text = "Tools scanned for prompt injection " + when + " (rules v" + s.rule_set + "): ";
+    if (s.status === "reviewed") {
+      const n = s.reviewed_high || 0;
+      text += n + (n === 1 ? " finding" : " findings") + " reviewed by the seller";
+    } else {
+      text += "no high-severity findings";
+    }
+    $("tool-scan").textContent = text;
+    $("tool-scan").hidden = false;
   }
 
   // ADR-20261127191645: tool contract changes shipped since publishing.

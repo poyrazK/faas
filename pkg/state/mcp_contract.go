@@ -40,6 +40,23 @@ var ErrMCPContractOverrideRequired = errors.New("an MCP contract override is req
 // ErrMCPContractOverrideCap: the app already has the most open overrides.
 var ErrMCPContractOverrideCap = errors.New("too many open MCP contract overrides")
 
+// ErrMCPToolScanOverrideRequired: the candidate's tool scan has high findings
+// the baseline had not reviewed and the app has no open tool_scan override
+// (ADR-20261128135329).
+var ErrMCPToolScanOverrideRequired = errors.New("an MCP tool scan override is required")
+
+// MCP contract override kinds (ADR-20261128135329): an override admits
+// either a contract refusal or a tool scan refusal.
+const (
+	MCPContractOverrideKindContract = "contract"
+	MCPContractOverrideKindToolScan = "tool_scan"
+)
+
+// ValidMCPContractOverrideKind reports whether k names an override kind.
+func ValidMCPContractOverrideKind(k string) bool {
+	return k == MCPContractOverrideKindContract || k == MCPContractOverrideKindToolScan
+}
+
 // MCPContractBaseline is what a candidate of a listed app is compared with.
 type MCPContractBaseline struct {
 	AccountID      string
@@ -53,6 +70,12 @@ type MCPContractBaseline struct {
 	// FromDeployment is the accepted candidate the baseline came from; ""
 	// when it is the contract the listing was published with.
 	FromDeployment string
+	// ToolScan is the tool scan (mcptoolscan.Report JSON) of the same
+	// source, nil when it was never scanned; ToolScanReviewed is set when its
+	// high findings were admitted (ADR-20261128135329).
+	ToolScan         json.RawMessage
+	ToolScanAt       *time.Time
+	ToolScanReviewed bool
 }
 
 // MCPContractCheck is one candidate's comparison with the baseline.
@@ -71,11 +94,23 @@ type MCPContractCheck struct {
 	// time, rollbacks included. The newest LiveAt is the baseline.
 	AcceptedAt *time.Time
 	LiveAt     *time.Time
+	// ToolScan is the candidate's tool scan (ADR-20261128135329), nil when
+	// its catalog could not be listed. ToolScanNewHigh counts the high
+	// findings the baseline had not reviewed; they need the tool_scan
+	// override ToolScanOverrideID. The store sets ToolScanReviewed when the
+	// high findings were admitted.
+	ToolScan           json.RawMessage
+	ToolScanHigh       int
+	ToolScanNewHigh    int
+	ToolScanOverrideID string
+	ToolScanReviewed   bool
 }
 
-// MCPContractOverride admits one breaking or unverified candidate.
+// MCPContractOverride admits one breaking or unverified candidate (kind
+// contract) or one candidate with high tool scan findings (kind tool_scan).
 type MCPContractOverride struct {
 	ID        string
+	Kind      string
 	AppID     string
 	AccountID string
 	Reason    string
@@ -95,15 +130,16 @@ type MCPContractStore interface {
 	// MCPContractBaseline returns ErrNotFound when the app has no listing
 	// with a contract.
 	MCPContractBaseline(ctx context.Context, appID string) (MCPContractBaseline, error)
-	// RecordMCPContractCheck records the candidate's check. With a claim
-	// other than MCPContractClaimNone it consumes an open override in the
-	// same transaction (one bound to this deployment first; with
+	// RecordMCPContractCheck records the candidate's check. For each claim
+	// other than MCPContractClaimNone it consumes an open override of that
+	// kind in the same transaction (one bound to this deployment first; with
 	// MCPContractClaimAny else the app's oldest unbound one), or reuses the
-	// one an earlier attempt of the same deployment consumed. Without one it
-	// still records the refused check and returns it with
-	// ErrMCPContractOverrideRequired. A check already accepted is not
-	// rewritten (ErrConflict).
-	RecordMCPContractCheck(ctx context.Context, c MCPContractCheck, claim MCPContractClaim) (MCPContractCheck, error)
+	// one an earlier attempt of the same deployment consumed. When a needed
+	// override is missing it consumes none, still records the refused check
+	// and returns it with ErrMCPContractOverrideRequired (contract) or
+	// ErrMCPToolScanOverrideRequired (tool scan). A check already accepted
+	// is not rewritten (ErrConflict).
+	RecordMCPContractCheck(ctx context.Context, c MCPContractCheck, claims MCPContractClaims) (MCPContractCheck, error)
 	// CreateMCPContractOverride refuses with ErrMCPContractOverrideCap when
 	// the app already has openCap open overrides.
 	CreateMCPContractOverride(ctx context.Context, o MCPContractOverride, openCap int) (MCPContractOverride, error)
@@ -127,6 +163,55 @@ const (
 	// MCPContractClaimAny: a bound override, else the app's oldest unbound one.
 	MCPContractClaimAny
 )
+
+// MCPContractClaims are the overrides one check may consume, by kind.
+type MCPContractClaims struct {
+	Contract MCPContractClaim
+	ToolScan MCPContractClaim
+}
+
+// pgUUIDOrNull is NULL for "".
+func pgUUIDOrNull(id string) pgtype.UUID {
+	if id == "" {
+		return pgtype.UUID{}
+	}
+	return uuidToPgtype(id)
+}
+
+// validMCPContractCheck checks what a recorded check may hold.
+func validMCPContractCheck(c MCPContractCheck) bool {
+	return ValidMCPContractVerdict(c.Verdict) && (c.Verdict == MCPContractUnverified) == (c.Candidate == nil) &&
+		c.ToolScanHigh >= 0 && c.ToolScanNewHigh >= 0 && c.ToolScanNewHigh <= c.ToolScanHigh && (c.ToolScan != nil || c.ToolScanHigh == 0)
+}
+
+// mcpContractCheckRefused: a check a candidate's going live never accepts.
+func mcpContractCheckRefused(c MCPContractCheck) bool {
+	return (c.Verdict == MCPContractBreaking || c.Verdict == MCPContractUnverified) && c.OverrideID == "" ||
+		c.ToolScanNewHigh > 0 && c.ToolScanOverrideID == ""
+}
+
+// missingClaimError names the override kind a claim found missing: the
+// contract one first, then the tool scan one; nil when none is missing.
+func missingClaimError(contractMissing, scanMissing bool) error {
+	switch {
+	case contractMissing:
+		return ErrMCPContractOverrideRequired
+	case scanMissing:
+		return ErrMCPToolScanOverrideRequired
+	}
+	return nil
+}
+
+// recordedClaimError is the refusal a recorded check carries.
+func recordedClaimError(c MCPContractCheck, claims MCPContractClaims) error {
+	switch {
+	case claims.Contract != MCPContractClaimNone && c.OverrideID == "":
+		return ErrMCPContractOverrideRequired
+	case claims.ToolScan != MCPContractClaimNone && c.ToolScanOverrideID == "":
+		return ErrMCPToolScanOverrideRequired
+	}
+	return nil
+}
 
 var (
 	_ MCPContractStore = (*MemStore)(nil)
@@ -154,10 +239,13 @@ func (m *MemStore) MCPContractBaseline(_ context.Context, appID string) (MCPCont
 	}
 	b := MCPContractBaseline{AccountID: l.AccountID, AppID: appID, ListingVersion: l.Version, Endpoint: l.Endpoint,
 		ProbeSecret: l.ProbeSecret, PublishedAt: l.PublishedAt, Contract: l.Contract, SHA256: l.ContractSHA256}
+	b.ToolScan, b.ToolScanAt, b.ToolScanReviewed = l.ToolScan, l.ToolScanAt, l.ToolScanReview != ""
 	if newest := m.newestLiveMCPContractCheckLocked(l); newest != nil && newest.Candidate != nil {
 		b.Contract, b.SHA256, b.FromDeployment = newest.Candidate, newest.CandidateSHA256, newest.DeploymentID
+		checked := newest.CheckedAt
+		b.ToolScan, b.ToolScanAt, b.ToolScanReviewed = newest.ToolScan, &checked, newest.ToolScanReviewed
 	}
-	b.Contract = slices.Clone(b.Contract)
+	b.Contract, b.ToolScan = slices.Clone(b.Contract), slices.Clone(b.ToolScan)
 	return b, nil
 }
 
@@ -176,8 +264,8 @@ func (m *MemStore) newestLiveMCPContractCheckLocked(l MCPListing) *MCPContractCh
 	return newest
 }
 
-func (m *MemStore) RecordMCPContractCheck(_ context.Context, c MCPContractCheck, claim MCPContractClaim) (MCPContractCheck, error) {
-	if !ValidMCPContractVerdict(c.Verdict) || (c.Verdict == MCPContractUnverified) != (c.Candidate == nil) {
+func (m *MemStore) RecordMCPContractCheck(_ context.Context, c MCPContractCheck, claims MCPContractClaims) (MCPContractCheck, error) {
+	if !validMCPContractCheck(c) {
 		return MCPContractCheck{}, ErrInvalidArgument
 	}
 	m.mu.Lock()
@@ -189,45 +277,64 @@ func (m *MemStore) RecordMCPContractCheck(_ context.Context, c MCPContractCheck,
 	if exists && (prev.AcceptedAt != nil || prev.AppID != c.AppID) {
 		return MCPContractCheck{}, ErrConflict
 	}
-	c.OverrideID = ""
+	c.OverrideID, c.ToolScanOverrideID = "", ""
 	if exists {
-		c.OverrideID = prev.OverrideID
+		c.OverrideID, c.ToolScanOverrideID = prev.OverrideID, prev.ToolScanOverrideID
 	}
-	if claim != MCPContractClaimNone && c.OverrideID == "" {
-		c.OverrideID = m.claimMCPContractOverrideLocked(c, claim == MCPContractClaimAny)
+	// Claim both kinds or neither.
+	var contract, scan *MCPContractOverride
+	if claims.Contract != MCPContractClaimNone && c.OverrideID == "" {
+		contract = m.findMCPContractOverrideLocked(c, MCPContractOverrideKindContract, claims.Contract == MCPContractClaimAny)
+	}
+	if claims.ToolScan != MCPContractClaimNone && c.ToolScanOverrideID == "" {
+		scan = m.findMCPContractOverrideLocked(c, MCPContractOverrideKindToolScan, claims.ToolScan == MCPContractClaimAny)
+	}
+	missing := missingClaimError(claims.Contract != MCPContractClaimNone && c.OverrideID == "" && contract == nil,
+		claims.ToolScan != MCPContractClaimNone && c.ToolScanOverrideID == "" && scan == nil)
+	if missing == nil {
+		now := time.Now().UTC()
+		for _, o := range []*MCPContractOverride{contract, scan} {
+			if o != nil {
+				o.UsedByDeployment, o.UsedAt = c.DeploymentID, &now
+				m.mcpContractOverrides[o.ID] = *o
+			}
+		}
+		if contract != nil {
+			c.OverrideID = contract.ID
+		}
+		if scan != nil {
+			c.ToolScanOverrideID = scan.ID
+		}
 	}
 	if c.Changes == nil {
 		c.Changes = json.RawMessage("[]")
 	}
+	c.ToolScanReviewed = c.ToolScanHigh > 0 && (c.ToolScanNewHigh == 0 || c.ToolScanOverrideID != "")
 	c.CheckedAt, c.AcceptedAt, c.LiveAt = time.Now().UTC(), nil, nil
-	c.Candidate, c.Changes = slices.Clone(c.Candidate), slices.Clone(c.Changes)
+	c.Candidate, c.Changes, c.ToolScan = slices.Clone(c.Candidate), slices.Clone(c.Changes), slices.Clone(c.ToolScan)
 	m.mcpContractChecks[c.DeploymentID] = c
-	if claim != MCPContractClaimNone && c.OverrideID == "" {
-		return c, ErrMCPContractOverrideRequired
+	if missing != nil {
+		return c, missing
 	}
-	return c, nil
+	return c, recordedClaimError(c, claims)
 }
 
-func (m *MemStore) claimMCPContractOverrideLocked(c MCPContractCheck, allowUnbound bool) string {
+// findMCPContractOverrideLocked is the open override of kind a check would
+// consume: one bound to its deployment first, then the oldest unbound one.
+func (m *MemStore) findMCPContractOverrideLocked(c MCPContractCheck, kind string, allowUnbound bool) *MCPContractOverride {
 	now := time.Now().UTC()
 	var oldest *MCPContractOverride
 	for _, o := range m.mcpContractOverrides {
-		if o.AppID != c.AppID || o.AccountID != c.AccountID || o.UsedAt != nil || !o.ExpiresAt.After(now) ||
+		if o.AppID != c.AppID || o.AccountID != c.AccountID || o.Kind != kind || o.UsedAt != nil || !o.ExpiresAt.After(now) ||
 			o.DeploymentID != c.DeploymentID && (o.DeploymentID != "" || !allowUnbound) {
 			continue
 		}
-		// A bound override first, then the oldest.
 		bound, oldestBound := o.DeploymentID != "", oldest != nil && oldest.DeploymentID != ""
 		if oldest == nil || bound && !oldestBound || bound == oldestBound && o.CreatedAt.Before(oldest.CreatedAt) {
 			oldest = &o
 		}
 	}
-	if oldest == nil {
-		return ""
-	}
-	oldest.UsedByDeployment, oldest.UsedAt = c.DeploymentID, &now
-	m.mcpContractOverrides[oldest.ID] = *oldest
-	return oldest.ID
+	return oldest
 }
 
 // openMCPContractOverrideLocked mirrors the open filter of the Pg queries.
@@ -253,6 +360,12 @@ func (m *MemStore) CreateMCPContractOverride(_ context.Context, o MCPContractOve
 	}
 	if m.mcpContractOverrides == nil {
 		m.mcpContractOverrides = map[string]MCPContractOverride{}
+	}
+	if o.Kind == "" {
+		o.Kind = MCPContractOverrideKindContract
+	}
+	if !ValidMCPContractOverrideKind(o.Kind) {
+		return MCPContractOverride{}, ErrInvalidArgument
 	}
 	o.ID, o.CreatedAt, o.UsedByDeployment, o.UsedAt = newID(), now, "", nil
 	m.mcpContractOverrides[o.ID] = o
@@ -334,8 +447,7 @@ func (m *MemStore) acceptMCPContractCheckLocked(dep Deployment) {
 		if newest := m.newestLiveMCPContractCheckLocked(l); newest != nil && newest.Candidate != nil {
 			current = newest.CandidateSHA256
 		}
-		refused := (c.Verdict == MCPContractBreaking || c.Verdict == MCPContractUnverified) && c.OverrideID == ""
-		if refused || c.BaselineSHA256 != current {
+		if mcpContractCheckRefused(c) || c.BaselineSHA256 != current {
 			return
 		}
 		c.AcceptedAt = &now
@@ -387,9 +499,14 @@ func MCPContractChangedPayload(c MCPContractCheck) map[string]any {
 func fromMCPContractCheck(row sqlc.McpContractCheck) MCPContractCheck {
 	c := MCPContractCheck{DeploymentID: pgUUIDString(row.DeploymentID), AppID: pgUUIDString(row.AppID), AccountID: pgUUIDString(row.AccountID),
 		BaselineSHA256: row.BaselineSha256, CandidateSHA256: row.CandidateSha256.String, Verdict: row.Verdict,
-		Changes: json.RawMessage(row.Changes), OverrideID: pgUUIDStringOrEmpty(row.OverrideID), CheckedAt: row.CheckedAt.Time.UTC()}
+		Changes: json.RawMessage(row.Changes), OverrideID: pgUUIDStringOrEmpty(row.OverrideID), CheckedAt: row.CheckedAt.Time.UTC(),
+		ToolScanHigh: int(row.ToolScanHigh), ToolScanNewHigh: int(row.ToolScanNewHigh),
+		ToolScanOverrideID: pgUUIDStringOrEmpty(row.ToolScanOverrideID), ToolScanReviewed: row.ToolScanReviewed}
 	if row.Candidate != nil {
 		c.Candidate = json.RawMessage(row.Candidate)
+	}
+	if row.ToolScan != nil {
+		c.ToolScan = json.RawMessage(row.ToolScan)
 	}
 	if row.AcceptedAt.Valid {
 		t := row.AcceptedAt.Time.UTC()
@@ -403,7 +520,7 @@ func fromMCPContractCheck(row sqlc.McpContractCheck) MCPContractCheck {
 }
 
 func fromMCPContractOverride(row sqlc.McpContractOverride) MCPContractOverride {
-	o := MCPContractOverride{ID: pgUUIDString(row.ID), AppID: pgUUIDString(row.AppID), AccountID: pgUUIDString(row.AccountID),
+	o := MCPContractOverride{ID: pgUUIDString(row.ID), Kind: row.Kind, AppID: pgUUIDString(row.AppID), AccountID: pgUUIDString(row.AccountID),
 		Reason: row.Reason, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt.Time.UTC(), ExpiresAt: row.ExpiresAt.Time.UTC(),
 		DeploymentID: pgUUIDStringOrEmpty(row.DeploymentID), UsedByDeployment: pgUUIDStringOrEmpty(row.UsedByDeployment)}
 	if row.UsedAt.Valid {
@@ -421,13 +538,22 @@ func (s *PgStore) MCPContractBaseline(ctx context.Context, appID string) (MCPCon
 	if err != nil {
 		return MCPContractBaseline{}, fmt.Errorf("read MCP contract baseline: %w", err)
 	}
-	return MCPContractBaseline{AccountID: pgUUIDString(row.AccountID), AppID: appID, ListingVersion: int(row.ListingVersion),
+	b := MCPContractBaseline{AccountID: pgUUIDString(row.AccountID), AppID: appID, ListingVersion: int(row.ListingVersion),
 		Endpoint: row.Endpoint, ProbeSecret: row.ProbeSecret, PublishedAt: row.PublishedAt.Time.UTC(),
-		Contract: json.RawMessage(row.Contract), SHA256: row.ContractSha256, FromDeployment: row.FromDeployment}, nil
+		Contract: json.RawMessage(row.Contract), SHA256: row.ContractSha256, FromDeployment: row.FromDeployment,
+		ToolScanReviewed: row.ToolScanReviewed}
+	if row.ToolScan != nil {
+		b.ToolScan = json.RawMessage(row.ToolScan)
+	}
+	if row.ToolScanAt.Valid {
+		t := row.ToolScanAt.Time.UTC()
+		b.ToolScanAt = &t
+	}
+	return b, nil
 }
 
-func (s *PgStore) RecordMCPContractCheck(ctx context.Context, c MCPContractCheck, claim MCPContractClaim) (MCPContractCheck, error) {
-	if !ValidMCPContractVerdict(c.Verdict) || (c.Verdict == MCPContractUnverified) != (c.Candidate == nil) {
+func (s *PgStore) RecordMCPContractCheck(ctx context.Context, c MCPContractCheck, claims MCPContractClaims) (MCPContractCheck, error) {
+	if !validMCPContractCheck(c) {
 		return MCPContractCheck{}, ErrInvalidArgument
 	}
 	if c.Changes == nil {
@@ -439,36 +565,27 @@ func (s *PgStore) RecordMCPContractCheck(ctx context.Context, c MCPContractCheck
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
-	overrideID := ""
+	c.OverrideID, c.ToolScanOverrideID = "", ""
 	prev, err := q.GetMCPContractCheck(ctx, tx, uuidToPgtype(c.DeploymentID))
 	switch {
 	case err == nil:
 		if prev.AcceptedAt.Valid || pgUUIDString(prev.AppID) != c.AppID {
 			return MCPContractCheck{}, ErrConflict
 		}
-		overrideID = pgUUIDStringOrEmpty(prev.OverrideID)
+		c.OverrideID, c.ToolScanOverrideID = pgUUIDStringOrEmpty(prev.OverrideID), pgUUIDStringOrEmpty(prev.ToolScanOverrideID)
 	case !errors.Is(err, pgx.ErrNoRows):
 		return MCPContractCheck{}, fmt.Errorf("read MCP contract check: %w", err)
 	}
-	if claim != MCPContractClaimNone && overrideID == "" {
-		claimed, err := q.ClaimMCPContractOverride(ctx, tx, sqlc.ClaimMCPContractOverrideParams{
-			DeploymentID: uuidToPgtype(c.DeploymentID), AppID: uuidToPgtype(c.AppID), AccountID: uuidToPgtype(c.AccountID),
-			AllowUnbound: claim == MCPContractClaimAny})
-		switch {
-		case err == nil:
-			overrideID = pgUUIDString(claimed.ID)
-		case !errors.Is(err, pgx.ErrNoRows):
-			return MCPContractCheck{}, fmt.Errorf("claim MCP contract override: %w", err)
-		}
+	missing, err := s.claimMCPContractOverrides(ctx, tx, &c, claims)
+	if err != nil {
+		return MCPContractCheck{}, err
 	}
-	var override pgtype.UUID
-	if overrideID != "" {
-		override = uuidToPgtype(overrideID)
-	}
+	c.ToolScanReviewed = c.ToolScanHigh > 0 && (c.ToolScanNewHigh == 0 || c.ToolScanOverrideID != "")
 	row, err := q.UpsertMCPContractCheck(ctx, tx, sqlc.UpsertMCPContractCheckParams{DeploymentID: uuidToPgtype(c.DeploymentID),
 		AppID: uuidToPgtype(c.AppID), AccountID: uuidToPgtype(c.AccountID), BaselineSha256: c.BaselineSHA256,
 		CandidateSha256: pgText(c.CandidateSHA256), Candidate: []byte(c.Candidate), Verdict: c.Verdict, Changes: []byte(c.Changes),
-		OverrideID: override})
+		OverrideID: pgUUIDOrNull(c.OverrideID), ToolScan: []byte(c.ToolScan), ToolScanHigh: int32(c.ToolScanHigh),
+		ToolScanNewHigh: int32(c.ToolScanNewHigh), ToolScanOverrideID: pgUUIDOrNull(c.ToolScanOverrideID), ToolScanReviewed: c.ToolScanReviewed})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return MCPContractCheck{}, ErrConflict
 	}
@@ -478,11 +595,65 @@ func (s *PgStore) RecordMCPContractCheck(ctx context.Context, c MCPContractCheck
 	if err := tx.Commit(ctx); err != nil {
 		return MCPContractCheck{}, fmt.Errorf("record MCP contract check commit: %w", err)
 	}
-	if claim != MCPContractClaimNone && overrideID == "" {
-		// Recorded so the seller sees what was refused; never accepted.
-		return fromMCPContractCheck(row), ErrMCPContractOverrideRequired
+	// A refused check is recorded so the seller sees what was refused; it is
+	// never accepted.
+	recorded := fromMCPContractCheck(row)
+	if missing != nil {
+		return recorded, missing
 	}
-	return fromMCPContractCheck(row), nil
+	return recorded, recordedClaimError(recorded, claims)
+}
+
+// claimMCPContractOverrides consumes the overrides a check needs, both kinds
+// or neither: the claims run under a savepoint that is rolled back when one
+// is missing, and missing names it.
+func (s *PgStore) claimMCPContractOverrides(ctx context.Context, tx pgx.Tx, c *MCPContractCheck, claims MCPContractClaims) (missing, err error) {
+	needContract := claims.Contract != MCPContractClaimNone && c.OverrideID == ""
+	needScan := claims.ToolScan != MCPContractClaimNone && c.ToolScanOverrideID == ""
+	if !needContract && !needScan {
+		return nil, nil
+	}
+	sp, err := tx.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("claim MCP contract overrides savepoint: %w", err)
+	}
+	defer func() { _ = sp.Rollback(ctx) }()
+	claim := func(kind string, mode MCPContractClaim) (string, error) {
+		row, err := sqlc.New().ClaimMCPContractOverride(ctx, sp, sqlc.ClaimMCPContractOverrideParams{
+			DeploymentID: uuidToPgtype(c.DeploymentID), AppID: uuidToPgtype(c.AppID), AccountID: uuidToPgtype(c.AccountID),
+			Kind: kind, AllowUnbound: mode == MCPContractClaimAny})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("claim MCP %s override: %w", kind, err)
+		}
+		return pgUUIDString(row.ID), nil
+	}
+	contract, scan := "", ""
+	if needContract {
+		if contract, err = claim(MCPContractOverrideKindContract, claims.Contract); err != nil {
+			return nil, err
+		}
+	}
+	if needScan {
+		if scan, err = claim(MCPContractOverrideKindToolScan, claims.ToolScan); err != nil {
+			return nil, err
+		}
+	}
+	if missing := missingClaimError(needContract && contract == "", needScan && scan == ""); missing != nil {
+		return missing, nil // the deferred rollback releases whichever was claimed
+	}
+	if err := sp.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("claim MCP contract overrides: %w", err)
+	}
+	if contract != "" {
+		c.OverrideID = contract
+	}
+	if scan != "" {
+		c.ToolScanOverrideID = scan
+	}
+	return nil, nil
 }
 
 func (s *PgStore) CreateMCPContractOverride(ctx context.Context, o MCPContractOverride, openCap int) (MCPContractOverride, error) {
@@ -499,9 +670,15 @@ func (s *PgStore) CreateMCPContractOverride(ctx context.Context, o MCPContractOv
 	if o.DeploymentID != "" {
 		deployment = uuidToPgtype(o.DeploymentID)
 	}
+	if o.Kind == "" {
+		o.Kind = MCPContractOverrideKindContract
+	}
+	if !ValidMCPContractOverrideKind(o.Kind) {
+		return MCPContractOverride{}, ErrInvalidArgument
+	}
 	row, err := q.CreateMCPContractOverride(ctx, tx, sqlc.CreateMCPContractOverrideParams{AppID: uuidToPgtype(o.AppID),
 		AccountID: uuidToPgtype(o.AccountID), Reason: o.Reason, CreatedBy: o.CreatedBy, ExpiresAt: pgTimestamptzUTC(o.ExpiresAt),
-		DeploymentID: deployment, OpenCap: int64(openCap)})
+		DeploymentID: deployment, OpenCap: int64(openCap), Kind: o.Kind})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return MCPContractOverride{}, ErrMCPContractOverrideCap
 	}

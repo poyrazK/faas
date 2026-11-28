@@ -81,6 +81,31 @@ type MCPContractReport struct {
 	ContractSHA256 string              `json:"contract_sha256,omitempty"`
 	Overridden     bool                `json:"overridden,omitempty"`
 	Changes        []MCPContractChange `json:"changes,omitempty"`
+	// ToolScan summarizes the candidate's tool safety scan
+	// (ADR-20261128135329); nil when its catalog could not be listed.
+	ToolScan *MCPToolScanReport `json:"tool_scan,omitempty"`
+}
+
+// MCPToolScanReport is the receipt's view of a tool safety scan: counts, and
+// the high findings the baseline had not reviewed.
+type MCPToolScanReport struct {
+	RuleSet    int                  `json:"rule_set"`
+	High       int                  `json:"high"`
+	Medium     int                  `json:"medium"`
+	Low        int                  `json:"low"`
+	NewHigh    int                  `json:"new_high"`
+	Overridden bool                 `json:"overridden,omitempty"`
+	Findings   []MCPToolScanFinding `json:"findings,omitempty"`
+}
+
+// MCPToolScanFinding is one mcptoolscan.Finding (same JSON shape).
+type MCPToolScanFinding struct {
+	Rule     string `json:"rule"`
+	Severity string `json:"severity"`
+	Kind     string `json:"kind"`
+	Name     string `json:"name"`
+	Path     string `json:"path"`
+	Excerpt  string `json:"excerpt,omitempty"`
 }
 
 // MCPContractChange is one mcphosting.ContractChange (same JSON shape).

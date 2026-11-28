@@ -89,7 +89,7 @@ func (o Owner) Put(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		api.WriteProblem(w, api.ErrValidation("invalid JSON body: "+err.Error()))
 		return
 	}
-	listing, problem := o.validate(r.Context(), req, app)
+	listing, problem := o.validate(r.Context(), req, app, acct)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -101,13 +101,27 @@ func (o Owner) Put(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		return
 	}
 	o.Host.Audit(r.Context(), "mcp_listing.published", acct.ID, map[string]any{"app_id": app.ID, "version": stored.Version, "tools": len(stored.Tools),
-		"contract_sha256": stored.ContractSHA256})
+		"contract_sha256": stored.ContractSHA256, "tool_scan_high": stored.ToolScanHigh})
+	if stored.ToolScanReview != "" {
+		o.Host.Audit(r.Context(), "mcp_listing.tool_scan_reviewed", acct.ID, map[string]any{"app_id": app.ID, "version": stored.Version,
+			"high": stored.ToolScanHigh, "reason": stored.ToolScanReview})
+	}
 	httpkit.WriteJSON(w, http.StatusOK, Response(stored, app.Slug, o.Host.PublicOrigin()))
 }
 
-// validate checks the request and, on a republish without a contract, keeps
-// the one production deploys are checked against now.
-func (o Owner) validate(ctx context.Context, req api.PutMCPListingRequest, app state.App) (state.MCPListing, *api.Problem) {
+// validate checks the request, keeps the current contract on a republish
+// without one, and runs the tool safety scan (ADR-20261128135329).
+func (o Owner) validate(ctx context.Context, req api.PutMCPListingRequest, app state.App, acct state.Account) (state.MCPListing, *api.Problem) {
+	listing, problem := o.keepOrValidate(ctx, req, app)
+	if problem != nil {
+		return listing, problem
+	}
+	return ApplyToolScan(req, listing, "user:"+acct.ID)
+}
+
+// keepOrValidate checks the request and, on a republish without a contract,
+// keeps the one production deploys are checked against now.
+func (o Owner) keepOrValidate(ctx context.Context, req api.PutMCPListingRequest, app state.App) (state.MCPListing, *api.Problem) {
 	listing, problem := Validate(req, app.AccountID, app.ID, o.Host.AppHosts(ctx, app))
 	if problem != nil || len(req.Contract) > 0 || req.DropContract {
 		return listing, problem

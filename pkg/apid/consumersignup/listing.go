@@ -80,6 +80,7 @@ func (s *Service) Listing(w http.ResponseWriter, r *http.Request) {
 		out.Customers = &open
 	}
 	out.Changelog = s.listingChangelog(r.Context(), app)
+	out.ToolScan = s.listingToolScan(r.Context(), app, listing)
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	httpkit.WriteJSON(w, http.StatusOK, out)
 }
@@ -97,6 +98,20 @@ func (s *Service) listingChangelog(ctx context.Context, app state.App) []api.MCP
 		return nil
 	}
 	return mcpcontract.Changelog(checks)
+}
+
+// listingToolScan is the tool safety scan badge of the tools the server
+// serves now: the effective contract baseline's scan, or the listing's when
+// it is not gated (ADR-20261128135329). A read error leaves it out.
+func (s *Service) listingToolScan(ctx context.Context, app state.App, listing state.MCPListing) *api.MCPToolScanBadge {
+	if store, ok := s.Host.Store().(state.MCPContractStore); ok && len(listing.Contract) > 0 {
+		baseline, err := store.MCPContractBaseline(ctx, app.ID)
+		if err != nil || baseline.AccountID != app.AccountID {
+			return nil
+		}
+		return mcplisting.ToolScanBadge(baseline.ToolScan, baseline.ToolScanAt)
+	}
+	return mcplisting.ToolScanBadge(listing.ToolScan, listing.ToolScanAt)
 }
 
 // ListingPage serves a published listing's page.

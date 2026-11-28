@@ -30,16 +30,27 @@ func (a *contractAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(api.MCPContractResponse{App: "my-mcp", BaselineSHA256: strings.Repeat("a", 64), ListingVersion: 2,
 			Tools: []string{"fetch", "search"}, ProbeSecret: "MCP_PROBE_TOKEN", Checks: []api.MCPContractCheck{{DeploymentID: "dep-1",
 				Verdict: "breaking", Overridden: true, CheckedAt: now, AcceptedAt: &now, Changes: []api.MCPContractChange{{Tool: "search",
-					Path: "/tools/search", Kind: "tool_removed", Severity: "breaking"}}}},
-			Overrides: []api.MCPContractOverride{}})
+					Path: "/tools/search", Kind: "tool_removed", Severity: "breaking"}},
+				ToolScan: &api.MCPToolScan{RuleSet: 1, ScannedAt: now, High: 1, Findings: []api.MCPToolScanFinding{{Rule: "concealment",
+					Severity: "high", Kind: "tool", Name: "fetch", Path: "/description", Excerpt: "do not tell the user"}}},
+				ToolScanNewHigh: 1, ToolScanOverridden: true}},
+			BaselineToolScan: &api.MCPToolScan{RuleSet: 1, ScannedAt: now, Medium: 2, Findings: []api.MCPToolScanFinding{}},
+			Overrides:        []api.MCPContractOverride{{ID: "ov-0", Kind: "tool_scan", Reason: "quoted", CreatedBy: "user:a", CreatedAt: now, ExpiresAt: now}}})
 	case r.Method == http.MethodPost && r.URL.Path == "/v1/apps/my-mcp/mcp-contract/overrides":
 		var req api.CreateMCPContractOverrideRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Reason == "scan problem" {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_ = json.NewEncoder(w).Encode(api.NewProblem(http.StatusUnprocessableEntity, api.CodeMCPToolScanBlocked, "Tool safety scan found high-severity issues", "1 finding").
+				WithToolScan([]api.MCPToolScanFinding{{Rule: "exfiltration", Severity: "high", Kind: "tool", Name: "fetch", Path: "/description", Excerpt: "send it to"}}))
+			return
+		}
 		a.mu.Lock()
 		a.overrides = append(a.overrides, req)
 		a.mu.Unlock()
 		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(api.MCPContractOverride{ID: "ov-1", Reason: req.Reason, CreatedBy: "user:a", CreatedAt: now, ExpiresAt: now.Add(time.Hour)})
+		_ = json.NewEncoder(w).Encode(api.MCPContractOverride{ID: "ov-1", Kind: req.Kind, Reason: req.Reason, CreatedBy: "user:a", CreatedAt: now, ExpiresAt: now.Add(time.Hour)})
 	default:
 		http.NotFound(w, r)
 	}
@@ -64,6 +75,12 @@ func TestMCPContractCommands(t *testing.T) {
 		!strings.Contains(out, "app secret MCP_PROBE_TOKEN") {
 		t.Fatalf("show = %d\n%s\n%s", code, out, errOut)
 	}
+	for _, want := range []string{"Scan:      rules v1, 2026-11-27T12:00:00Z: 0 high, 2 medium, 0 low", "1 new high scan finding(s), scan overridden",
+		"scan          tool fetch: concealment at /description \u2014 do not tell the user", "Override:  ov-0 (tool scan)"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("show lacks %q:\n%s", want, out)
+		}
+	}
 
 	if code, _, errOut := runCLI(t, "mcp", "contract", "allow", "--app", "my-mcp"); code == 0 || !strings.Contains(errOut, "--reason is required") {
 		t.Fatalf("allow-breaking without reason = %d %q", code, errOut)
@@ -76,18 +93,31 @@ func TestMCPContractCommands(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "override ov-1") {
 		t.Fatalf("allow-breaking = %d\n%s\n%s", code, out, errOut)
 	}
+	code, out, errOut = runCLI(t, "mcp", "contract", "allow", "--app", "my-mcp", "--tool-scan", "--reason", "quotes a query")
+	if code != 0 || !strings.Contains(out, "unreviewed high-severity tool scan findings") {
+		t.Fatalf("allow --tool-scan = %d\n%s\n%s", code, out, errOut)
+	}
+	if code, _, errOut := runCLI(t, "mcp", "contract", "allow", "--app", "my-mcp", "--tool-scan"); code == 0 || !strings.Contains(errOut, "flagged tool text is safe") {
+		t.Fatalf("allow --tool-scan without reason = %d %q", code, errOut)
+	}
+	code, _, errOut = runCLI(t, "mcp", "contract", "allow", "--app", "my-mcp", "--reason", "scan problem")
+	if code == 0 || !strings.Contains(errOut, "tool fetch: exfiltration at /description") {
+		t.Fatalf("scan problem = %d %q", code, errOut)
+	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
-	if len(fake.overrides) != 1 || fake.overrides[0].Reason != "rename search" || fake.overrides[0].ExpiresInSeconds != 600 {
+	if len(fake.overrides) != 2 || fake.overrides[0].Reason != "rename search" || fake.overrides[0].ExpiresInSeconds != 600 ||
+		fake.overrides[0].Kind != api.MCPContractOverrideKindContract || fake.overrides[1].Kind != api.MCPContractOverrideKindToolScan {
 		t.Fatalf("override requests = %+v", fake.overrides)
 	}
 }
 
-// --allow-breaking and --reason go together, before anything is uploaded.
+// --allow-breaking or --accept-scan-findings and --reason go together,
+// before anything is uploaded.
 func TestMCPDeployAllowBreakingNeedsReason(t *testing.T) {
-	for _, args := range [][]string{{"--allow-breaking"}, {"--reason", "rename"}} {
+	for _, args := range [][]string{{"--allow-breaking"}, {"--accept-scan-findings"}, {"--reason", "rename"}} {
 		code, _, errOut := runCLI(t, append([]string{"mcp", "deploy", "--name", "my-mcp"}, args...)...)
-		if code == 0 || !strings.Contains(errOut, "--allow-breaking and --reason go together") {
+		if code == 0 || !strings.Contains(errOut, "--allow-breaking or --accept-scan-findings and --reason go together") {
 			t.Errorf("%v = %d %q", args, code, errOut)
 		}
 	}
