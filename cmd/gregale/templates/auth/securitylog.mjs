@@ -5,11 +5,12 @@
 // (dedupe), so an attack grows a count, not the table. Recording never fails
 // or delays a request: an error is logged and the request goes on.
 import { createHash, createHmac } from 'node:crypto'
-import { addressBucket } from './attempts.mjs'
+import { addressBucket, budgetKey, goLower } from './attempts.mjs'
+import { inbox } from './sends.mjs'
 import { HTTPError } from './authz.mjs'
 import { limits } from './config.mjs'
 
-export const securityKinds = Object.freeze(['password_failed', 'code_failed', 'held', 'captcha_pass', 'trusted_pass', 'message_limited', 'new_device_alert'])
+export const securityKinds = Object.freeze(['password_failed', 'code_failed', 'held', 'captcha_pass', 'trusted_pass', 'message_limited', 'new_device_alert', 'released'])
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -104,7 +105,7 @@ const insertStatement = `INSERT INTO gregale_auth.security_events AS e (kind, us
 // attack grows a number, not the queue. Past limits.securityEventsQueued
 // waiting rows an event is dropped, and the number dropped is logged at most
 // once a minute.
-export function createSecurityLog({ pool, secret, log = console.error, now = Date.now }) {
+export function createSecurityLog({ pool, secret, log = console.error, now = Date.now, written = null }) {
   const digest = addressDigester(secret)
   const queue = new Map()
   let writing = null, dropped = 0, reported = -Infinity, unique = 0
@@ -127,6 +128,7 @@ export function createSecurityLog({ pool, secret, log = console.error, now = Dat
     }
     writing = null
     report()
+    written?.()
   }
   return {
     record(kind, { userId = null, subject = null, address = null, detail = {}, alike = null, hold = null } = {}) {
@@ -192,3 +194,32 @@ export async function activeHolds(query, user) {
       AND b.failures >= (e.detail->>'limit')::int
     ORDER BY e.budget_key, e.last_at DESC`, [user])
 }
+
+// releaseHolds clears every budget that may hold a user (ADR-1190): wrong
+// passwords for each address they sign in with, from every network their
+// security events name, wrong second-step codes, and messages to them. Their
+// open holds end, so the next hold raises auth.user.locked again, and the
+// release is recorded with the admin key that made it. It returns how many
+// budgets were cleared.
+export async function releaseHolds(query, user, keyId = null) {
+  const [found] = await query('SELECT email, phone FROM auth.users WHERE id = $1', [user])
+  if (!found) throw new HTTPError(404, 'user_not_found')
+  const keys = [budgetKey('second-step', user), budgetKey('message-recipient', `user:${user}`)]
+  if (found.email) {
+    const email = goLower(found.email)
+    keys.push(budgetKey('password-account', `email:${email}`), budgetKey('message-recipient', inbox(`email:${email}`)))
+  }
+  if (found.phone) keys.push(budgetKey('password-account', `phone:${found.phone}`), budgetKey('message-recipient', `phone:${found.phone}`))
+  const [{ cleared }] = await query(`WITH named AS (
+      SELECT DISTINCT budget_key AS key FROM gregale_auth.security_events
+      WHERE user_id = $1 AND budget_key IS NOT NULL AND kind IN ('held', 'message_limited')
+      UNION SELECT unnest($2::bytea[])),
+    gone AS (DELETE FROM gregale_auth.attempt_budgets b USING named WHERE b.key = named.key RETURNING 1),
+    ended AS (UPDATE gregale_auth.security_events SET detail = detail || jsonb_build_object('until', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
+      WHERE user_id = $1 AND kind IN ('held', 'message_limited') AND (detail->>'until')::timestamptz > now() RETURNING 1)
+    SELECT (SELECT count(*) FROM gone)::int AS cleared, (SELECT count(*) FROM ended)::int AS ended`, [user, keys])
+  await query(`INSERT INTO gregale_auth.security_events (kind, user_id, detail) VALUES ('released', $1, $2::jsonb)`,
+    [user, JSON.stringify({ budgets: cleared, ...(keyId ? { admin_key: keyId } : {}) })])
+  return { budgets_cleared: cleared }
+}
+

@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	authUsersUsage = "usage: gregale auth users <list|get|claims|impersonate|sign-out|ban|unban|delete> NAME [USER] [--search TEXT] [--page N] [--limit N] [--set NAME=VALUE] [--unset NAME] [--reason TEXT] [--minutes N] [--for DURATION] [--yes] [--admin-key-stdin]"
+	authUsersUsage = "usage: gregale auth users <list|get|claims|impersonate|sign-out|release|ban|unban|delete> NAME [USER] [--search TEXT] [--page N] [--limit N] [--set NAME=VALUE] [--unset NAME] [--reason TEXT] [--minutes N] [--for DURATION] [--yes] [--admin-key-stdin]"
 	authOrgsUsage  = "usage: gregale auth orgs <list|get|audit|set> NAME [ORG] [--search TEXT] [--page N] [--limit N] [--cursor NEXT] [--require-mfa on|off] [--admin-key-stdin]"
 	// authBanForever is the ban `--for forever` asks for: a hundred years,
 	// GoTrue's usual stand-in for a permanent ban.
@@ -129,7 +129,7 @@ func authAdminTarget(slug string, keyStdin bool) (origin, key string, code int) 
 // authUserFlags lists the flags each users subcommand takes besides
 // --admin-key-stdin.
 var authUserFlags = map[string][]string{
-	"list": {"search", "page", "limit"}, "get": nil, "claims": {"set", "unset"}, "impersonate": {"reason", "minutes"}, "sign-out": nil, "ban": {"for"}, "unban": nil, "delete": {"yes", "quiet"},
+	"list": {"search", "page", "limit"}, "get": nil, "claims": {"set", "unset"}, "impersonate": {"reason", "minutes"}, "sign-out": nil, "release": nil, "ban": {"for"}, "unban": nil, "delete": {"yes", "quiet"},
 }
 
 // authClaimSet collects repeated --set NAME=VALUE flags. A VALUE that is
@@ -252,6 +252,8 @@ func cmdAuthUsers(args []string) int {
 		return authUsersImpersonate(origin, key, user, strings.TrimSpace(*reason), *minutes)
 	case "sign-out":
 		return authUsersSignOut(origin, key, user)
+	case "release":
+		return authUsersRelease(origin, key, user)
 	case "delete":
 		return authUsersDelete(origin, key, fs.Arg(0), user, *yes)
 	default:
@@ -441,6 +443,12 @@ func authUsersGet(origin, key string, ref authAdminUser) int {
 			Name string `json:"name"`
 			Role string `json:"role"`
 		} `json:"organizations"`
+		// Holds is absent from Auth apps that predate security events.
+		Holds *[]struct {
+			Budget  string  `json:"budget"`
+			Network *string `json:"network"`
+			Until   string  `json:"until"`
+		} `json:"holds"`
 	}
 	if err := authAdminCall(http.MethodGet, origin, key, "/admin/v1/users/"+ref.ID, nil, &detail); err != nil {
 		return printErr("Could not read the user", err)
@@ -463,6 +471,21 @@ func authUsersGet(origin, key string, ref authAdminUser) int {
 		{"last sign-in", authOr(user.LastSignInAt, "never")}, {"sessions", fmt.Sprintf("%d active", detail.ActiveSessions)},
 		{"organizations", strings.Join(orgs, ", ")},
 	}
+	if detail.Holds != nil {
+		holds := make([]string, 0, len(*detail.Holds))
+		for _, hold := range *detail.Holds {
+			text := hold.Budget
+			if hold.Network != nil {
+				text += " from " + *hold.Network
+			}
+			holds = append(holds, text+" until "+hold.Until)
+		}
+		value := "none"
+		if len(holds) > 0 {
+			value = strings.Join(holds, "; ") + " (gregale auth users release)"
+		}
+		rows = append(rows, [2]string{"holds", value})
+	}
 	_, _ = fmt.Fprintf(osStdout, "User %s\n", user.ID)
 	for _, row := range rows {
 		if row[1] == "" {
@@ -470,6 +493,22 @@ func authUsersGet(origin, key string, ref authAdminUser) int {
 		}
 		_, _ = fmt.Fprintf(osStdout, "  %-14s %s\n", row[0], row[1])
 	}
+	return 0
+}
+
+// authUsersRelease clears every sign-in hold on a user: wrong passwords,
+// second-step codes and messages.
+func authUsersRelease(origin, key string, user authAdminUser) int {
+	var out struct {
+		BudgetsCleared int `json:"budgets_cleared"`
+	}
+	if err := authAdminCall(http.MethodPost, origin, key, "/admin/v1/users/"+user.ID+"/release-holds", map[string]any{}, &out); err != nil {
+		return printErr("Could not release the user's holds", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(map[string]any{"id": user.ID, "budgets_cleared": out.BudgetsCleared}))
+	}
+	PrintOK(osStdout, "Released the holds on %s: %d budgets cleared", authUserLabel(user), out.BudgetsCleared)
 	return 0
 }
 

@@ -224,7 +224,9 @@ test('a sign-in from a new network and a new device emails the person, once ther
   const racing = await Promise.all([1, 2].map(() => security.record({ ...laptop, address: '192.0.2.3', userAgent: 'Lynx/2.9' })))
   assert.deepEqual(racing.sort(), [false, true], 'one alert per device and day')
   const quiet = createSignInSecurity({ pool, mailer, alerts: false, app: 'Shop', templates: async () => ({}) })
-  assert.equal(await quiet.record({ ...laptop, address: '192.0.2.2', userAgent: 'Wget/1.0' }), false)
+  const sentBefore = mailer.sent.length
+  assert.equal(await quiet.record({ ...laptop, address: '192.0.2.2', userAgent: 'Wget/1.0' }), 'noted', 'with alerts off a new device is noted, not emailed')
+  assert.equal(mailer.sent.length, sentBefore)
   const inserts = pool.queries.filter(sql => sql.startsWith('INSERT')).length
   await security.record(laptop)
   assert.equal(pool.queries.filter(sql => sql.startsWith('INSERT')).length, inserts, 'a fresh record is not written again')

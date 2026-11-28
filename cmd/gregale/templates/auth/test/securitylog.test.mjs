@@ -5,7 +5,7 @@ import { once } from 'node:events'
 import { createServer } from '../server.mjs'
 import { budgetKey } from '../attempts.mjs'
 import { limits, securityConfig } from '../config.mjs'
-import { activeHolds, addressDigester, createSecurityLog, networkFilter, networkLabel, securityEvents, securityKinds } from '../securitylog.mjs'
+import { activeHolds, addressDigester, createSecurityLog, networkFilter, networkLabel, releaseHolds, securityEvents, securityKinds } from '../securitylog.mjs'
 import { createSends, messageBudgets } from '../sends.mjs'
 import { requiredScope } from '../admin.mjs'
 
@@ -159,6 +159,37 @@ test('a new-device alert is recorded with the device, not the address', async t 
   const [alert] = securityLog.events.filter(event => event.kind === 'new_device_alert')
   assert.equal(alert.userId, user)
   assert.equal(alert.detail.device, 'Firefox')
+  assert.equal(alert.detail.emailed, true)
+})
+
+test('a new device noted without email is recorded as not emailed', async t => {
+  const securityLog = memoryLog()
+  const signIns = { record: async () => 'noted', trusted: async () => false }
+  const base = await harness(t, { attempts: memoryAttempts(), securityLog, signIns })
+  await post(base, '/token?grant_type=password', { email: 'ann@example.com', password: 'right' })
+  await settle()
+  const [alert] = securityLog.events.filter(event => event.kind === 'new_device_alert')
+  assert.equal(alert.detail.emailed, false)
+})
+
+test('releasing holds clears every budget that may hold the user and records who did', async () => {
+  const calls = []
+  const query = async (sql, args) => {
+    calls.push({ sql, args })
+    if (sql.startsWith('SELECT email, phone')) return args[0] === user ? [{ email: 'Ann.Smith+x@Gmail.com', phone: '15551234567' }] : []
+    if (sql.includes('DELETE FROM gregale_auth.attempt_budgets')) return [{ cleared: 4, ended: 2 }]
+    return []
+  }
+  assert.deepEqual(await releaseHolds(query, user, 'ABCD1234'), { budgets_cleared: 4 })
+  const keys = calls[1].args[1].map(key => key.toString('hex'))
+  for (const expected of [budgetKey('second-step', user), budgetKey('message-recipient', `user:${user}`), budgetKey('password-account', 'email:ann.smith+x@gmail.com'),
+    budgetKey('message-recipient', 'email:annsmith@gmail.com'), budgetKey('password-account', 'phone:15551234567'), budgetKey('message-recipient', 'phone:15551234567')]) {
+    assert.ok(keys.includes(expected.toString('hex')), expected.toString('hex'))
+  }
+  assert.match(calls[1].sql, /user_id = \$1 AND budget_key IS NOT NULL/, 'and the address budgets its events name')
+  assert.deepEqual(calls[2].args, [user, '{"budgets":4,"admin_key":"ABCD1234"}'])
+  await assert.rejects(releaseHolds(query, '22222222-2222-4333-8444-555555555555'), /user_not_found/)
+  assert.equal(requiredScope('POST', ['users', user, 'release-holds']), 'users:write')
 })
 
 test('recording writes one row per alike events and never fails a request', async () => {
@@ -240,7 +271,7 @@ test('the admin API pages security events and checks its filters', async () => {
   }
   assert.equal(requiredScope('GET', ['security-events']), 'users:read')
   assert.deepEqual(await activeHolds(async (sql, args) => { assert.match(sql, /window_ends_at > now\(\)/); return [{ budget: 'password_account', args }] }, user), [{ budget: 'password_account', args: [user] }])
-  assert.equal(securityKinds.length, 7)
+  assert.equal(securityKinds.length, 8)
 })
 
 test('reads how long security events are kept, with bounds', () => {

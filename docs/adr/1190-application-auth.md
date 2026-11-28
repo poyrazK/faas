@@ -215,6 +215,26 @@ network), `gregale auth activity --security` and the dashboard's Security
 tab; `GET /admin/v1/users/<id>` adds `holds`, the user's spent budgets whose
 window is still open.
 
+Amendment (2026-11-28, releasing holds and security lifecycle events):
+`POST /admin/v1/users/<id>/release-holds` (`users:write`; CLI `gregale auth
+users release`, dashboard **Release holds**) deletes every attempt budget
+that may hold the user (owner's choice: all at once, not one by one): the
+account-wide password budgets for their email and phone, second-step,
+message budgets for their inbox, phone and `user:<id>`, and every budget
+their `held`/`message_limited` events name (per-address password budgets);
+it ends those events' `until` and records a `released` event with the admin
+key ID. sql/0027 adds an AFTER INSERT trigger on `security_events` writing
+the lifecycle outbox while lifecycle events are on: `auth.user.locked`
+(`budget`, `until`) for the first `held` row of an account-wide password or
+second-step budget with no other row of that budget still holding (owner's
+choice: per-address holds raise none), and `auth.user.new_device`
+(`device` label only, owner's choice: no network). New devices are now
+noted whether or not the email goes out (alerts off or no provider): the
+once-per-device-kind marker is claimed either way, and the event's
+`emailed` says which. Because these come from security events, an event the
+security log drops (its queue full) raises no lifecycle event; the security
+log pokes the publisher after each drain.
+
 ### Database credential mode `auth`
 
 GoTrue's migrations enable RLS on every `auth` table, and its runtime needs

@@ -125,7 +125,8 @@ export function createSignInSecurity({ pool, mailer = null, alerts = true, app, 
     // network trusted), which trusts only a network the account is trusted
     // on, or one where a redirect handed this device a session, and is
     // otherwise not recorded. Only trusted records count as seen when
-    // deciding to alert. A failed alert is logged, never thrown: the
+    // deciding to alert. It returns true when it emailed a new-device alert,
+    // 'noted' when it noted a new device without email, and false otherwise. A failed alert is logged, never thrown: the
     // sign-in is still recorded.
     async record({ userId, email, address, userAgent, alert = true, trust = true }) {
       const network = networkKey(userId, address), device = deviceKey(userId, userAgent)
@@ -149,9 +150,11 @@ export function createSignInSecurity({ pool, mailer = null, alerts = true, app, 
           ON CONFLICT (key) DO UPDATE SET last_seen = now(), trusted = s.trusted OR EXCLUDED.trusted
           WHERE s.last_seen < now() - make_interval(secs => $4) OR (EXCLUDED.trusted AND NOT s.trusted)`, [network, device, userId, limits.signInSeenRefreshSeconds, networkOnly(address), trusted])
       }
-      if (!alert || !alerts || !mailer || !email || !seen.known || seen.network_seen || seen.device_seen) return false
+      if (!alert || !seen.known || seen.network_seen || seen.device_seen) return false
       try {
-        return await this.alert({ userId, email, address, userAgent })
+        // A new device is noted (and is a lifecycle event) whether or not an
+        // email goes out: alerts may be off, or the app has no provider.
+        return await this.alert({ userId, email, address, userAgent, emailing: Boolean(alerts && mailer && email) })
       } catch (err) {
         // The network stays recorded (trust must not wait on email); the
         // device is put back as it was, so the next sign-in from it alerts.
@@ -162,18 +165,20 @@ export function createSignInSecurity({ pool, mailer = null, alerts = true, app, 
         return false
       }
     },
-    // alert sends the new-device email once per device kind in
-    // limits.newDeviceDays, however many sign-ins race or refresh: the first
-    // to claim the marker (an attempt_budgets row, pruned with them) sends
-    // it, whatever the email provider deduplicates. A failed send gives the
-    // marker back and throws.
-    async alert({ userId, email, address, userAgent }) {
+    // alert notes a new device once per device kind in limits.newDeviceDays,
+    // however many sign-ins race or refresh: the first to claim the marker
+    // (an attempt_budgets row, pruned with them) wins. With emailing it sends
+    // the new-device email and returns true, whatever the email provider
+    // deduplicates; a failed send gives the marker back and throws. Without,
+    // it returns 'noted'.
+    async alert({ userId, email, address, userAgent, emailing = true }) {
       const at = now()
       const marker = budgetKey('new-device-alert', userId, deviceKind(userAgent))
       const { rowCount } = await pool.query(`INSERT INTO gregale_auth.attempt_budgets AS b (key, failures, window_ends_at)
         VALUES ($1, 1, now() + make_interval(days => $2))
         ON CONFLICT (key) DO UPDATE SET failures = 1, window_ends_at = EXCLUDED.window_ends_at WHERE b.window_ends_at <= now()`, [marker, limits.newDeviceDays])
       if (rowCount === 0) return false
+      if (!emailing) return 'noted'
       try {
         const message = renderEmail(email, templateFor(await templates(), 'new_device'), {
           app, email, device: deviceLabel(userAgent), network: addressBucket(address), time: `${at.toISOString().slice(0, 16).replace('T', ' ')} UTC`,

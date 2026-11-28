@@ -2,7 +2,7 @@ import { createHash, createPrivateKey, randomBytes, sign, timingSafeEqual } from
 import http from 'node:http'
 import { gotrue, limits } from './config.mjs'
 import { auditColumns, auditPage, auditReply, HTTPError, readJSON, sqlError } from './authz.mjs'
-import { activeHolds, securityEvents } from './securitylog.mjs'
+import { activeHolds, releaseHolds, securityEvents } from './securitylog.mjs'
 import { ssoRoute } from './sso.mjs'
 import { oauthRoute } from './oauth.mjs'
 import { emailRoute } from './emails.mjs'
@@ -363,6 +363,10 @@ export async function adminRoute({ pool, admin, external, emails = {}, impersona
     // tokens, and every authorize() check fails from the next request.
     const { rowCount } = await pool.query('DELETE FROM auth.sessions WHERE user_id = $1', [user])
     return [200, { sessions_ended: rowCount }]
+  }
+  // release-holds clears every budget holding the user (securitylog.mjs).
+  if (user && parts[2] === 'release-holds' && parts.length === 3 && method === 'POST') {
+    return [200, await releaseHolds(query, user, keyId)]
   }
   if (user && parts[2] === 'ban' && parts.length === 3 && method === 'POST') {
     const duration = body?.duration
