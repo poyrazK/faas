@@ -558,8 +558,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			retry = ""
 		}
 		w.Header().Set("X-Gregale-Outbound-Rejection", decision.Reason)
-		code, title := admissionRefusalProblem(decision.Reason)
-		writeProblem(w, http.StatusTooManyRequests, code, title, retry)
+		writeAdmissionRefusal(w, decision.Reason, retry)
 		return
 	}
 	h.Metrics.ObserveAdmission(metricIntegrationID, "granted")
@@ -1261,14 +1260,40 @@ func (h *Handler) aiGatewayAdmitsAccount(integration Integration) bool {
 func admissionRefusalProblem(reason string) (code, title string) {
 	switch {
 	case strings.HasSuffix(reason, ReasonReservationSuffix):
-		return "outbound_ai_reservation_exceeds_budget",
-			"The call's reservation does not fit the budget left: set a smaller max_tokens (or the format's output limit), " +
-				"since a call that names none reserves its model's longest response"
+		return CodeAIReservationExceedsBudget, titleAIReservationExceedsBudget
 	case reason == ReasonRate || reason == ReasonConcurrency || reason == ReasonRequestsPerMinute || reason == ReasonTokensPerMinute:
-		return "outbound_rate_limited", "Outbound integration rate limit reached"
+		return CodeOutboundRateLimited, titleOutboundRateLimited
 	case reason == ReasonCircuitOpen || reason == ReasonProviderCooldown:
 		// The code the provider-requested cooldown already uses.
-		return "outbound_provider_cooldown", "The provider is cooling down after failing calls"
+		return CodeOutboundProviderCooldown, titleOutboundProviderCoolingDown
 	}
-	return "outbound_budget_exhausted", "Outbound integration budget is exhausted"
+	return CodeOutboundBudgetExhausted, titleOutboundBudgetExhausted
+}
+
+// Admission refusal codes and titles. writeAdmissionRefusal passes each as
+// a constant so cmd/errorcodes-md lists it in docs/error-codes.md.
+const (
+	CodeAIReservationExceedsBudget  = "outbound_ai_reservation_exceeds_budget"
+	titleAIReservationExceedsBudget = "The call's reservation does not fit the budget left: set a smaller max_tokens (or the format's output limit), " +
+		"since a call that names none reserves its model's longest response"
+	CodeOutboundRateLimited          = "outbound_rate_limited"
+	titleOutboundRateLimited         = "Outbound integration rate limit reached"
+	CodeOutboundProviderCooldown     = "outbound_provider_cooldown"
+	titleOutboundProviderCoolingDown = "The provider is cooling down after failing calls"
+	CodeOutboundBudgetExhausted      = "outbound_budget_exhausted"
+	titleOutboundBudgetExhausted     = "Outbound integration budget is exhausted"
+)
+
+// writeAdmissionRefusal writes a refused admission's problem.
+func writeAdmissionRefusal(w http.ResponseWriter, reason, retry string) {
+	switch code, _ := admissionRefusalProblem(reason); code {
+	case CodeAIReservationExceedsBudget:
+		writeProblem(w, http.StatusTooManyRequests, CodeAIReservationExceedsBudget, titleAIReservationExceedsBudget, retry)
+	case CodeOutboundRateLimited:
+		writeProblem(w, http.StatusTooManyRequests, CodeOutboundRateLimited, titleOutboundRateLimited, retry)
+	case CodeOutboundProviderCooldown:
+		writeProblem(w, http.StatusTooManyRequests, CodeOutboundProviderCooldown, titleOutboundProviderCoolingDown, retry)
+	default:
+		writeProblem(w, http.StatusTooManyRequests, CodeOutboundBudgetExhausted, titleOutboundBudgetExhausted, retry)
+	}
 }
