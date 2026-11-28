@@ -58,10 +58,13 @@ BEGIN
     IF NEW.status <> 'live' OR (TG_OP = 'UPDATE' AND OLD.status = 'live') THEN
         RETURN NEW;
     END IF;
-    UPDATE mcp_contract_checks SET accepted_at = now()
-     WHERE deployment_id = NEW.id AND accepted_at IS NULL
+    UPDATE mcp_contract_checks SET live_at = now(), accepted_at = COALESCE(accepted_at, now())
+     WHERE deployment_id = NEW.id
+       AND (verdict IN ('unchanged', 'compatible', 'review') OR override_id IS NOT NULL)
     RETURNING * INTO accepted;
-    IF accepted.deployment_id IS NULL OR accepted.verdict = 'unchanged' THEN
+    -- now() is fixed within the statement: a first acceptance has
+    -- accepted_at = live_at.
+    IF accepted.deployment_id IS NULL OR accepted.verdict = 'unchanged' OR accepted.accepted_at <> accepted.live_at THEN
         RETURN NEW;
     END IF;
     event_payload := jsonb_build_object(
@@ -51835,12 +51838,14 @@ CREATE TABLE public.mcp_contract_checks (
     override_id uuid,
     checked_at timestamp with time zone DEFAULT now() NOT NULL,
     accepted_at timestamp with time zone,
+    live_at timestamp with time zone,
     CONSTRAINT mcp_contract_checks_baseline_sha256_check CHECK ((baseline_sha256 ~ '^[0-9a-f]{64}$'::text)),
-    CONSTRAINT mcp_contract_checks_candidate_check CHECK (((candidate IS NULL) OR ((jsonb_typeof(candidate) = 'object'::text) AND (octet_length((candidate)::text) <= 1048576)))),
+    CONSTRAINT mcp_contract_checks_candidate_check CHECK (((candidate IS NULL) OR ((jsonb_typeof(candidate) = 'object'::text) AND (octet_length((candidate)::text) <= 2097152)))),
     CONSTRAINT mcp_contract_checks_candidate_sha256_check CHECK ((candidate_sha256 ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT mcp_contract_checks_changes_check CHECK (((jsonb_typeof(changes) = 'array'::text) AND (octet_length((changes)::text) <= 262144))),
-    CONSTRAINT mcp_contract_checks_check CHECK (((candidate IS NULL) = (candidate_sha256 IS NULL))),
-    CONSTRAINT mcp_contract_checks_check1 CHECK (((verdict = 'unverified'::text) = (candidate IS NULL))),
+    CONSTRAINT mcp_contract_checks_check CHECK (((accepted_at IS NULL) = (live_at IS NULL))),
+    CONSTRAINT mcp_contract_checks_check1 CHECK (((candidate IS NULL) = (candidate_sha256 IS NULL))),
+    CONSTRAINT mcp_contract_checks_check2 CHECK (((verdict = 'unverified'::text) = (candidate IS NULL))),
     CONSTRAINT mcp_contract_checks_verdict_check CHECK ((verdict = ANY (ARRAY['unchanged'::text, 'compatible'::text, 'review'::text, 'breaking'::text, 'unverified'::text])))
 );
 
@@ -51857,6 +51862,7 @@ CREATE TABLE public.mcp_contract_overrides (
     created_by text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     expires_at timestamp with time zone NOT NULL,
+    deployment_id uuid,
     used_by_deployment uuid,
     used_at timestamp with time zone,
     CONSTRAINT mcp_contract_overrides_check CHECK ((expires_at > created_at)),
@@ -75644,7 +75650,7 @@ ALTER TABLE ONLY public.mcp_contract_overrides
 --
 
 ALTER TABLE public.mcp_listings
-    ADD CONSTRAINT mcp_listings_contract_chk CHECK ((((contract IS NULL) AND (contract_sha256 IS NULL)) OR ((jsonb_typeof(contract) = 'object'::text) AND (octet_length((contract)::text) <= 1048576) AND (contract_sha256 ~ '^[0-9a-f]{64}$'::text)))) NOT VALID;
+    ADD CONSTRAINT mcp_listings_contract_chk CHECK ((((contract IS NULL) AND (contract_sha256 IS NULL)) OR ((jsonb_typeof(contract) = 'object'::text) AND (octet_length((contract)::text) <= 2097152) AND (contract_sha256 ~ '^[0-9a-f]{64}$'::text)))) NOT VALID;
 
 
 --
@@ -89649,10 +89655,10 @@ CREATE INDEX managed_valkey_caches_account_idx ON public.managed_valkey_caches U
 
 
 --
--- Name: mcp_contract_checks_accepted_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: mcp_contract_checks_live_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX mcp_contract_checks_accepted_idx ON public.mcp_contract_checks USING btree (app_id, accepted_at DESC) WHERE (accepted_at IS NOT NULL);
+CREATE INDEX mcp_contract_checks_live_idx ON public.mcp_contract_checks USING btree (app_id, live_at DESC) WHERE (live_at IS NOT NULL);
 
 
 --
@@ -113346,6 +113352,14 @@ ALTER TABLE ONLY public.mcp_contract_overrides
 
 ALTER TABLE ONLY public.mcp_contract_overrides
     ADD CONSTRAINT mcp_contract_overrides_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mcp_contract_overrides mcp_contract_overrides_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mcp_contract_overrides
+    ADD CONSTRAINT mcp_contract_overrides_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --

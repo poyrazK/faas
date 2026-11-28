@@ -940,6 +940,9 @@ type mcpDeployOptions struct {
 	mcpTaskMigrationOverride                   bool
 	allowBreaking                              bool
 	breakingReason                             string
+	// onCandidateQueued sees every candidate deployment this command queues
+	// (the discovery one and the catalog-pinned one).
+	onCandidateQueued func(api.DeploymentResponse)
 	timeout                                    int
 	expectedServing                            *string
 	expectedAppID                              string
@@ -1066,14 +1069,8 @@ func runMCPDeploy(o mcpDeployOptions) int {
 		return printErr("MCP gateway policy", err)
 	}
 	if o.allowBreaking {
-		// ADR-20261127191645: one audited override admits the deploy that
-		// breaks the listing's tool contract.
-		override, err := mcpContractAllowBreaking(ctx, c, o.slug, o.breakingReason, 0)
-		if err != nil {
+		if o.onCandidateQueued, err = mcpDeployAllowBreaking(ctx, c, o.slug, o.breakingReason); err != nil {
 			return printErr("MCP tool contract override", err)
-		}
-		if !jsonOutput {
-			PrintProgress(osStdout, "Recorded tool contract override %s (until %s)", override.ID, override.ExpiresAt.Format(time.RFC3339))
 		}
 	}
 	if !jsonOutput {
@@ -1082,7 +1079,12 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	deployArgs := mcpDeployArgs(o, dir, true)
 	// Preserve the existing ingress gate until the new app passes readiness.
 	var candidate api.DeploymentResponse
-	code := quietMCPDeploy(ctx, deployArgs, deployExecution{onQueued: func(dep api.DeploymentResponse) { candidate = dep }})
+	code := quietMCPDeploy(ctx, deployArgs, deployExecution{onQueued: func(dep api.DeploymentResponse) {
+		candidate = dep
+		if o.onCandidateQueued != nil {
+			o.onCandidateQueued(dep)
+		}
+	}})
 	if code != 0 {
 		return code
 	}
@@ -1151,7 +1153,12 @@ func pinMCPCandidateRevision(ctx context.Context, c *Client, o mcpDeployOptions,
 	return pinMCPCandidateRevisionWithSubmit(ctx, c, o, dir, cfg, candidate, func(args []string, env map[string]string) (api.DeploymentResponse, error) {
 		var pinned api.DeploymentResponse
 		code := quietMCPDeploy(ctx, args, deployExecution{
-			onQueued: func(dep api.DeploymentResponse) { pinned = dep }, overrideEnv: env,
+			onQueued: func(dep api.DeploymentResponse) {
+				pinned = dep
+				if o.onCandidateQueued != nil {
+					o.onCandidateQueued(dep)
+				}
+			}, overrideEnv: env,
 		})
 		if code != 0 {
 			return pinned, fmt.Errorf("catalog-pinned candidate deployment failed with exit code %d", code)

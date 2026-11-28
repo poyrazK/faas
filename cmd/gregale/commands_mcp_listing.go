@@ -102,6 +102,9 @@ func mcpListingPublish(ctx context.Context, c *Client, slug, path, tokenEnv stri
 	if err != nil {
 		return printErr("MCP configuration", err)
 	}
+	if err := mcpListingContractCheckable(cfg.Auth.Mode, req.ProbeSecret); err != nil {
+		return printErr("MCP tool contract", err)
+	}
 	token, err := mcpToken(tokenEnv)
 	if err != nil {
 		return printErr("MCP client token", err)
@@ -118,9 +121,14 @@ func mcpListingPublish(ctx context.Context, c *Client, slug, path, tokenEnv stri
 	if err != nil {
 		return printErr("MCP endpoint", err)
 	}
-	catalog, _, err := client.DiscoverCatalog(ctx)
+	catalog, exchange, err := client.DiscoverCatalog(ctx)
 	if err != nil {
 		return printErr("Could not list the server's tools (gateway-auth servers need --token-env)", err)
+	}
+	for _, rejected := range exchange.RejectedTools {
+		// Left out of the listing and its contract, as the deploy gate leaves
+		// them out of each candidate's.
+		PrintWarn(osStderr, "Tool %s is not listed: %s", rejected.Name, rejected.Reason)
 	}
 	req.Endpoint, req.Tools = endpoint, mcpListingTools(catalog.Tools)
 	if req.Contract, err = mcpListingContract(catalog); err != nil {

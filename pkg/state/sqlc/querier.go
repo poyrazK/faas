@@ -596,7 +596,8 @@ type Querier interface {
 	ClaimImmediateNotificationForNode(ctx context.Context, db DBTX, arg ClaimImmediateNotificationForNodeParams) (ClaimImmediateNotificationForNodeRow, error)
 	ClaimLayerArtifactDeletion(ctx context.Context, db DBTX, arg ClaimLayerArtifactDeletionParams) (int64, error)
 	ClaimLegacyPendingWorkflowRun(ctx context.Context, db DBTX) (WorkflowRun, error)
-	// Consumes the oldest open override of the app for one candidate.
+	// Consumes an open override of the app for one candidate: one bound to this
+	// deployment first, else the oldest unbound one.
 	ClaimMCPContractOverride(ctx context.Context, db DBTX, arg ClaimMCPContractOverrideParams) (McpContractOverride, error)
 	ClaimMCPRouteEvent(ctx context.Context, db DBTX, arg ClaimMCPRouteEventParams) error
 	ClaimManagedPostgresBindingRetirement(ctx context.Context, db DBTX, arg ClaimManagedPostgresBindingRetirementParams) (ClaimManagedPostgresBindingRetirementRow, error)
@@ -1101,7 +1102,8 @@ type Querier interface {
 	// One server admission clock anchors the stage's debounce, expiry and created
 	// time. The legacy insert otherwise uses PostgreSQL's transaction-start clock.
 	CreateInvocationWorkEnvironmentAdmission(ctx context.Context, db DBTX, arg CreateInvocationWorkEnvironmentAdmissionParams) (int64, error)
-	// At most sqlc.arg(open_cap) open overrides per app.
+	// At most sqlc.arg(open_cap) open overrides per app; run under
+	// LockMCPContractOverrides.
 	CreateMCPContractOverride(ctx context.Context, db DBTX, arg CreateMCPContractOverrideParams) (McpContractOverride, error)
 	CreateMigrationContractTask(ctx context.Context, db DBTX, arg CreateMigrationContractTaskParams) (AppTask, error)
 	CreateMigrationCutover(ctx context.Context, db DBTX, arg CreateMigrationCutoverParams) error
@@ -2765,8 +2767,9 @@ type Querier interface {
 	GetMCPAdmissionReceipt(ctx context.Context, db DBTX, arg GetMCPAdmissionReceiptParams) ([]byte, error)
 	GetMCPCatalogMonitor(ctx context.Context, db DBTX, arg GetMCPCatalogMonitorParams) ([]byte, error)
 	// ADR-20261127191645: the tool contract gate for sold MCP servers.
-	// The effective baseline: the newest accepted candidate contract since the
-	// listing was (re)published, else the contract the listing was published with.
+	// The effective baseline: the contract of the candidate that most recently
+	// went live (rollbacks included) since the listing was (re)published, else
+	// the contract the listing was published with.
 	GetMCPContractBaseline(ctx context.Context, db DBTX, appID pgtype.UUID) (GetMCPContractBaselineRow, error)
 	GetMCPContractCheck(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (McpContractCheck, error)
 	GetMCPListing(ctx context.Context, db DBTX, arg GetMCPListingParams) (McpListing, error)
@@ -5116,6 +5119,8 @@ type Querier interface {
 	LockMCPAccessPolicyAccount(ctx context.Context, db DBTX, accountID string) error
 	LockMCPCatalogMonitor(ctx context.Context, db DBTX, arg LockMCPCatalogMonitorParams) ([]byte, error)
 	LockMCPCatalogMonitorApp(ctx context.Context, db DBTX, arg LockMCPCatalogMonitorAppParams) (pgtype.UUID, error)
+	// Serializes override creation per app so the open cap holds.
+	LockMCPContractOverrides(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	LockMCPNotificationEvent(ctx context.Context, db DBTX, eventID pgtype.UUID) (McpReadinessIncidentEvent, error)
 	LockMCPOAuthRetirement(ctx context.Context, db DBTX, arg LockMCPOAuthRetirementParams) ([]byte, error)
 	LockMCPOAuthRetirementAccount(ctx context.Context, db DBTX, accountID string) error

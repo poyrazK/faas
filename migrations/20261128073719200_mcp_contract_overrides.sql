@@ -1,4 +1,4 @@
--- filename: 20261127191645200_mcp_contract_overrides.sql
+-- filename: 20261128073719200_mcp_contract_overrides.sql
 -- migration-compat: expand
 
 -- +goose Up
@@ -14,6 +14,9 @@ CREATE TABLE IF NOT EXISTS mcp_contract_overrides (
     created_by         text NOT NULL CHECK (char_length(created_by) BETWEEN 1 AND 200),
     created_at         timestamptz NOT NULL DEFAULT now(),
     expires_at         timestamptz NOT NULL,
+    -- Set by gregale mcp server deploy --allow-breaking: only that
+    -- deployment may use it. NULL: the app's next breaking candidate.
+    deployment_id      uuid REFERENCES deployments(id) ON DELETE CASCADE,
     used_by_deployment uuid,
     used_at            timestamptz,
     CHECK (expires_at > created_at),

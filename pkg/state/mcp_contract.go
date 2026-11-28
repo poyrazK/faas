@@ -64,7 +64,10 @@ type MCPContractCheck struct {
 	Changes         json.RawMessage // []mcphosting.ContractChange
 	OverrideID      string
 	CheckedAt       time.Time
-	AcceptedAt      *time.Time
+	// AcceptedAt is when the candidate first went live; LiveAt the last
+	// time, rollbacks included. The newest LiveAt is the baseline.
+	AcceptedAt *time.Time
+	LiveAt     *time.Time
 }
 
 // MCPContractOverride admits one breaking or unverified candidate.
@@ -76,6 +79,9 @@ type MCPContractOverride struct {
 	CreatedBy        string
 	CreatedAt        time.Time
 	ExpiresAt        time.Time
+	// DeploymentID binds the override to one deployment; "" admits the
+	// app's next breaking candidate.
+	DeploymentID     string
 	UsedByDeployment string
 	UsedAt           *time.Time
 }
@@ -87,10 +93,12 @@ type MCPContractStore interface {
 	// with a contract.
 	MCPContractBaseline(ctx context.Context, appID string) (MCPContractBaseline, error)
 	// RecordMCPContractCheck records the candidate's check. With
-	// needOverride it consumes the app's oldest open override in the same
-	// transaction, or reuses the one an earlier attempt of the same
-	// deployment consumed; ErrMCPContractOverrideRequired when there is
-	// none. A check already accepted is not rewritten (ErrConflict).
+	// needOverride it consumes an open override in the same transaction (one
+	// bound to this deployment first, else the app's oldest unbound one), or
+	// reuses the one an earlier attempt of the same deployment consumed.
+	// Without one it still records the refused check and returns it with
+	// ErrMCPContractOverrideRequired. A check already accepted is not
+	// rewritten (ErrConflict).
 	RecordMCPContractCheck(ctx context.Context, c MCPContractCheck, needOverride bool) (MCPContractCheck, error)
 	// CreateMCPContractOverride refuses with ErrMCPContractOverrideCap when the app
 	// already has openCap open overrides.
@@ -123,10 +131,10 @@ func (m *MemStore) MCPContractBaseline(_ context.Context, appID string) (MCPCont
 		ProbeSecret: l.ProbeSecret, PublishedAt: l.PublishedAt, Contract: l.Contract, SHA256: l.ContractSHA256}
 	var newest *MCPContractCheck
 	for _, c := range m.mcpContractChecks {
-		if c.AppID != appID || c.AccountID != l.AccountID || c.AcceptedAt == nil || c.AcceptedAt.Before(l.PublishedAt) || c.Candidate == nil {
+		if c.AppID != appID || c.AccountID != l.AccountID || c.LiveAt == nil || c.LiveAt.Before(l.PublishedAt) || c.Candidate == nil {
 			continue
 		}
-		if newest == nil || c.AcceptedAt.After(*newest.AcceptedAt) {
+		if newest == nil || c.LiveAt.After(*newest.LiveAt) {
 			newest = &c
 		}
 	}
@@ -155,18 +163,17 @@ func (m *MemStore) RecordMCPContractCheck(_ context.Context, c MCPContractCheck,
 		c.OverrideID = prev.OverrideID
 	}
 	if needOverride && c.OverrideID == "" {
-		id := m.claimMCPContractOverrideLocked(c)
-		if id == "" {
-			return MCPContractCheck{}, ErrMCPContractOverrideRequired
-		}
-		c.OverrideID = id
+		c.OverrideID = m.claimMCPContractOverrideLocked(c)
 	}
 	if c.Changes == nil {
 		c.Changes = json.RawMessage("[]")
 	}
-	c.CheckedAt, c.AcceptedAt = time.Now().UTC(), nil
+	c.CheckedAt, c.AcceptedAt, c.LiveAt = time.Now().UTC(), nil, nil
 	c.Candidate, c.Changes = slices.Clone(c.Candidate), slices.Clone(c.Changes)
 	m.mcpContractChecks[c.DeploymentID] = c
+	if needOverride && c.OverrideID == "" {
+		return c, ErrMCPContractOverrideRequired
+	}
 	return c, nil
 }
 
@@ -174,10 +181,13 @@ func (m *MemStore) claimMCPContractOverrideLocked(c MCPContractCheck) string {
 	now := time.Now().UTC()
 	var oldest *MCPContractOverride
 	for _, o := range m.mcpContractOverrides {
-		if o.AppID != c.AppID || o.AccountID != c.AccountID || o.UsedAt != nil || !o.ExpiresAt.After(now) {
+		if o.AppID != c.AppID || o.AccountID != c.AccountID || o.UsedAt != nil || !o.ExpiresAt.After(now) ||
+			o.DeploymentID != "" && o.DeploymentID != c.DeploymentID {
 			continue
 		}
-		if oldest == nil || o.CreatedAt.Before(oldest.CreatedAt) {
+		// A bound override first, then the oldest.
+		bound, oldestBound := o.DeploymentID != "", oldest != nil && oldest.DeploymentID != ""
+		if oldest == nil || bound && !oldestBound || bound == oldestBound && o.CreatedAt.Before(oldest.CreatedAt) {
 			oldest = &o
 		}
 	}
@@ -262,14 +272,19 @@ func (m *MemStore) mcpContractChecksLocked(limit int, keep func(MCPContractCheck
 // when the check changed the contract, queues mcp.contract.changed.
 func (m *MemStore) acceptMCPContractCheckLocked(dep Deployment) {
 	c, ok := m.mcpContractChecks[dep.ID]
-	if !ok || c.AcceptedAt != nil {
+	refused := (c.Verdict == MCPContractBreaking || c.Verdict == MCPContractUnverified) && c.OverrideID == ""
+	if !ok || refused {
 		return
 	}
 	now := time.Now().UTC()
-	c.AcceptedAt = &now
+	first := c.AcceptedAt == nil
+	c.LiveAt = &now
+	if first {
+		c.AcceptedAt = &now
+	}
 	m.mcpContractChecks[dep.ID] = c
 	app, ok := m.apps[dep.AppID]
-	if !ok || c.Verdict == MCPContractUnchanged {
+	if !ok || !first || c.Verdict == MCPContractUnchanged {
 		return
 	}
 	body, _ := json.Marshal(MCPContractChangedPayload(c)) // JSON-safe fields only
@@ -321,13 +336,17 @@ func fromMCPContractCheck(row sqlc.McpContractCheck) MCPContractCheck {
 		t := row.AcceptedAt.Time.UTC()
 		c.AcceptedAt = &t
 	}
+	if row.LiveAt.Valid {
+		t := row.LiveAt.Time.UTC()
+		c.LiveAt = &t
+	}
 	return c
 }
 
 func fromMCPContractOverride(row sqlc.McpContractOverride) MCPContractOverride {
 	o := MCPContractOverride{ID: pgUUIDString(row.ID), AppID: pgUUIDString(row.AppID), AccountID: pgUUIDString(row.AccountID),
 		Reason: row.Reason, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt.Time.UTC(), ExpiresAt: row.ExpiresAt.Time.UTC(),
-		UsedByDeployment: pgUUIDStringOrEmpty(row.UsedByDeployment)}
+		DeploymentID: pgUUIDStringOrEmpty(row.DeploymentID), UsedByDeployment: pgUUIDStringOrEmpty(row.UsedByDeployment)}
 	if row.UsedAt.Valid {
 		t := row.UsedAt.Time.UTC()
 		o.UsedAt = &t
@@ -375,13 +394,12 @@ func (s *PgStore) RecordMCPContractCheck(ctx context.Context, c MCPContractCheck
 	if needOverride && overrideID == "" {
 		claimed, err := q.ClaimMCPContractOverride(ctx, tx, sqlc.ClaimMCPContractOverrideParams{
 			DeploymentID: uuidToPgtype(c.DeploymentID), AppID: uuidToPgtype(c.AppID), AccountID: uuidToPgtype(c.AccountID)})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return MCPContractCheck{}, ErrMCPContractOverrideRequired
-		}
-		if err != nil {
+		switch {
+		case err == nil:
+			overrideID = pgUUIDString(claimed.ID)
+		case !errors.Is(err, pgx.ErrNoRows):
 			return MCPContractCheck{}, fmt.Errorf("claim MCP contract override: %w", err)
 		}
-		overrideID = pgUUIDString(claimed.ID)
 	}
 	var override pgtype.UUID
 	if overrideID != "" {
@@ -400,18 +418,38 @@ func (s *PgStore) RecordMCPContractCheck(ctx context.Context, c MCPContractCheck
 	if err := tx.Commit(ctx); err != nil {
 		return MCPContractCheck{}, fmt.Errorf("record MCP contract check commit: %w", err)
 	}
+	if needOverride && overrideID == "" {
+		// Recorded so the seller sees what was refused; never accepted.
+		return fromMCPContractCheck(row), ErrMCPContractOverrideRequired
+	}
 	return fromMCPContractCheck(row), nil
 }
 
 func (s *PgStore) CreateMCPContractOverride(ctx context.Context, o MCPContractOverride, openCap int) (MCPContractOverride, error) {
-	row, err := sqlc.New().CreateMCPContractOverride(ctx, s.pool, sqlc.CreateMCPContractOverrideParams{AppID: uuidToPgtype(o.AppID),
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return MCPContractOverride{}, fmt.Errorf("create MCP contract override begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := sqlc.New()
+	if err := q.LockMCPContractOverrides(ctx, tx, uuidToPgtype(o.AppID)); err != nil {
+		return MCPContractOverride{}, fmt.Errorf("lock MCP contract overrides: %w", err)
+	}
+	var deployment pgtype.UUID
+	if o.DeploymentID != "" {
+		deployment = uuidToPgtype(o.DeploymentID)
+	}
+	row, err := q.CreateMCPContractOverride(ctx, tx, sqlc.CreateMCPContractOverrideParams{AppID: uuidToPgtype(o.AppID),
 		AccountID: uuidToPgtype(o.AccountID), Reason: o.Reason, CreatedBy: o.CreatedBy, ExpiresAt: pgTimestamptzUTC(o.ExpiresAt),
-		OpenCap: int64(openCap)})
+		DeploymentID: deployment, OpenCap: int64(openCap)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return MCPContractOverride{}, ErrMCPContractOverrideCap
 	}
 	if err != nil {
 		return MCPContractOverride{}, fmt.Errorf("create MCP contract override: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return MCPContractOverride{}, fmt.Errorf("create MCP contract override commit: %w", err)
 	}
 	return fromMCPContractOverride(row), nil
 }

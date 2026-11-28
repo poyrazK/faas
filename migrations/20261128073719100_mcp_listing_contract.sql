@@ -1,4 +1,4 @@
--- filename: 20261127191645100_mcp_listing_contract.sql
+-- filename: 20261128073719100_mcp_listing_contract.sql
 -- migration-compat: expand
 
 -- +goose Up
@@ -8,13 +8,15 @@ SET LOCAL lock_timeout = '5s';
 -- listing keeps the format-2 catalog contract the seller's CLI captured when
 -- publishing (NULL for listings published before the gate) and the app
 -- secret imaged sends as the bearer token when it lists a candidate's tools.
+-- apid caps the compact contract at 1,000,000 bytes; jsonb's text form adds a
+-- space after each separator, so the CHECK allows twice the cap.
 ALTER TABLE mcp_listings
     ADD COLUMN IF NOT EXISTS contract jsonb,
     ADD COLUMN IF NOT EXISTS contract_sha256 text,
     ADD COLUMN IF NOT EXISTS probe_secret text NOT NULL DEFAULT '';
 ALTER TABLE mcp_listings ADD CONSTRAINT mcp_listings_contract_chk CHECK (
     (contract IS NULL AND contract_sha256 IS NULL)
-    OR (jsonb_typeof(contract) = 'object' AND octet_length(contract::text) <= 1048576
+    OR (jsonb_typeof(contract) = 'object' AND octet_length(contract::text) <= 2097152
         AND contract_sha256 ~ '^[0-9a-f]{64}$')) NOT VALID;
 ALTER TABLE mcp_listings ADD CONSTRAINT mcp_listings_probe_secret_chk CHECK (
     probe_secret = '' OR probe_secret ~ '^[A-Za-z_][A-Za-z0-9_]{0,127}$') NOT VALID;

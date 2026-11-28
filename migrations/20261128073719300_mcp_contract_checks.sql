@@ -1,4 +1,4 @@
--- filename: 20261127191645300_mcp_contract_checks.sql
+-- filename: 20261128073719300_mcp_contract_checks.sql
 -- migration-compat: expand
 
 -- +goose Up
@@ -12,21 +12,29 @@ CREATE TABLE IF NOT EXISTS mcp_contract_checks (
     account_id       uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     baseline_sha256  text NOT NULL CHECK (baseline_sha256 ~ '^[0-9a-f]{64}$'),
     candidate_sha256 text CHECK (candidate_sha256 ~ '^[0-9a-f]{64}$'),
-    candidate        jsonb CHECK (candidate IS NULL OR (jsonb_typeof(candidate) = 'object' AND octet_length(candidate::text) <= 1048576)),
+    candidate        jsonb CHECK (candidate IS NULL OR (jsonb_typeof(candidate) = 'object' AND octet_length(candidate::text) <= 2097152)),
     verdict          text NOT NULL CHECK (verdict IN ('unchanged', 'compatible', 'review', 'breaking', 'unverified')),
     changes          jsonb NOT NULL DEFAULT '[]'::jsonb
                      CHECK (jsonb_typeof(changes) = 'array' AND octet_length(changes::text) <= 262144),
     override_id      uuid REFERENCES mcp_contract_overrides(id) ON DELETE SET NULL,
     checked_at       timestamptz NOT NULL DEFAULT now(),
+    -- accepted_at: when the candidate first went live (the changelog date).
+    -- live_at: the last time it went live, rollbacks included; the newest
+    -- live_at is the effective baseline, so it follows what serves.
     accepted_at      timestamptz,
+    live_at          timestamptz,
+    CHECK ((accepted_at IS NULL) = (live_at IS NULL)),
     CHECK ((candidate IS NULL) = (candidate_sha256 IS NULL)),
     CHECK ((verdict = 'unverified') = (candidate IS NULL))
 );
-CREATE INDEX IF NOT EXISTS mcp_contract_checks_accepted_idx
-    ON mcp_contract_checks (app_id, accepted_at DESC) WHERE accepted_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS mcp_contract_checks_live_idx
+    ON mcp_contract_checks (app_id, live_at DESC) WHERE live_at IS NOT NULL;
 
 -- Accept the check when its candidate goes live, and tell the seller's
--- webhooks when the accepted contract changed.
+-- webhooks when the accepted contract changed. A rollback that makes an
+-- older candidate live again moves live_at (the baseline) but sends nothing.
+-- A refused check (breaking or unverified without an override) is never
+-- accepted.
 CREATE OR REPLACE FUNCTION accept_mcp_contract_check() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -37,10 +45,13 @@ BEGIN
     IF NEW.status <> 'live' OR (TG_OP = 'UPDATE' AND OLD.status = 'live') THEN
         RETURN NEW;
     END IF;
-    UPDATE mcp_contract_checks SET accepted_at = now()
-     WHERE deployment_id = NEW.id AND accepted_at IS NULL
+    UPDATE mcp_contract_checks SET live_at = now(), accepted_at = COALESCE(accepted_at, now())
+     WHERE deployment_id = NEW.id
+       AND (verdict IN ('unchanged', 'compatible', 'review') OR override_id IS NOT NULL)
     RETURNING * INTO accepted;
-    IF accepted.deployment_id IS NULL OR accepted.verdict = 'unchanged' THEN
+    -- now() is fixed within the statement: a first acceptance has
+    -- accepted_at = live_at.
+    IF accepted.deployment_id IS NULL OR accepted.verdict = 'unchanged' OR accepted.accepted_at <> accepted.live_at THEN
         RETURN NEW;
     END IF;
     event_payload := jsonb_build_object(

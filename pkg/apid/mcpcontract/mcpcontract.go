@@ -18,6 +18,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
@@ -107,7 +109,7 @@ func (o Owner) CreateOverride(w http.ResponseWriter, r *http.Request, acct state
 		return
 	}
 	var req api.CreateMCPContractOverrideRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, api.MCPContractOverrideRequestMaxBytes)).Decode(&req); err != nil {
 		api.WriteProblem(w, api.ErrValidation("invalid JSON body: "+err.Error()))
 		return
 	}
@@ -116,12 +118,22 @@ func (o Owner) CreateOverride(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, problem)
 		return
 	}
-	if _, err := store.MCPContractBaseline(r.Context(), app.ID); errors.Is(err, state.ErrNotFound) {
+	baseline, err := store.MCPContractBaseline(r.Context(), app.ID)
+	if errors.Is(err, state.ErrNotFound) || err == nil && baseline.AccountID != app.AccountID {
 		notGated(w)
 		return
 	}
+	if err != nil {
+		o.Log.Error("read MCP contract baseline", "app_id", app.ID, "err", err)
+		api.WriteProblem(w, api.ErrInternal("could not read the MCP tool contract"))
+		return
+	}
+	if problem := o.checkDeployment(r.Context(), app, req.DeploymentID); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	created, err := store.CreateMCPContractOverride(r.Context(), state.MCPContractOverride{AppID: app.ID, AccountID: app.AccountID,
-		Reason: reason, CreatedBy: o.Host.Actor(r, acct), ExpiresAt: o.now().Add(ttl)}, api.MCPContractOverrideOpenCap)
+		Reason: reason, CreatedBy: o.Host.Actor(r, acct), ExpiresAt: o.now().Add(ttl), DeploymentID: req.DeploymentID}, api.MCPContractOverrideOpenCap)
 	if errors.Is(err, state.ErrMCPContractOverrideCap) {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Too many open overrides",
 			fmt.Sprintf("this app already has %d open overrides; each admits one candidate, so deploy or let them expire", api.MCPContractOverrideOpenCap)).
@@ -134,8 +146,29 @@ func (o Owner) CreateOverride(w http.ResponseWriter, r *http.Request, acct state
 		return
 	}
 	o.Host.Audit(r.Context(), "mcp_contract.override_created", acct.ID, map[string]any{"app_id": app.ID, "override_id": created.ID,
-		"reason": created.Reason, "expires_at": created.ExpiresAt})
+		"reason": created.Reason, "expires_at": created.ExpiresAt, "deployment_id": created.DeploymentID})
 	httpkit.WriteJSON(w, http.StatusCreated, Override(created))
+}
+
+// checkDeployment requires a bound override's deployment to be one of the
+// app's own.
+func (o Owner) checkDeployment(ctx context.Context, app state.App, id string) *api.Problem {
+	if id == "" {
+		return nil
+	}
+	if _, err := uuid.Parse(id); err != nil {
+		return invalid("deployment_id must be a deployment ID")
+	}
+	dep, err := o.Host.Store().DeploymentByID(ctx, id)
+	if errors.Is(err, state.ErrNotFound) || err == nil && dep.AppID != app.ID {
+		return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Deployment not found",
+			"deployment_id names no deployment of this app").WithDocs(DocsURL)
+	}
+	if err != nil {
+		o.Log.Error("read deployment for MCP contract override", "app_id", app.ID, "err", err)
+		return api.ErrInternal("could not read the deployment")
+	}
+	return nil
 }
 
 // ValidateOverride trims the reason and resolves the lifetime.
@@ -187,7 +220,8 @@ func Check(c state.MCPContractCheck) api.MCPContractCheck {
 
 // Override converts a stored override to the wire form.
 func Override(o state.MCPContractOverride) api.MCPContractOverride {
-	return api.MCPContractOverride{ID: o.ID, Reason: o.Reason, CreatedBy: o.CreatedBy, CreatedAt: o.CreatedAt, ExpiresAt: o.ExpiresAt}
+	return api.MCPContractOverride{ID: o.ID, Reason: o.Reason, CreatedBy: o.CreatedBy, CreatedAt: o.CreatedAt, ExpiresAt: o.ExpiresAt,
+		DeploymentID: o.DeploymentID}
 }
 
 // Changelog is the public listing's view of accepted changes: dates,

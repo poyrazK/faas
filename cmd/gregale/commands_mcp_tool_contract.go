@@ -75,6 +75,37 @@ func mcpContractAllowBreaking(ctx context.Context, c *Client, slug, reason strin
 	return c.CreateMCPContractOverride(ctx, slug, api.CreateMCPContractOverrideRequest{Reason: reason, ExpiresInSeconds: int(expires / time.Second)})
 }
 
+// mcpDeployAllowBreaking checks that the app has a tool contract and returns
+// the hook that binds an override to each candidate deployment the deploy
+// queues (ADR-20261127191645), so it cannot admit another deploy. The
+// candidate's build outlasts the request, so the override is in place before
+// the gate runs.
+func mcpDeployAllowBreaking(ctx context.Context, c *Client, slug, reason string) (func(api.DeploymentResponse), error) {
+	if _, err := c.GetMCPContract(ctx, slug); err != nil {
+		return nil, err
+	}
+	return func(dep api.DeploymentResponse) {
+		override, err := c.CreateMCPContractOverride(ctx, slug, api.CreateMCPContractOverrideRequest{Reason: reason, DeploymentID: dep.ID})
+		if err != nil {
+			_, _ = fmt.Fprintf(osStderr, "warning: could not record the tool contract override for deployment %s: %v; a breaking change will be refused\n", dep.ID, err)
+			return
+		}
+		if !jsonOutput {
+			PrintProgress(osStdout, "Recorded tool contract override %s for deployment %s", override.ID, dep.ID)
+		}
+	}, nil
+}
+
+// mcpListingContractCheckable refuses to publish a contract the deploy gate
+// could never check: a server that checks credentials itself needs a probe
+// secret for the gate to list its tools.
+func mcpListingContractCheckable(mode, probeSecret string) error {
+	if mode == mcphosting.AuthExternalOAuth && probeSecret == "" {
+		return errors.New("this server checks credentials itself, so production deploys can only be checked with a token: store one as an app secret and pass --probe-secret <NAME>")
+	}
+	return nil
+}
+
 // mcpListingContract is the discovered catalog as the tool contract the
 // listing publishes, so production deploys are compared with what the
 // seller saw.

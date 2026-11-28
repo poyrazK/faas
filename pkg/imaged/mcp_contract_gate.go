@@ -65,28 +65,7 @@ func ApplyMCPToolContract(ctx context.Context, g ToolContractGate, app state.App
 		// reads is the platform's problem, not the candidate's.
 		return contractUnavailable(smoke, apihostingreceipt.SmokeErrorContractUnavailable, fmt.Errorf("stored MCP contract: %w", err))
 	}
-	runCtx, cancel := context.WithTimeout(ctx, toolContractBudget)
-	defer cancel()
-	session, err := g.Verifier.OpenCandidateSession(runCtx, app.Slug, dep.ID, HostingHealthPath(app, dep), toolContractBudget+15*time.Second)
-	if err != nil {
-		if ctx.Err() != nil {
-			return smoke, ctx.Err()
-		}
-		var publication *apihostingreceipt.ChallengePublicationError
-		if errors.As(err, &publication) {
-			return contractUnavailable(smoke, apihostingreceipt.SmokeErrorAuthorizationUnavailable, err)
-		}
-		return contractUnavailable(smoke, apihostingreceipt.SmokeErrorGatewayUnavailable, err)
-	}
-	token, release, err := openProbeSecret(runCtx, g, app, dep, baseline.ProbeSecret)
-	if err != nil {
-		if ctx.Err() != nil {
-			return smoke, ctx.Err()
-		}
-		return contractUnavailable(smoke, apihostingreceipt.SmokeErrorContractUnavailable, err)
-	}
-	defer release()
-	candidate, discoverErr := discoverCandidateContract(runCtx, session, baseline.Endpoint, token, promised.ProtocolVersion)
+	candidate, unavailableCode, discoverErr := listCandidateContract(ctx, g, app, dep, baseline, promised.ProtocolVersion)
 	if ctx.Err() != nil {
 		return smoke, ctx.Err()
 	}
@@ -106,12 +85,15 @@ func ApplyMCPToolContract(ctx context.Context, g ToolContractGate, app state.App
 		sum := sha256.Sum256(raw)
 		check.Candidate, check.CandidateSHA256 = raw, hex.EncodeToString(sum[:])
 		check.Verdict = contractVerdict(diff, check.CandidateSHA256 == baseline.SHA256)
-		if check.Changes, err = json.Marshal(diff.Changes); err != nil {
+		if check.Changes, err = storedChanges(diff.Changes); err != nil {
 			return contractUnavailable(smoke, apihostingreceipt.SmokeErrorContractUnavailable, fmt.Errorf("encode MCP contract changes: %w", err))
 		}
 	}
 	report.Verdict, report.ContractSHA256 = check.Verdict, check.CandidateSHA256
-	for _, c := range diff.Changes {
+	for i, c := range diff.Changes {
+		if i == api.MCPContractChangesMax {
+			break
+		}
 		report.Changes = append(report.Changes, apihostingreceipt.MCPContractChange(c))
 	}
 	recorded, err := store.RecordMCPContractCheck(ctx, check, check.Verdict == state.MCPContractBreaking || check.Verdict == state.MCPContractUnverified)
@@ -119,7 +101,7 @@ func ApplyMCPToolContract(ctx context.Context, g ToolContractGate, app state.App
 	case errors.Is(err, state.ErrMCPContractOverrideRequired) && check.Verdict == state.MCPContractUnverified:
 		// Without an override, a catalog the platform cannot list is
 		// unavailable evidence: retried, then failed closed.
-		retry, retryErr := contractUnavailable(smoke, apihostingreceipt.SmokeErrorContractUnavailable,
+		retry, retryErr := contractUnavailable(smoke, unavailableCode,
 			fmt.Errorf("the candidate's MCP tools could not be listed at %s: %w", endpointPath(baseline.Endpoint), discoverErr))
 		retry.MCPContract = report
 		return retry, retryErr
@@ -138,6 +120,45 @@ func ApplyMCPToolContract(ctx context.Context, g ToolContractGate, app state.App
 	report.Overridden = recorded.OverrideID != ""
 	smoke.MCPContract = report
 	return smoke, nil
+}
+
+// listCandidateContract opens the candidate session and the optional probe
+// secret and lists the candidate's catalog. Any failure is returned as the
+// error (with the smoke code a retry reports), so the caller records the
+// candidate as unverified, which an override admits.
+func listCandidateContract(ctx context.Context, g ToolContractGate, app state.App, dep state.Deployment, baseline state.MCPContractBaseline, version string) (mcphosting.Contract, string, error) {
+	runCtx, cancel := context.WithTimeout(ctx, toolContractBudget)
+	defer cancel()
+	session, err := g.Verifier.OpenCandidateSession(runCtx, app.Slug, dep.ID, HostingHealthPath(app, dep), toolContractBudget+15*time.Second)
+	if err != nil {
+		var publication *apihostingreceipt.ChallengePublicationError
+		if errors.As(err, &publication) {
+			return mcphosting.Contract{}, apihostingreceipt.SmokeErrorAuthorizationUnavailable, err
+		}
+		return mcphosting.Contract{}, apihostingreceipt.SmokeErrorGatewayUnavailable, err
+	}
+	token, release, err := openProbeSecret(runCtx, g, app, dep, baseline.ProbeSecret)
+	if err != nil {
+		return mcphosting.Contract{}, apihostingreceipt.SmokeErrorContractUnavailable, err
+	}
+	defer release()
+	candidate, err := discoverCandidateContract(runCtx, session, baseline.Endpoint, token, version)
+	return candidate, apihostingreceipt.SmokeErrorContractUnavailable, err
+}
+
+// storedChanges encodes at most api.MCPContractChangesMax changes, fewer if
+// they would not fit the column's api.MCPContractChangesMaxBytes.
+func storedChanges(changes []mcphosting.ContractChange) (json.RawMessage, error) {
+	if len(changes) > api.MCPContractChangesMax {
+		changes = changes[:api.MCPContractChangesMax]
+	}
+	for {
+		raw, err := json.Marshal(changes)
+		if err != nil || len(raw) <= api.MCPContractChangesMaxBytes {
+			return raw, err
+		}
+		changes = changes[:len(changes)/2]
+	}
 }
 
 // contractVerdict names a candidate's comparison with the baseline.
@@ -189,14 +210,20 @@ func discoverCandidateContract(ctx context.Context, session *apihostingreceipt.C
 	if err := client.OpenStateless(ctx); err != nil {
 		return mcphosting.Contract{}, fmt.Errorf("initialize: %w", err)
 	}
-	catalog, exchange, err := client.DiscoverCatalog(ctx)
+	// Tools the client rejects are left out, as the CLI leaves them out of
+	// the listing's contract; a tool that turns invalid reads as removed.
+	catalog, _, err := client.DiscoverCatalog(ctx)
 	if err != nil {
 		return mcphosting.Contract{}, fmt.Errorf("list catalog: %w", err)
 	}
-	if len(exchange.RejectedTools) != 0 {
-		return mcphosting.Contract{}, fmt.Errorf("%d tool definitions are invalid", len(exchange.RejectedTools))
+	contract, err := mcphosting.NewCatalogContract(client.Version, catalog)
+	if err != nil {
+		return mcphosting.Contract{}, err
 	}
-	return mcphosting.NewCatalogContract(client.Version, catalog)
+	if raw, err := mcphosting.MarshalContract(contract); err == nil && len(raw) > api.MCPListingContractMaxBytes {
+		return mcphosting.Contract{}, fmt.Errorf("the catalog takes %d bytes, more than the %d a contract holds", len(raw), api.MCPListingContractMaxBytes)
+	}
+	return contract, nil
 }
 
 // endpointPath is the listing endpoint's path; apid checked the host.

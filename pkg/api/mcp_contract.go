@@ -45,6 +45,8 @@ type MCPContractOverride struct {
 	CreatedBy string    `json:"created_by"`
 	CreatedAt time.Time `json:"created_at"`
 	ExpiresAt time.Time `json:"expires_at"`
+	// DeploymentID, when set, is the only deployment the override admits.
+	DeploymentID string `json:"deployment_id,omitempty"`
 }
 
 // MCPContractResponse is GET /v1/apps/{slug}/mcp-contract.
@@ -64,10 +66,13 @@ type MCPContractResponse struct {
 
 // CreateMCPContractOverrideRequest records why the next breaking candidate
 // may ship. ExpiresInSeconds defaults to MCPContractOverrideDefaultTTL and is
-// at most MCPContractOverrideMaxTTL.
+// at most MCPContractOverrideMaxTTL. DeploymentID binds the override to one
+// of the app's deployments; without it the app's next breaking production
+// candidate uses it.
 type CreateMCPContractOverrideRequest struct {
 	Reason           string `json:"reason"`
 	ExpiresInSeconds int    `json:"expires_in_seconds,omitempty"`
+	DeploymentID     string `json:"deployment_id,omitempty"`
 }
 
 // MCPContractChangelogEntry is one accepted change on a public listing: the

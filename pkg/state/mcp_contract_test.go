@@ -148,6 +148,76 @@ func checkMCPContractGate(t *testing.T, ctx context.Context, st state.Store, acc
 	if _, err := gate.RecordMCPContractCheck(ctx, unverified, false); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("unverified with a candidate = %v, want ErrInvalidArgument", err)
 	}
+	checkMCPContractRefusalsAndRollback(t, ctx, st, deploy, accountID, appID)
+}
+
+// checkMCPContractRefusalsAndRollback: a refused check is recorded but never
+// accepted; an override bound to one deployment admits only that one; a
+// rollback that makes an older candidate live again moves the baseline back
+// without a webhook. The baseline is contractSHA('c') on entry.
+func checkMCPContractRefusalsAndRollback(t *testing.T, ctx context.Context, st state.Store, deploy func() string, accountID, appID string) {
+	t.Helper()
+	gate := st.(state.MCPContractStore)
+	candidate := func(sha byte, verdict string) state.MCPContractCheck {
+		return state.MCPContractCheck{DeploymentID: deploy(), AppID: appID, AccountID: accountID, BaselineSHA256: contractSHA('c'),
+			CandidateSHA256: contractSHA(sha), Candidate: json.RawMessage(`{"tools":[]}`), Verdict: verdict,
+			Changes: json.RawMessage(`[{"tool":"search","path":"/tools/search","kind":"tool_removed","severity":"breaking"}]`)}
+	}
+	refused := candidate('d', state.MCPContractBreaking)
+	got, err := gate.RecordMCPContractCheck(ctx, refused, true)
+	if !errors.Is(err, state.ErrMCPContractOverrideRequired) || got.DeploymentID != refused.DeploymentID || got.OverrideID != "" {
+		t.Fatalf("refused check = %+v, %v", got, err)
+	}
+	if err := st.MarkDeploymentLive(ctx, refused.DeploymentID); err != nil {
+		t.Fatal(err)
+	}
+	if base, _ := gate.MCPContractBaseline(ctx, appID); base.SHA256 != contractSHA('c') {
+		t.Fatalf("a refused check moved the baseline: %+v", base)
+	}
+	if checks, _ := gate.ListMCPContractChecks(ctx, accountID, appID, 10); len(checks) == 0 || checks[0].DeploymentID != refused.DeploymentID || checks[0].AcceptedAt != nil {
+		t.Fatalf("refused check not listed or accepted: %+v", checks)
+	}
+
+	bound := candidate('e', state.MCPContractBreaking)
+	override, err := gate.CreateMCPContractOverride(ctx, state.MCPContractOverride{AppID: appID, AccountID: accountID, Reason: "bound",
+		CreatedBy: "user:" + accountID, ExpiresAt: time.Now().Add(time.Hour), DeploymentID: bound.DeploymentID}, 5)
+	if err != nil || override.DeploymentID != bound.DeploymentID {
+		t.Fatalf("bound override = %+v, %v", override, err)
+	}
+	if _, err := gate.RecordMCPContractCheck(ctx, candidate('f', state.MCPContractBreaking), true); !errors.Is(err, state.ErrMCPContractOverrideRequired) {
+		t.Fatalf("another deployment used the bound override: %v", err)
+	}
+	if got, err := gate.RecordMCPContractCheck(ctx, bound, true); err != nil || got.OverrideID != override.ID {
+		t.Fatalf("bound deployment = %+v, %v", got, err)
+	}
+	if err := st.MarkDeploymentLive(ctx, bound.DeploymentID); err != nil {
+		t.Fatal(err)
+	}
+	later := candidate('g', state.MCPContractCompatible)
+	if _, err := gate.RecordMCPContractCheck(ctx, later, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MarkDeploymentLive(ctx, later.DeploymentID); err != nil {
+		t.Fatal(err)
+	}
+	if base, _ := gate.MCPContractBaseline(ctx, appID); base.SHA256 != contractSHA('g') {
+		t.Fatalf("baseline before rollback = %+v", base)
+	}
+	log, _ := gate.ListMCPContractChangelog(ctx, accountID, appID, 20)
+	time.Sleep(10 * time.Millisecond)
+	// Roll back to the bound deployment.
+	if err := st.UpdateDeploymentStatus(ctx, bound.DeploymentID, state.DeploySuperseded, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MarkDeploymentLive(ctx, bound.DeploymentID); err != nil {
+		t.Fatal(err)
+	}
+	if base, _ := gate.MCPContractBaseline(ctx, appID); base.SHA256 != contractSHA('e') || base.FromDeployment != bound.DeploymentID {
+		t.Fatalf("baseline after rollback = %+v, want the rolled-back candidate", base)
+	}
+	if again, _ := gate.ListMCPContractChangelog(ctx, accountID, appID, 20); len(again) != len(log) || len(again) == 0 || !again[0].AcceptedAt.Equal(*log[0].AcceptedAt) {
+		t.Fatalf("rollback changed the changelog: %+v, was %+v", again, log)
+	}
 }
 
 // adr: 20261127191645

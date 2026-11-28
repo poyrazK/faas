@@ -10832,6 +10832,7 @@ type McpContractCheck struct {
 	OverrideID      pgtype.UUID
 	CheckedAt       pgtype.Timestamptz
 	AcceptedAt      pgtype.Timestamptz
+	LiveAt          pgtype.Timestamptz
 }
 
 type McpContractOverride struct {
@@ -10842,6 +10843,7 @@ type McpContractOverride struct {
 	CreatedBy        string
 	CreatedAt        pgtype.Timestamptz
 	ExpiresAt        pgtype.Timestamptz
+	DeploymentID     pgtype.UUID
 	UsedByDeployment pgtype.UUID
 	UsedAt           pgtype.Timestamptz
 }

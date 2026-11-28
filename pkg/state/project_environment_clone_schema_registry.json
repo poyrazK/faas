@@ -12971,6 +12971,7 @@
       "changes",
       "checked_at",
       "deployment_id",
+      "live_at",
       "override_id",
       "verdict"
     ],
@@ -12983,6 +12984,7 @@
       "app_id",
       "created_at",
       "created_by",
+      "deployment_id",
       "expires_at",
       "id",
       "reason",

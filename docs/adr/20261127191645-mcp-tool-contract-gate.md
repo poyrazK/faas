@@ -32,10 +32,15 @@ webhook event and a public changelog on the listing page.
    (`ReadContract` + `Validate`, at most `api.MCPListingContractMaxBytes`)
    and stores on the listing with its SHA-256. The listing's tools are
    still the name/title/description snapshot. The *effective baseline* is
-   the candidate contract of the newest accepted check (item 3) newer than
-   the listing's publish time, else the listing's contract. Republishing
-   resets it. A listing without a contract (published before this ADR) is
-   not gated until it is republished.
+   the candidate contract of the check whose deployment most recently went
+   live (`live_at`, item 3) after the listing's publish time, else the
+   listing's contract, so a rollback restores the contract it serves.
+   Republishing resets it. A listing without a contract (published before
+   this ADR) is not gated until it is republished. Tool definitions the MCP
+   client rejects are left out on both sides (publish warns), so a tool
+   that turns invalid reads as removed. Publish refuses a contract for an
+   `external-oauth` server without a probe secret, which the gate could
+   never check.
 2. **Gate.** imaged runs the check in the hosting verification chain after
    the candidate's smoke and verification contract passed, for a
    production-scope deployment of an app whose listing has a contract. It
@@ -53,24 +58,33 @@ webhook event and a public changelog on the listing page.
      detail lists the breaking changes) and the predecessor keeps serving,
      unless the app holds an unused, unexpired override (item 4), which the
      check consumes in the same transaction that records it.
-   - the catalog cannot be discovered (session, initialize, list or
-     credential failure): unavailable evidence, retried through the hosting
-     verification recovery window like other unavailable smoke; when the
-     window ends the deployment fails closed. An override also admits it,
-     recorded as `unverified`.
+   - the catalog cannot be discovered (session, probe secret, initialize,
+     list, or a catalog over the contract cap): unavailable evidence,
+     retried through the hosting verification recovery window like other
+     unavailable smoke; when the window ends the deployment fails closed.
+     An override also admits it, recorded as `unverified`.
+   - A refused check is still recorded (no override, never accepted), so
+     the owner view shows what was refused. A check stores at most
+     `api.MCPContractChangesMax` changes.
 3. **Acceptance.** Checks live in `mcp_contract_checks`, one row per
    deployment (imaged writes, apid reads). A trigger on `deployments` sets
-   `accepted_at` when the checked deployment becomes `live`, so a candidate
-   that fails later never moves the baseline, and in the same statement
-   queues the `mcp.contract.changed` app webhook delivery when the accepted
-   check has changes. Every accepted change moves the baseline, compatible
-   additions included, so a tool added last week is protected next week.
+   `live_at` each time the checked deployment becomes `live` and
+   `accepted_at` the first time, so a candidate that fails later never
+   moves the baseline. On the first acceptance it queues the
+   `mcp.contract.changed` app webhook delivery when the check has changes;
+   a rollback only moves `live_at`. A refused check is never accepted.
+   Every accepted change moves the baseline, compatible additions included,
+   so a tool added last week is protected next week.
 4. **Override.** `POST /v1/apps/{slug}/mcp-contract/overrides` (owner, MFA,
    deploy-write scope) records a reason (1–512 bytes) and an expiry (at
    most `api.MCPContractOverrideMaxTTL`, default 1 h). It admits exactly
-   one breaking or unverified candidate. `mcp server deploy
-   --allow-breaking --reason TEXT` creates one before deploying; for a git
-   push the seller runs `mcp server contract allow` first.
+   one breaking or unverified candidate. An override may name a
+   `deployment_id`; then only that deployment uses it, and a check prefers
+   an override bound to its deployment. `mcp server deploy --allow-breaking
+   --reason TEXT` binds one to each candidate deployment it queues, so a
+   concurrent deploy cannot take it; for a git push the seller runs
+   `mcp server contract allow` first, which admits the app's next breaking
+   candidate. Creation is serialized per app so the open cap holds.
    Creating one is audited (`mcp_contract.override_created`); its use is
    recorded on the override (`used_by_deployment`, `used_at`) and on the
    check (`override_id`), since imaged writes no apid audit events.

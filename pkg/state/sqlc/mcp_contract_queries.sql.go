@@ -16,8 +16,9 @@ UPDATE mcp_contract_overrides SET used_by_deployment = $1, used_at = now()
  WHERE id = (SELECT o.id FROM mcp_contract_overrides o
               WHERE o.app_id = $2 AND o.account_id = $3
                 AND o.used_at IS NULL AND o.expires_at > now()
-              ORDER BY o.created_at LIMIT 1 FOR UPDATE SKIP LOCKED)
-RETURNING id, app_id, account_id, reason, created_by, created_at, expires_at, used_by_deployment, used_at
+                AND (o.deployment_id IS NULL OR o.deployment_id = $1)
+              ORDER BY (o.deployment_id IS NULL), o.created_at LIMIT 1 FOR UPDATE SKIP LOCKED)
+RETURNING id, app_id, account_id, reason, created_by, created_at, expires_at, deployment_id, used_by_deployment, used_at
 `
 
 type ClaimMCPContractOverrideParams struct {
@@ -26,7 +27,8 @@ type ClaimMCPContractOverrideParams struct {
 	AccountID    pgtype.UUID
 }
 
-// Consumes the oldest open override of the app for one candidate.
+// Consumes an open override of the app for one candidate: one bound to this
+// deployment first, else the oldest unbound one.
 func (q *Queries) ClaimMCPContractOverride(ctx context.Context, db DBTX, arg ClaimMCPContractOverrideParams) (McpContractOverride, error) {
 	row := db.QueryRow(ctx, claimMCPContractOverride, arg.DeploymentID, arg.AppID, arg.AccountID)
 	var i McpContractOverride
@@ -38,6 +40,7 @@ func (q *Queries) ClaimMCPContractOverride(ctx context.Context, db DBTX, arg Cla
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.ExpiresAt,
+		&i.DeploymentID,
 		&i.UsedByDeployment,
 		&i.UsedAt,
 	)
@@ -45,23 +48,25 @@ func (q *Queries) ClaimMCPContractOverride(ctx context.Context, db DBTX, arg Cla
 }
 
 const createMCPContractOverride = `-- name: CreateMCPContractOverride :one
-INSERT INTO mcp_contract_overrides (app_id, account_id, reason, created_by, expires_at)
-SELECT $1, $2, $3, $4, $5
+INSERT INTO mcp_contract_overrides (app_id, account_id, reason, created_by, expires_at, deployment_id)
+SELECT $1, $2, $3, $4, $5, $6
  WHERE (SELECT count(*) FROM mcp_contract_overrides o
-         WHERE o.app_id = $1 AND o.used_at IS NULL AND o.expires_at > now()) < $6::bigint
-RETURNING id, app_id, account_id, reason, created_by, created_at, expires_at, used_by_deployment, used_at
+         WHERE o.app_id = $1 AND o.used_at IS NULL AND o.expires_at > now()) < $7::bigint
+RETURNING id, app_id, account_id, reason, created_by, created_at, expires_at, deployment_id, used_by_deployment, used_at
 `
 
 type CreateMCPContractOverrideParams struct {
-	AppID     pgtype.UUID
-	AccountID pgtype.UUID
-	Reason    string
-	CreatedBy string
-	ExpiresAt pgtype.Timestamptz
-	OpenCap   int64
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	Reason       string
+	CreatedBy    string
+	ExpiresAt    pgtype.Timestamptz
+	DeploymentID pgtype.UUID
+	OpenCap      int64
 }
 
-// At most sqlc.arg(open_cap) open overrides per app.
+// At most sqlc.arg(open_cap) open overrides per app; run under
+// LockMCPContractOverrides.
 func (q *Queries) CreateMCPContractOverride(ctx context.Context, db DBTX, arg CreateMCPContractOverrideParams) (McpContractOverride, error) {
 	row := db.QueryRow(ctx, createMCPContractOverride,
 		arg.AppID,
@@ -69,6 +74,7 @@ func (q *Queries) CreateMCPContractOverride(ctx context.Context, db DBTX, arg Cr
 		arg.Reason,
 		arg.CreatedBy,
 		arg.ExpiresAt,
+		arg.DeploymentID,
 		arg.OpenCap,
 	)
 	var i McpContractOverride
@@ -80,6 +86,7 @@ func (q *Queries) CreateMCPContractOverride(ctx context.Context, db DBTX, arg Cr
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.ExpiresAt,
+		&i.DeploymentID,
 		&i.UsedByDeployment,
 		&i.UsedAt,
 	)
@@ -95,9 +102,9 @@ SELECT l.account_id, l.version AS listing_version, l.endpoint, l.probe_secret, l
   FROM mcp_listings l
   LEFT JOIN LATERAL (
        SELECT k.candidate, k.candidate_sha256, k.deployment_id FROM mcp_contract_checks k
-        WHERE k.app_id = l.app_id AND k.account_id = l.account_id AND k.accepted_at IS NOT NULL
-          AND k.accepted_at >= l.published_at AND k.candidate IS NOT NULL
-        ORDER BY k.accepted_at DESC LIMIT 1) c ON true
+        WHERE k.app_id = l.app_id AND k.account_id = l.account_id AND k.live_at IS NOT NULL
+          AND k.live_at >= l.published_at AND k.candidate IS NOT NULL
+        ORDER BY k.live_at DESC LIMIT 1) c ON true
  WHERE l.app_id = $1 AND l.contract IS NOT NULL
 `
 
@@ -113,8 +120,9 @@ type GetMCPContractBaselineRow struct {
 }
 
 // ADR-20261127191645: the tool contract gate for sold MCP servers.
-// The effective baseline: the newest accepted candidate contract since the
-// listing was (re)published, else the contract the listing was published with.
+// The effective baseline: the contract of the candidate that most recently
+// went live (rollbacks included) since the listing was (re)published, else
+// the contract the listing was published with.
 func (q *Queries) GetMCPContractBaseline(ctx context.Context, db DBTX, appID pgtype.UUID) (GetMCPContractBaselineRow, error) {
 	row := db.QueryRow(ctx, getMCPContractBaseline, appID)
 	var i GetMCPContractBaselineRow
@@ -132,7 +140,7 @@ func (q *Queries) GetMCPContractBaseline(ctx context.Context, db DBTX, appID pgt
 }
 
 const getMCPContractCheck = `-- name: GetMCPContractCheck :one
-SELECT deployment_id, app_id, account_id, baseline_sha256, candidate_sha256, candidate, verdict, changes, override_id, checked_at, accepted_at FROM mcp_contract_checks WHERE deployment_id = $1
+SELECT deployment_id, app_id, account_id, baseline_sha256, candidate_sha256, candidate, verdict, changes, override_id, checked_at, accepted_at, live_at FROM mcp_contract_checks WHERE deployment_id = $1
 `
 
 func (q *Queries) GetMCPContractCheck(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (McpContractCheck, error) {
@@ -150,12 +158,13 @@ func (q *Queries) GetMCPContractCheck(ctx context.Context, db DBTX, deploymentID
 		&i.OverrideID,
 		&i.CheckedAt,
 		&i.AcceptedAt,
+		&i.LiveAt,
 	)
 	return i, err
 }
 
 const listMCPContractChangelog = `-- name: ListMCPContractChangelog :many
-SELECT k.deployment_id, k.app_id, k.account_id, k.baseline_sha256, k.candidate_sha256, k.candidate, k.verdict, k.changes, k.override_id, k.checked_at, k.accepted_at FROM mcp_contract_checks k
+SELECT k.deployment_id, k.app_id, k.account_id, k.baseline_sha256, k.candidate_sha256, k.candidate, k.verdict, k.changes, k.override_id, k.checked_at, k.accepted_at, k.live_at FROM mcp_contract_checks k
   JOIN mcp_listings l ON l.app_id = k.app_id AND l.account_id = k.account_id
  WHERE k.account_id = $1 AND k.app_id = $2 AND k.accepted_at IS NOT NULL
    AND k.accepted_at >= l.published_at AND k.verdict <> 'unchanged'
@@ -190,6 +199,7 @@ func (q *Queries) ListMCPContractChangelog(ctx context.Context, db DBTX, arg Lis
 			&i.OverrideID,
 			&i.CheckedAt,
 			&i.AcceptedAt,
+			&i.LiveAt,
 		); err != nil {
 			return nil, err
 		}
@@ -202,7 +212,7 @@ func (q *Queries) ListMCPContractChangelog(ctx context.Context, db DBTX, arg Lis
 }
 
 const listMCPContractChecks = `-- name: ListMCPContractChecks :many
-SELECT deployment_id, app_id, account_id, baseline_sha256, candidate_sha256, candidate, verdict, changes, override_id, checked_at, accepted_at FROM mcp_contract_checks WHERE account_id = $1 AND app_id = $2
+SELECT deployment_id, app_id, account_id, baseline_sha256, candidate_sha256, candidate, verdict, changes, override_id, checked_at, accepted_at, live_at FROM mcp_contract_checks WHERE account_id = $1 AND app_id = $2
  ORDER BY checked_at DESC LIMIT $3
 `
 
@@ -233,6 +243,7 @@ func (q *Queries) ListMCPContractChecks(ctx context.Context, db DBTX, arg ListMC
 			&i.OverrideID,
 			&i.CheckedAt,
 			&i.AcceptedAt,
+			&i.LiveAt,
 		); err != nil {
 			return nil, err
 		}
@@ -245,7 +256,7 @@ func (q *Queries) ListMCPContractChecks(ctx context.Context, db DBTX, arg ListMC
 }
 
 const listOpenMCPContractOverrides = `-- name: ListOpenMCPContractOverrides :many
-SELECT id, app_id, account_id, reason, created_by, created_at, expires_at, used_by_deployment, used_at FROM mcp_contract_overrides
+SELECT id, app_id, account_id, reason, created_by, created_at, expires_at, deployment_id, used_by_deployment, used_at FROM mcp_contract_overrides
  WHERE account_id = $1 AND app_id = $2 AND used_at IS NULL AND expires_at > now()
  ORDER BY created_at
 `
@@ -272,6 +283,7 @@ func (q *Queries) ListOpenMCPContractOverrides(ctx context.Context, db DBTX, arg
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.ExpiresAt,
+			&i.DeploymentID,
 			&i.UsedByDeployment,
 			&i.UsedAt,
 		); err != nil {
@@ -285,6 +297,16 @@ func (q *Queries) ListOpenMCPContractOverrides(ctx context.Context, db DBTX, arg
 	return items, nil
 }
 
+const lockMCPContractOverrides = `-- name: LockMCPContractOverrides :exec
+SELECT pg_advisory_xact_lock(hashtextextended('mcp_contract_overrides:' || $1::uuid::text, 0))
+`
+
+// Serializes override creation per app so the open cap holds.
+func (q *Queries) LockMCPContractOverrides(ctx context.Context, db DBTX, appID pgtype.UUID) error {
+	_, err := db.Exec(ctx, lockMCPContractOverrides, appID)
+	return err
+}
+
 const upsertMCPContractCheck = `-- name: UpsertMCPContractCheck :one
 INSERT INTO mcp_contract_checks (deployment_id, app_id, account_id, baseline_sha256, candidate_sha256, candidate, verdict, changes, override_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -293,7 +315,7 @@ ON CONFLICT (deployment_id) DO UPDATE SET
     candidate = excluded.candidate, verdict = excluded.verdict, changes = excluded.changes,
     override_id = COALESCE(excluded.override_id, mcp_contract_checks.override_id), checked_at = now()
 WHERE mcp_contract_checks.accepted_at IS NULL AND mcp_contract_checks.app_id = excluded.app_id
-RETURNING deployment_id, app_id, account_id, baseline_sha256, candidate_sha256, candidate, verdict, changes, override_id, checked_at, accepted_at
+RETURNING deployment_id, app_id, account_id, baseline_sha256, candidate_sha256, candidate, verdict, changes, override_id, checked_at, accepted_at, live_at
 `
 
 type UpsertMCPContractCheckParams struct {
@@ -333,6 +355,7 @@ func (q *Queries) UpsertMCPContractCheck(ctx context.Context, db DBTX, arg Upser
 		&i.OverrideID,
 		&i.CheckedAt,
 		&i.AcceptedAt,
+		&i.LiveAt,
 	)
 	return i, err
 }

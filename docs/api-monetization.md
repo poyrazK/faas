@@ -1100,8 +1100,12 @@ before it takes traffic, whether you deploy with `gregale mcp server deploy`,
 - A candidate whose tools can't be listed is retried while the deploy
   verifies, then refused.
 
-Each deploy that goes live becomes the new baseline, so a tool you added
-last week is protected this week. To ship a breaking change on purpose,
+Tool definitions that MCP clients reject are left out on both sides: publish
+warns about them, and a tool that turns invalid counts as removed.
+
+The baseline is the contract of whichever deploy most recently went live,
+rollbacks included, so a tool you added last week is protected this week and
+a rollback restores the contract it serves. To ship a breaking change on purpose,
 say why first. Your customers see the reason only as a dated entry on the
 listing page:
 
@@ -1112,16 +1116,20 @@ gregale mcp server contract allow --app my-mcp --reason "rename search to web_se
 gregale mcp server contract show --app my-mcp
 ```
 
-An override admits one breaking production deploy within an hour (up to
-24 hours with `--expires`). An app can hold at most five open overrides.
-Creating one is audited, and the check that uses it records it. `show`
-lists the baseline's tools, the recent checks with their changes, and the
-open overrides.
+`mcp server deploy --allow-breaking` binds the override to the deploy's
+own deployments, so no other deploy can use it. `contract allow` admits the
+app's next breaking production deploy, whichever path it takes, within an
+hour (up to 24 hours with `--expires`). An app can hold at most five open
+overrides. An override also admits a deploy whose tools could not be
+listed. Creating one is audited, and the check that uses it records it.
+`show` lists the baseline's tools, the recent checks with their changes
+(refused ones included), and the open overrides.
 
-A server that checks credentials itself needs a bearer token for the check
-to list its tools. Store one as an app secret and publish with
-`--probe-secret <NAME>`. Servers behind gateway auth need nothing more:
-the check reaches the candidate directly.
+A server that checks credentials itself (`external-oauth`) needs a bearer
+token for the check to list its tools: store one as an app secret and
+publish with `--probe-secret <NAME>`; publish refuses without it. Servers
+behind gateway auth need nothing more: the check reaches the candidate
+directly.
 
 When a deploy that changed the contract goes live, the app webhook event
 `mcp.contract.changed` fires. Its payload has the deployment, the verdict,

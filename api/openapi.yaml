@@ -137122,6 +137122,7 @@ components:
         created_by: { type: string }
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
+        deployment_id: { type: string, format: uuid, description: "The only deployment the override admits, when bound." }
     CreateMCPContractOverrideRequest:
       description: "Why the next breaking candidate may ship."
       type: object
@@ -137129,6 +137130,7 @@ components:
       properties:
         reason: { type: string, minLength: 1, maxLength: 512 }
         expires_in_seconds: { type: integer, minimum: 60, maximum: 86400, description: "Defaults to 3600." }
+        deployment_id: { type: string, format: uuid, description: "Bind the override to one of the app's deployments; without it the app's next breaking production candidate uses it." }
     MCPContractResponse:
       description: "The tool contract a listed MCP server's production deploys are held to."
       type: object

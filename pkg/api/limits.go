@@ -2113,14 +2113,20 @@ const (
 	// MCPContractOverrideMaxTTL; an app holds at most
 	// MCPContractOverrideOpenCap open overrides. The owner view lists the
 	// newest MCPContractChecksMax checks; the public changelog the newest
-	// MCPContractChangelogMax accepted changes.
-	MCPListingContractMaxBytes    = 1_000_000
-	MCPContractOverrideDefaultTTL = time.Hour
-	MCPContractOverrideMaxTTL     = 24 * time.Hour
-	MCPContractOverrideOpenCap    = 5
-	MCPContractReasonMax          = 512
-	MCPContractChecksMax          = 20
-	MCPContractChangelogMax       = 20
+	// MCPContractChangelogMax accepted changes. A check stores at most
+	// MCPContractChangesMax changes in at most MCPContractChangesMaxBytes
+	// (the column allows 262,144 bytes of jsonb text). An override request
+	// body is at most MCPContractOverrideRequestMaxBytes.
+	MCPContractChangesMax              = 200
+	MCPContractChangesMaxBytes         = 120_000
+	MCPContractOverrideRequestMaxBytes = 8 << 10
+	MCPListingContractMaxBytes         = 1_000_000
+	MCPContractOverrideDefaultTTL      = time.Hour
+	MCPContractOverrideMaxTTL          = 24 * time.Hour
+	MCPContractOverrideOpenCap         = 5
+	MCPContractReasonMax               = 512
+	MCPContractChecksMax               = 20
+	MCPContractChangelogMax            = 20
 )
 
 // Consumer and platform tenant controls (ADR-1314, ADR-1315, ADR-1322,
