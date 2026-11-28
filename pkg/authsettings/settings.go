@@ -445,16 +445,16 @@ func (c Change) Secrets() (map[string]string, []string, error) {
 		set[secretNewDeviceAlerts] = flag(*c.NewDeviceAlerts)
 	}
 	for _, limit := range []struct {
-		count              *int
-		max                int
-		secret, name, zero string
-	}{{c.MessagesPerRecipient, api.AuthMessagesPerRecipientMax, secretMessagesPerTo, "messages per recipient", "the default"}, {c.MessagesPerNetwork, api.AuthMessagesPerNetworkMax, secretMessagesPerNet, "messages per network", "no limit"}} {
+		count        *int
+		max          int
+		secret, name string
+	}{{c.MessagesPerRecipient, api.AuthMessagesPerRecipientMax, secretMessagesPerTo, "messages per recipient"}, {c.MessagesPerNetwork, api.AuthMessagesPerNetworkMax, secretMessagesPerNet, "messages per network"}} {
 		switch {
 		case limit.count == nil:
 		case *limit.count == 0:
 			unset = append(unset, limit.secret)
 		case *limit.count < 0 || *limit.count > limit.max:
-			return nil, nil, fmt.Errorf("%s must be 1 to %d an hour, or 0 for %s; got %d", limit.name, limit.max, limit.zero, *limit.count)
+			return nil, nil, fmt.Errorf("%s must be 1 to %d an hour; got %d", limit.name, limit.max, *limit.count)
 		default:
 			set[limit.secret] = strconv.Itoa(*limit.count)
 		}

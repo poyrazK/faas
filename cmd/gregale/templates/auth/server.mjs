@@ -144,13 +144,14 @@ function limited(res, code, budget, observed, wait, extra = {}) {
 }
 
 // tokenRoute names a request whose answer may hand a client a session: a
-// token grant (by its grant type) or a verified one-time code.
+// token grant (by its grant type), a verified one-time code, or a sign-up
+// that signs the person in at once.
 function tokenRoute(method, path) {
   if (method !== 'POST') return null
   const [raw, query = ''] = path.split('?')
   const route = raw.replace(/\/+$/, '')
   if (route === '/token') return goQueryValue(query, 'grant_type') ?? ''
-  return route === '/verify' ? 'verify' : null
+  return route === '/verify' || route === '/signup' ? route.slice(1) : null
 }
 
 function logFailure(event) {
@@ -176,11 +177,11 @@ function tokenReply(res, status, payload, headers = {}) {
 }
 
 export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz, ui, realtime, admin, settings, smsCountries = null, scim, oauth = null, serviceAccounts = null, attempts = null, adminKeys = [], signIns = null, sends = null, captcha = false } = {}) {
-  // signedIn records a session GoTrue handed this client (security.mjs); a
-  // refreshed session alerts no one, and one only a redirect showed (an
-  // email link scanner may follow it) trusts no network until the client
-  // uses it.
-  const signedIn = (req, session, alert, trust = true) => {
+  // signedIn records a session GoTrue handed this client (security.mjs). A
+  // session only a redirect showed (an email link scanner may follow it)
+  // neither alerts nor trusts its network, and a refreshed one trusts only
+  // a network its account was already seen on (record's trust).
+  const signedIn = (req, session, { alert = true, trust = true } = {}) => {
     if (signIns && session) signIns.record({ ...session, address: clientAddress(req), userAgent: req.headers['user-agent'], alert, trust }).catch(logFailure('sign_in_record_failed'))
   }
   return http.createServer((req, res) => {
@@ -250,7 +251,7 @@ export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bo
     if (send || sms) return readBody(req, res, bodyBytes, body => forwardSend({ req, res, path, upstreamPort, body, oauth, signedIn, send, sends, smsCountries: sms ? smsCountries : null, bearer }))
     // Other answers that hand out a session are read to record it.
     const issuing = signIns ? tokenRoute(req.method, path) : null
-    const observe = issuing === null ? null : async (status, answer) => { if (status === 200) signedIn(req, sessionFromAnswer(answer), issuing !== 'refresh_token') }
+    const observe = issuing === null ? null : async (status, answer) => { if (status === 200) signedIn(req, sessionFromAnswer(answer), { trust: issuing === 'refresh_token' ? 'known' : true }) }
     proxy(req, res, path, upstreamPort, bodyBytes, { oauth, observe, signedIn })
   })
 }
@@ -299,10 +300,12 @@ async function registerClient(req, res, path, upstreamPort, bodyBytes, oauth, at
 // budgets, refuses it when that overspends one, and otherwise forwards it
 // and settles the count from GoTrue's answer before relaying it. Past the
 // account-wide password budget a sign-in still goes ahead from a network
-// the account signed in from recently (security.mjs), or when the app
-// checks a CAPTCHA, which GoTrue then verifies on every password sign-in:
-// guessing from many addresses can slow an account but not lock its owner
-// out. A refused attempt gives back what it counted, and a success clears
+// the account signed in from recently (security.mjs), or, up to
+// limits.trustedBudgetMultiplier times the budget, when the app checks a
+// CAPTCHA, which GoTrue then verifies on every password sign-in: guessing
+// from many addresses can slow an account but not lock its owner out on
+// their own network. A refused attempt, or one GoTrue never answered, gives
+// back what it counted, and a success clears
 // the address's budget but not the account's, so the owner signing in does
 // not hand a guesser a fresh budget.
 async function guardAttempt({ req, res, path, upstreamPort, body, oauth, attempts, kind, bearer, signIns, signedIn, captcha }) {
@@ -313,20 +316,25 @@ async function guardAttempt({ req, res, path, upstreamPort, body, oauth, attempt
   } else {
     entries = secondStepEntries(bearer)
   }
+  const counted = []
+  const giveBack = () => counted.length ? attempts.release(counted).catch(logFailure('attempt_budget_failed')) : undefined
   try {
-    const counted = []
     for (const entry of entries) {
-      const wait = await attempts.reserve([entry])
+      const { count, wait } = await attempts.take(entry)
       counted.push(entry)
       if (wait === 0) continue
-      if (entry.budget === budgets.passwordAccount && (captcha || await signIns?.trusted(subject, clientAddress(req)))) continue
-      await attempts.release(counted)
+      if (entry.budget === budgets.passwordAccount) {
+        if (captcha && count <= entry.budget.limit * limits.trustedBudgetMultiplier) continue
+        if (await signIns?.trusted(subject, clientAddress(req))) continue
+      }
+      await giveBack()
       if (res.headersSent) return res.destroy()
       res.writeHead(429, { 'Content-Type': 'application/problem+json', 'Cache-Control': 'no-store', 'Retry-After': String(wait) })
       return res.end(JSON.stringify({ status: 429, code: 'too_many_attempts', error_code: 'too_many_attempts', retry_after: wait }))
     }
   } catch (err) {
     logFailure('attempt_budget_failed')(err)
+    await giveBack()
     return problem(res, 503, 'auth_unavailable')
   }
   const headers = forwardHeaders(req.headers)
@@ -339,9 +347,9 @@ async function guardAttempt({ req, res, path, upstreamPort, body, oauth, attempt
     } catch (err) {
       logFailure('attempt_budget_failed')(err)
     }
-    if (status === 200) signedIn(req, sessionFromAnswer(answer), true)
+    if (status === 200) signedIn(req, sessionFromAnswer(answer))
   }
-  upstreamRequest(req, res, path, upstreamPort, { ...headers, 'content-length': String(body.length) }, { oauth, observe, signedIn }).end(body)
+  upstreamRequest(req, res, path, upstreamPort, { ...headers, 'content-length': String(body.length) }, { oauth, observe, signedIn, onError: giveBack }).end(body)
 }
 
 // forwardSend checks a request that may send a message: a texted number
@@ -373,10 +381,13 @@ async function forwardSend({ req, res, path, upstreamPort, body, oauth, signedIn
   }
   const headers = forwardHeaders(req.headers)
   delete headers['content-length']
-  const observe = taken.length ? async status => {
-    if (status >= 400) await sends.release(taken).catch(logFailure('message_budget_failed'))
-  } : null
-  upstreamRequest(req, res, path, upstreamPort, { ...headers, 'content-length': String(body.length) }, { oauth, observe, signedIn }).end(body)
+  const giveBack = () => taken.length ? sends.release(taken).catch(logFailure('message_budget_failed')) : undefined
+  // A sign-up that signs the person in at once hands over a session.
+  const observe = async (status, answer) => {
+    if (status >= 400) await giveBack()
+    if (status === 200) signedIn(req, sessionFromAnswer(answer))
+  }
+  upstreamRequest(req, res, path, upstreamPort, { ...headers, 'content-length': String(body.length) }, { oauth, observe, signedIn, onError: giveBack }).end(body)
 }
 
 // upstreamRequest opens the request to GoTrue and relays its answer, with
@@ -384,10 +395,10 @@ async function forwardSend({ req, res, path, upstreamPort, body, oauth, signedIn
 // observe, the answer is read whole and shown to it before it is relayed. A
 // redirect that hands the browser a session in its fragment is recorded
 // with signedIn.
-function upstreamRequest(req, res, path, upstreamPort, headers, { oauth = null, observe = null, signedIn = null } = {}) {
+function upstreamRequest(req, res, path, upstreamPort, headers, { oauth = null, observe = null, signedIn = null, onError = null } = {}) {
   const upstream = http.request({ host: gotrue.host, port: upstreamPort, method: req.method, path, headers }, response => {
     const responseHeaders = forwardHeaders(response.headers)
-    if (signedIn && typeof responseHeaders.location === 'string' && responseHeaders.location.includes('access_token=')) signedIn(req, sessionFromLocation(responseHeaders.location), true, false)
+    if (signedIn && typeof responseHeaders.location === 'string' && responseHeaders.location.includes('access_token=')) signedIn(req, sessionFromLocation(responseHeaders.location), { alert: false, trust: false })
     if (oauth && responseHeaders.location) responseHeaders.location = oauth.location(responseHeaders.location)
     if (observe) return observed(response, res, responseHeaders, observe)
     const details = oauth && req.method === 'GET' && response.statusCode === 200 ? authorizationDetails.exec(path.split('?')[0]) : null
@@ -396,7 +407,7 @@ function upstreamRequest(req, res, path, upstreamPort, headers, { oauth = null, 
     res.writeHead(response.statusCode, responseHeaders)
     response.pipe(res)
   })
-  upstream.on('error', () => problem(res, 502, 'auth_unavailable'))
+  upstream.on('error', () => { onError?.(); problem(res, 502, 'auth_unavailable') })
   return upstream
 }
 

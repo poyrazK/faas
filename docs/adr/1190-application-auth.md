@@ -141,8 +141,14 @@ token grant there (a session redirect alone, which a mail scanner may
 follow, records it untrusted), and never while more than
 `AuthTrustedNetworkMaxAccounts` accounts signed in from it in that window
 (an SSR app's server); the row keeps the network's own digest for that
-count. Without CAPTCHA, an owner on an unused network still waits out the
-window. A sign-in from both a network and a
+count. A refresh trusts only a network already recorded for the account
+(a stolen refresh token gains nothing) but may alert; a redirect-only
+sign-in neither alerts nor counts as seen; impersonated tokens (`act`) are
+not recorded; one alert per device kind and day is claimed in
+`attempt_budgets`. The CAPTCHA exception, and a trusted network's pass of
+a spent recipient budget, stop at `AuthTrustedBudgetMultiplier` times the
+budget. Budgets are given back when GoTrue never answers. Without CAPTCHA,
+an owner on an unused network still waits out the window. A sign-in from both a network and a
 device kind unseen for `AuthNewDeviceDays`, by a user with other records,
 sends the `new_device` email when a provider is set and
 `AUTH_NEW_DEVICE_ALERTS` is not `0` (refreshes never alert; one email per

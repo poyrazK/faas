@@ -41,25 +41,33 @@ export function deviceLabel(userAgent) {
   return raw === '' ? 'an unknown device' : raw.slice(0, 80)
 }
 
+// tokenPayload reads a token GoTrue issued on loopback, without verifying
+// it again.
+function tokenPayload(token) {
+  try { return JSON.parse(Buffer.from(String(token).split('.')[1], 'base64url').toString('utf8')) } catch { return null }
+}
+
+// A session support staff opened as a user (impersonation.mjs) is not the
+// person signing in: it is never recorded.
+const impersonated = payload => typeof payload?.act?.sub === 'string' && payload.act.sub.startsWith('admin:')
+
 // sessionFromAnswer reads who signed in from GoTrue's token answer.
 export function sessionFromAnswer(answer) {
   const user = answer?.user
   if (typeof answer?.access_token !== 'string' || typeof user?.id !== 'string' || !uuid.test(user.id)) return null
+  if (impersonated(tokenPayload(answer.access_token))) return null
   return { userId: user.id.toLowerCase(), email: typeof user.email === 'string' && user.email !== '' ? user.email : null }
 }
 
 // sessionFromLocation reads who signed in from a redirect that hands the
 // browser its tokens in the fragment (implicit flow, after an email link or
-// a provider): GoTrue issued the token on loopback, so its payload is read
-// without being verified again.
+// a provider).
 export function sessionFromLocation(location) {
   const hash = String(location ?? '').split('#')[1]
   if (!hash) return null
   const token = new URLSearchParams(hash).get('access_token')
-  if (!token) return null
-  let payload
-  try { payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8')) } catch { return null }
-  if (typeof payload?.sub !== 'string' || !uuid.test(payload.sub)) return null
+  const payload = token ? tokenPayload(token) : null
+  if (typeof payload?.sub !== 'string' || !uuid.test(payload.sub) || impersonated(payload)) return null
   return { userId: payload.sub.toLowerCase(), email: typeof payload.email === 'string' && payload.email !== '' ? payload.email : null }
 }
 
@@ -95,30 +103,44 @@ export function createSignInSecurity({ pool, mailer = null, alerts = true, app, 
     },
     // record notes a sign-in, refreshing each record at most once per
     // limits.signInSeenRefreshSeconds, and sends the new-device alert when
-    // alert is set (not for a refreshed session). trust is false for a
-    // sign-in only a redirect showed.
+    // alert is set. trust says whether the sign-in shows the person on this
+    // network: true for a token grant, false for a session only a redirect
+    // showed (a mail scanner may follow one), 'known' for a refreshed session
+    // (a stolen refresh token must not make its network trusted), which
+    // trusts only a network the account was already seen on. Only trusted
+    // records count as seen when deciding to alert.
     async record({ userId, email, address, userAgent, alert = true, trust = true }) {
       const network = networkKey(userId, address), device = deviceKey(userId, userAgent)
       const { rows: [seen] } = await pool.query(`SELECT
-          coalesce(bool_or(last_seen > now() - make_interval(days => $4)), false) AS known,
-          coalesce(bool_or(key = $2 AND last_seen > now() - make_interval(days => $4)), false) AS network_seen,
-          coalesce(bool_or(key = $3 AND last_seen > now() - make_interval(days => $4)), false) AS device_seen,
-          coalesce(bool_or(key = $2 AND last_seen > now() - make_interval(secs => $5) AND (trusted OR NOT $6)), false)
+          coalesce(bool_or(trusted AND last_seen > now() - make_interval(days => $4)), false) AS known,
+          coalesce(bool_or(key = $2 AND trusted AND last_seen > now() - make_interval(days => $4)), false) AS network_seen,
+          coalesce(bool_or(key = $3 AND trusted AND last_seen > now() - make_interval(days => $4)), false) AS device_seen,
+          coalesce(bool_or(key = $2 AND last_seen > now() - make_interval(days => $4)), false) AS network_recorded,
+          coalesce(bool_or(key = $2 AND trusted AND last_seen > now() - make_interval(secs => $5)), false)
+            AND coalesce(bool_or(key = $3 AND trusted AND last_seen > now() - make_interval(secs => $5)), false) AS fresh_trusted,
+          coalesce(bool_or(key = $2 AND last_seen > now() - make_interval(secs => $5)), false)
             AND coalesce(bool_or(key = $3 AND last_seen > now() - make_interval(secs => $5)), false) AS fresh
-        FROM gregale_auth.sign_in_seen WHERE user_id = $1`, [userId, network, device, limits.newDeviceDays, limits.signInSeenRefreshSeconds, trust])
-      if (!seen.fresh) {
+        FROM gregale_auth.sign_in_seen WHERE user_id = $1`, [userId, network, device, limits.newDeviceDays, limits.signInSeenRefreshSeconds])
+      const trusted = trust === true || (trust === 'known' && seen.network_recorded)
+      if (!(trusted ? seen.fresh_trusted : seen.fresh)) {
         // A record is refreshed hourly, or at once when a trusted sign-in
-        // follows one only a redirect showed; trust is never taken back.
-        await pool.query(`INSERT INTO gregale_auth.sign_in_seen AS s (key, user_id, network, trusted) VALUES ($1, $3, $5, $6), ($2, $3, NULL, false)
+        // follows untrusted ones; trust is never taken back.
+        await pool.query(`INSERT INTO gregale_auth.sign_in_seen AS s (key, user_id, network, trusted) VALUES ($1, $3, $5, $6), ($2, $3, NULL, $6)
           ON CONFLICT (key) DO UPDATE SET last_seen = now(), trusted = s.trusted OR EXCLUDED.trusted
-          WHERE s.last_seen < now() - make_interval(secs => $4) OR (EXCLUDED.trusted AND NOT s.trusted)`, [network, device, userId, limits.signInSeenRefreshSeconds, networkOnly(address), trust])
+          WHERE s.last_seen < now() - make_interval(secs => $4) OR (EXCLUDED.trusted AND NOT s.trusted)`, [network, device, userId, limits.signInSeenRefreshSeconds, networkOnly(address), trusted])
       }
       if (!alert || !alerts || !mailer || !email || !seen.known || seen.network_seen || seen.device_seen) return false
       const at = now()
+      // One alert per device kind and day, however many sign-ins race: the
+      // first to claim the day's marker sends it (an attempt_budgets row,
+      // pruned with them), whatever the email provider deduplicates.
+      const marker = budgetKey('new-device-alert', userId, deviceKind(userAgent), at.toISOString().slice(0, 10))
+      const { rowCount } = await pool.query(`INSERT INTO gregale_auth.attempt_budgets (key, failures, window_ends_at)
+        VALUES ($1, 1, now() + interval '1 day') ON CONFLICT (key) DO NOTHING`, [marker])
+      if (rowCount === 0) return false
       const message = renderEmail(email, templateFor(await templates(), 'new_device'), {
         app, email, device: deviceLabel(userAgent), network: addressBucket(address), time: `${at.toISOString().slice(0, 16).replace('T', ' ')} UTC`,
       })
-      // One alert per device kind and day, however many sign-ins race.
       await mailer.send(message, `new-device-${userId}-${device.toString('hex').slice(0, 16)}-${at.toISOString().slice(0, 10)}`)
       log(JSON.stringify({ level: 'info', event: 'new_device_alert_sent', user_id: userId }))
       return true

@@ -18476,6 +18476,11 @@ const (
 	// signed in from in AuthTrustedNetworkDays (an app's own server, a shared
 	// egress) is trusted for none of them.
 	AuthTrustedNetworkMaxAccounts = 20
+	// AuthTrustedBudgetMultiplier caps the exceptions to a spent budget: a
+	// solved CAPTCHA passes a spent account-wide password budget, and a
+	// trusted network a spent message budget for one recipient, only up to
+	// this many times the budget.
+	AuthTrustedBudgetMultiplier = 4
 	// AuthNewDeviceDays is how long an Auth app remembers the networks and
 	// device kinds a user signed in from; a sign-in from both a network and a
 	// device kind unseen that long emails the user (new-device alerts).

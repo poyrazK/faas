@@ -11,8 +11,10 @@ import { normalizePhone } from './sms.mjs'
 // phone second-factor challenge) and, when the owner sets it, per network
 // (an IPv4 address or IPv6 /64), in limits.messageWindowSeconds. A spent
 // recipient budget still lets through a request from a network the account
-// signed in from recently (security.mjs), so a stranger asking for the
-// person's links from elsewhere cannot keep them from signing in. A
+// signed in from recently (security.mjs), up to limits.trustedBudgetMultiplier
+// times the budget, so a stranger asking for the person's links from
+// elsewhere cannot keep them from signing in, nor can that network send
+// without end. A
 // request is counted before GoTrue
 // sees it, so a parallel burst cannot all pass, and given back when GoTrue
 // refuses it (an error status): then nothing was sent, and a token whose
@@ -87,13 +89,21 @@ export function createSends({ attempts, pool, budgets, trusted = null }) {
       const entries = [...(budgets.network ? [{ name: 'network', key: budgetKey('message-network', addressBucket(address)), budget: budgets.network }] : []),
         ...recipients.map(recipient => ({ name: 'recipient', recipient, key: budgetKey('message-recipient', recipient), budget: budgets.recipient }))]
       const taken = []
-      for (const entry of entries) {
-        const { count, wait } = await attempts.take(entry)
-        taken.push(entry)
-        if (wait > 0 && !(entry.recipient && trusted && await trusted(entry.recipient, address))) {
-          await attempts.release(taken)
-          return { refused: { name: entry.name, budget: entry.budget, count: count - 1, wait } }
+      try {
+        for (const entry of entries) {
+          const { count, wait } = await attempts.take(entry)
+          taken.push(entry)
+          // A trusted network passes a spent recipient budget, up to a
+          // ceiling, so it cannot be used to send without end.
+          const passes = entry.recipient && trusted && count <= entry.budget.limit * limits.trustedBudgetMultiplier && await trusted(entry.recipient, address)
+          if (wait > 0 && !passes) {
+            await attempts.release(taken)
+            return { refused: { name: entry.name, budget: entry.budget, count: count - 1, wait } }
+          }
         }
+      } catch (err) {
+        if (taken.length) await attempts.release(taken).catch(() => {})
+        throw err
       }
       return { taken }
     },

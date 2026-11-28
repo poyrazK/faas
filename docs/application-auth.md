@@ -505,12 +505,15 @@ owner out on a network they use: past that budget, a password sign-in
 still goes ahead from a network (an IPv4 address or IPv6 /64) the account
 signed in from in the last 30 days, or, when the app uses
 [CAPTCHA](#captcha), from anywhere with a solved CAPTCHA, which GoTrue
-checks on every password sign-in. Without CAPTCHA, the owner on a network
+checks on every password sign-in, up to four times the budget (200 in 15
+minutes). Without CAPTCHA, the owner on a network
 they have not used (travelling, a new provider) waits for the window to
 end like everyone else, so turn CAPTCHA on if that matters; magic links,
 codes, providers and passkeys keep working meanwhile. A network counts as
 trusted only once a client used a session there (a sign-in only an email
-link's redirect showed is not enough, since link scanners follow those),
+link's redirect showed is not enough, since link scanners follow those,
+and refreshing a session trusts only a network the account was already
+seen on, so a stolen refresh token does not make its network trusted),
 and never when more than 20 accounts signed in from it in those 30 days,
 such as your own server signing users in. Signing in clears the address's
 count but not the account's, so it does not hand the guesser a fresh
@@ -538,9 +541,10 @@ gregale auth config shop-auth --messages-per-recipient 3 --messages-per-network 
 A spent budget answers `429` with `code` `too_many_messages`, `scope`
 (`recipient` or `network`), the limit, the count, `Retry-After` and this
 page's address, before GoTrue sends anything. A request GoTrue refuses is
-not counted. So that a stranger asking for someone's links cannot keep them
-from signing in, a request from a network that account trusts (see above)
-passes a spent recipient budget. The network budget is off by default
+not counted, nor is one GoTrue never answered. So that a stranger asking
+for someone's links cannot keep them from signing in, a request from a
+network that account trusts (see above) passes a spent recipient budget,
+up to four times the budget. The network budget is off by default
 because an app that sends sign-in emails from its own server asks from one
 network for all its users; turn it on only if your users call the Auth app
 from their own browsers or apps.
@@ -551,7 +555,11 @@ When the app has an [email provider](#email), a sign-in from both a network
 and a device the account has not used in 90 days emails the person, naming
 the browser and system, the network and the time, so they can reset their
 password if it was not them. A first sign-in, or the first after 90 days
-away, sends nothing. Refreshing a session never alerts. The device is what
+away, sends nothing, and so does a sign-in only an email link's redirect
+showed (link scanners follow those); a refreshed session from a new network
+and device alerts, since a stolen refresh token looks like that. At most
+one alert goes out per device and day. Sessions support staff open as a
+user are never recorded. The device is what
 the client says it is, so someone who copies the person's browser and
 system from a new network gets no alert; the alert is a signal, not a
 guarantee. Without an email provider, `gregale auth config` shows alerts as
