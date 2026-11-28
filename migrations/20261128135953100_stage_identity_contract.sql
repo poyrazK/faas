@@ -1,4 +1,4 @@
--- filename: 20261128105922100_stage_identity_contract.sql
+-- filename: 20261128135953100_stage_identity_contract.sql
 -- migration-compat: contract
 -- ADR-20261104120000 amendment 2026-11-22, release step 3: API consumers,
 -- their keys and alert rules are unique per app and environment

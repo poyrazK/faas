@@ -504,10 +504,8 @@
         "/v1/apps/{}/tasks"
       ],
       "cli": [
-        "app cp",
         "app exec",
-        "app port-forward",
-        "postgres connect"
+        "app tasks"
       ]
     },
     {
@@ -2951,6 +2949,31 @@
       ]
     },
     {
+      "id": "interactive-app-sessions",
+      "name": "Interactive app sessions",
+      "category": "runtime",
+      "description": "Attach a terminal, copy files or forward a port into a fresh VM of an app's deployment.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/apps",
+      "acceptance_test": "pkg/apid/apidserver/capabilities_installation_gates_test.go::TestInteractiveAppSessionsCapabilityFollowsItsGate",
+      "parent": "app-tasks",
+      "inherits_flag": true,
+      "routes": [
+        "/v1/apps/{}/tasks/{}/attach"
+      ],
+      "cli": [
+        "app cp",
+        "app port-forward",
+        "postgres connect"
+      ]
+    },
+    {
       "id": "internal-services",
       "name": "Internal services",
       "category": "runtime",
@@ -3435,6 +3458,7 @@
         "/dashboard/mcp",
         "/v1/apps/{}/deployments/{}/instances/{}/mcp-health",
         "/v1/apps/{}/deployments/{}/instances/{}/mcp-probe",
+        "/v1/apps/{}/mcp-contract",
         "/v1/apps/{}/mcp-listing",
         "/v1/deployments/{}/mcp-admissions",
         "/v1/mcp",

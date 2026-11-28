@@ -49,6 +49,9 @@ func TestOpenVerificationSecrets(t *testing.T) {
 		"dep-old":  {AppID: "app-a", NodeName: "other-node", ExpiresAt: f.now, Status: "snapshotting", Scope: "production", Contract: []byte(leaseContract)},
 		"dep-live": {AppID: "app-a", NodeName: "other-node", ExpiresAt: until, Status: "live", Scope: "production", Contract: []byte(leaseContract)},
 		"dep-none": {AppID: "app-a", NodeName: "other-node", ExpiresAt: until, Status: "snapshotting", Scope: "production"},
+		// ADR-20261127191645: the MCP listing's probe secret opens without a
+		// verification contract; other keys still need one.
+		"dep-probe": {AppID: "app-a", NodeName: "other-node", ExpiresAt: until, Status: "snapshotting", Scope: "production", ProbeSecret: "API_TOKEN"},
 	}}
 	server := secretd.NewServer(store, []*age.X25519Identity{f.id}, 0, slog.New(slog.NewTextHandler(io.Discard, nil))).
 		WithPeerNode(func(context.Context) (string, error) { return f.caller, nil }).
@@ -73,6 +76,9 @@ func TestOpenVerificationSecrets(t *testing.T) {
 	if resp, code := open("app-a", "dep-prev", "API_TOKEN"); code != codes.OK || resp.GetValues()["API_TOKEN"] != "tok-preview" {
 		t.Fatalf("preview scope = %v, %v", resp.GetValues(), code)
 	}
+	if resp, code := open("app-a", "dep-probe", "API_TOKEN"); code != codes.OK || resp.GetValues()["API_TOKEN"] != "tok-prod" {
+		t.Fatalf("MCP probe secret = %v, %v", resp.GetValues(), code)
+	}
 
 	for _, tc := range []struct {
 		name, caller, app, dep string
@@ -88,6 +94,7 @@ func TestOpenVerificationSecrets(t *testing.T) {
 		{"expired lease", "other-node", "app-a", "dep-old", []string{"API_TOKEN"}, codes.PermissionDenied},
 		{"live deployment", "other-node", "app-a", "dep-live", []string{"API_TOKEN"}, codes.PermissionDenied},
 		{"no contract", "other-node", "app-a", "dep-none", []string{"API_TOKEN"}, codes.PermissionDenied},
+		{"key beside the probe secret", "other-node", "app-a", "dep-probe", []string{"API_TOKEN", "DB_URL"}, codes.PermissionDenied},
 		{"unknown node", "stranger", "app-a", "dep-1", []string{"API_TOKEN"}, codes.PermissionDenied},
 	} {
 		f.caller = tc.caller

@@ -670,6 +670,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/github/activity/retry":             true, // GitHub activity recovery form; session-cookie + CSRF-only
 	"POST /dashboard/apps/{slug}/preview/{previewSlug}/destroy":     true, // ADR-20261026090000 previews-page Tear down form; session-cookie + CSRF adapter for POST /v1/preview/{slug}/destroy
 	"GET /dashboard/apps/{slug}/data-api":                           true, // ADR-968 session-auth owner HTML workspace
+	"GET /dashboard/apps/{slug}/tasks":                              true, // ADR-230 session-auth read-only task history HTML
 	"GET /dashboard/data":                                           true, // ADR-1591 session-auth connection onboarding HTML
 	"POST /dashboard/data":                                          true, // ADR-1591 account-bound CSRF form adapter
 	"GET /dashboard/apps/{slug}/auth":                               true, // ADR-1190 session-auth owner page; the browser calls the Auth app
@@ -2285,6 +2286,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "consumer_signup.go"),  // ADR-20261021143000 consumer self-service sign-up
 		filepath.Join(root, "pkg", "api", "mcp_seller_stats.go"), // ADR-20261126082046 seller stats
 		filepath.Join(root, "pkg", "api", "mcp_listing.go"),      // ADR-20261126175800 server listing
+		filepath.Join(root, "pkg", "api", "mcp_contract.go"),     // ADR-20261127191645 tool contract gate
 		filepath.Join(root, "pkg", "api", "consumer_credit_packs.go"),
 		filepath.Join(root, "pkg", "api", "consumer_credits.go"),      // ADR-1306 prepaid credit and spend caps
 		filepath.Join(root, "pkg", "api", "platform_tenant_plans.go"), // ADR-1307 tenant plans

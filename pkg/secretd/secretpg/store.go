@@ -488,6 +488,8 @@ func (s *Store) VerificationLease(ctx context.Context, deploymentID string) (sec
 		Status:    row.Status,
 		Scope:     row.Scope,
 		Contract:  row.Contract,
+
+		ProbeSecret: row.ProbeSecret,
 	}, nil
 }
 

@@ -550,7 +550,7 @@ and what a clone does with rules that point at production's own objects.
 
 ### Decision
 
-- **Contract.** `20261128105922100_stage_identity_contract` drops
+- **Contract.** `20261128135953100_stage_identity_contract` drops
   `api_consumers_app_external_ref_uniq`, `consumer_keys_app_prefix_idx`,
   `consumer_keys_unique_name` and `alert_rules_app_name_uniq`
   concurrently. Every writer since rc.385 targets the per-environment
@@ -594,7 +594,7 @@ and what a clone does with rules that point at production's own objects.
   stage that reuses a production workflow name. A save conflicts on
   `(app_id, name, environment)`, a delete matches the environment, and a
   revision is written with its environment;
-  `20261128105922300_stored_workflow_revision_environment` keeps that
+  `20261128135953300_stored_workflow_revision_environment` keeps that
   value and fills it only for an N-1 writer that leaves it out, preferring
   production's workflow of the name. A stage's runs no longer count
   toward production's failure policy of the same name. Readers stay

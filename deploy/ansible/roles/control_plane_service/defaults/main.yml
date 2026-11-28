@@ -64,6 +64,14 @@ faas_release_commands: false
 # decides which accounts see it.
 faas_app_task_api: false
 
+# Interactive app-task sessions (ADR-1037: `app exec -it`, `app cp`,
+# `app port-forward`, `postgres connect`). On (with faas_app_task_api) renders
+# FAAS_INTERACTIVE_APP_TASKS=1 in the same apid drop-in; off writes nothing, so
+# apid's default (off) or a host's own drop-in decides. Qualify the
+# attach path (gatewayd-public -> gatewayd-internal -> vmmd AttachAppTask ->
+# guest-init) on a test node before turning it on.
+faas_interactive_app_tasks: false
+
 # Bill the response bytes gatewayd-internal forwards from an instance as app
 # egress (ADR-20261121210517). For compute nodes on the namespace-local
 # bridge, whose public responses never cross the instance veth.

@@ -470,6 +470,10 @@ adr-number-uniqueness-check-test: ## Exercise the ADR-number gate against synthe
 cloudflare-ranges-check: ## Compare the pinned Cloudflare ranges with Cloudflare's published lists (network; ADR-20261102081618)
 	bash scripts/ci/check_cloudflare_ranges.sh "$(CURDIR)"
 
+.PHONY: ai-prices-check
+ai-prices-check: ## Compare the AI gateway price catalog with LiteLLM's newest prices (network; ADR-994)
+	bash scripts/ci/check_ai_price_catalog.sh "$(CURDIR)"
+
 .PHONY: cloudflare-ranges-check-test
 cloudflare-ranges-check-test: ## Exercise the Cloudflare range check offline
 	bash scripts/ci/check_cloudflare_ranges_test.sh

@@ -74,14 +74,17 @@ func cmdMCP(args []string) int {
 		return cmdMCPAccess(args[1:])
 	case "policy":
 		return cmdMCPPolicy(args[1:])
-	case "stats", "listing":
+	case "stats", "listing", "contract":
 		// API monetization surfaces: shown to the accounts it is released to.
 		if hiddenMonetizationVerb("mcp", args[0]) {
 			printCommandValidation(os.Stderr, "unknown mcp subcommand %q\n", args[0])
 			return unknownSubcommandChoices(os.Stderr, "mcp", nestedCliCommand("mcp"), args[0])
 		}
-		if args[0] == "stats" {
+		switch args[0] {
+		case "stats":
 			return cmdMCPStats(args[1:])
+		case "contract":
+			return cmdMCPContract(args[1:])
 		}
 		return cmdMCPListing(args[1:])
 	case "auth", "replay", "insights", "keys":
@@ -935,12 +938,17 @@ type mcpDeployOptions struct {
 	validateEndpoint                           string
 	accessAudit, accessAuditAlgorithms         string
 	mcpTaskMigrationOverride                   bool
-	timeout                                    int
-	expectedServing                            *string
-	expectedAppID                              string
-	requireCatalogPin                          bool
-	requireReviewedTools                       bool
-	replay                                     bool
+	allowBreaking                              bool
+	breakingReason                             string
+	// onCandidateQueued sees every candidate deployment this command queues
+	// (the discovery one and the catalog-pinned one).
+	onCandidateQueued    func(api.DeploymentResponse)
+	timeout              int
+	expectedServing      *string
+	expectedAppID        string
+	requireCatalogPin    bool
+	requireReviewedTools bool
+	replay               bool
 }
 
 func cmdMCPDeploy(args []string) int {
@@ -959,6 +967,8 @@ func cmdMCPDeploy(args []string) int {
 	fs.StringVar(&o.accessAudit, "access-audit", "", "optional stored-policy promotion gate: gateway or guest-only")
 	fs.StringVar(&o.accessAuditAlgorithms, "access-audit-algorithms", "", "reviewed gateway algorithms (default RS256,ES256; requires --access-audit)")
 	fs.BoolVar(&o.mcpTaskMigrationOverride, "mcp-task-migration-override", false, "allow this deployment to replace incompatible MCP task workers once")
+	fs.BoolVar(&o.allowBreaking, "allow-breaking", false, "let this deploy break the listing's tool contract; records an audited override (needs --reason)")
+	fs.StringVar(&o.breakingReason, "reason", "", "why paying customers' tools may break (with --allow-breaking)")
 	fs.IntVar(&o.timeout, "timeout", 1200, "deployment and verification wait timeout in seconds")
 	// A failed submission's recovery hint tells the user to retry with this
 	// flag; without it the documented retry was an unknown-flag error
@@ -974,6 +984,9 @@ func cmdMCPDeploy(args []string) int {
 	}
 	if fs.NArg() != 0 || o.slug == "" || o.timeout <= 0 || o.timeout > int((24*time.Hour)/time.Second) {
 		return printErr("Invalid MCP deploy", errors.New("--name and a --timeout from 1s to 24h are required"))
+	}
+	if o.allowBreaking != (strings.TrimSpace(o.breakingReason) != "") {
+		return printErr("Invalid MCP deploy", errors.New("--allow-breaking and --reason go together: say why paying customers' tools may break"))
 	}
 	return runMCPDeploy(o)
 }
@@ -1055,13 +1068,23 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	if err := requireMCPGatewayPolicy(ctx, c, o.slug, cfg); err != nil {
 		return printErr("MCP gateway policy", err)
 	}
+	if o.allowBreaking {
+		if o.onCandidateQueued, err = mcpDeployAllowBreaking(ctx, c, o.slug, o.breakingReason); err != nil {
+			return printErr("MCP tool contract override", err)
+		}
+	}
 	if !jsonOutput {
 		PrintProgress(osStdout, "Deploying stateless MCP (%s client access)", cfg.Auth.Mode)
 	}
 	deployArgs := mcpDeployArgs(o, dir, true)
 	// Preserve the existing ingress gate until the new app passes readiness.
 	var candidate api.DeploymentResponse
-	code := quietMCPDeploy(ctx, deployArgs, deployExecution{onQueued: func(dep api.DeploymentResponse) { candidate = dep }})
+	code := quietMCPDeploy(ctx, deployArgs, deployExecution{onQueued: func(dep api.DeploymentResponse) {
+		candidate = dep
+		if o.onCandidateQueued != nil {
+			o.onCandidateQueued(dep)
+		}
+	}})
 	if code != 0 {
 		return code
 	}
@@ -1135,7 +1158,12 @@ func pinMCPCandidateRevision(ctx context.Context, c *Client, o mcpDeployOptions,
 	return pinMCPCandidateRevisionWithSubmit(ctx, c, o, dir, cfg, candidate, func(args []string, env map[string]string) (api.DeploymentResponse, error) {
 		var pinned api.DeploymentResponse
 		code := quietMCPDeploy(ctx, args, deployExecution{
-			onQueued: func(dep api.DeploymentResponse) { pinned = dep }, overrideEnv: env,
+			onQueued: func(dep api.DeploymentResponse) {
+				pinned = dep
+				if o.onCandidateQueued != nil {
+					o.onCandidateQueued(dep)
+				}
+			}, overrideEnv: env,
 		})
 		if code != 0 {
 			return pinned, fmt.Errorf("catalog-pinned candidate deployment failed with exit code %d", code)

@@ -68,7 +68,7 @@
       "description": "Calls refused before reaching the provider: token and cost hard caps, per-minute limits, per-app guardrails, end-user limits (ADR-994), tag cost limits (ADR-1436) and unmetered writes (ADR-1432). ADR-990, ADR-991.",
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
-        {"expr": "sum by (reason) (rate(outbound_rejections_total{reason=~\"daily_token_limit|daily_cost_limit|monthly_cost_limit|requests_per_minute_limit|tokens_per_minute_limit|user_daily_token_limit|user_daily_cost_limit|user_tracking_full|tag_daily_cost_limit|outbound_ai_.*\"}[5m]))", "legendFormat": "{{reason}}", "refId": "A"}
+        {"expr": "sum by (reason) (rate(outbound_rejections_total{reason=~\"daily_token_limit|daily_cost_limit|monthly_cost_limit|requests_per_minute_limit|tokens_per_minute_limit|user_daily_token_limit|user_daily_cost_limit|daily_token_limit_reservation|daily_cost_limit_reservation|monthly_cost_limit_reservation|user_daily_token_limit_reservation|user_daily_cost_limit_reservation|user_tracking_full|tag_daily_cost_limit|outbound_ai_.*\"}[5m]))", "legendFormat": "{{reason}}", "refId": "A"}
       ],
       "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
       "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
