@@ -30,5 +30,13 @@ export type MCPListingResponse = {
    * The registry server.json, when registry_name is set.
    */
   server_json_url?: string;
+  /**
+   * The published tool contract's digest; absent when the listing is not gated.
+   */
+  contract_sha256?: string;
+  /**
+   * The app secret the gate sends as a bearer token.
+   */
+  probe_secret?: string;
 };
 
