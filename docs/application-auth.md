@@ -245,6 +245,7 @@ gregale auth config shop-auth --email-provider resend --email-from 'Shop <auth@s
 | `--brand-name`, `--brand-color`, `--brand-logo-url` | The hosted pages' name, accent colour and logo (see Hosted pages); `none` removes one. |
 | `--captcha turnstile\|hcaptcha\|off`, `--captcha-site-key`, `--captcha-secret-stdin` | A CAPTCHA on sign-up, sign-in and password reset (see CAPTCHA). |
 | `--activity-retention DAYS\|forever` | How long sign-in activity is kept (see Manage users). |
+| `--security-log-days N\|default` | How long security events are kept, 30 days by default (see Security events). |
 | `--sms PROVIDER\|off`, `--sms-account`, `--sms-sender`, `--sms-secret-stdin` | Phone sign-in by text message (see Phone sign-in). |
 | `--sms-countries CODES\|all` | The countries phone sign-in may text (see Phone sign-in). |
 | `--sso on\|off` | Organization single sign-on with SAML (see Organization single sign-on). |
@@ -586,6 +587,55 @@ gregale auth config shop-auth --new-device-alerts off
 The Auth app remembers networks and devices as digests per user (a device
 is its browser's user agent without version numbers), never as addresses,
 and forgets them after 90 days.
+
+### Security events
+
+GoTrue's activity log shows sign-ins, but not what the protections above
+did. The Auth app records that itself, so you can tell someone guessing
+passwords from a user who forgot theirs:
+
+| Event | When |
+| --- | --- |
+| `password_failed` | A wrong password |
+| `code_failed` | A wrong second-step code (authenticator, SMS or recovery code) |
+| `held` | An attempt refused because a budget is spent (`429 too_many_attempts`) |
+| `captcha_pass` | A sign-in past a spent account budget because the app checks a CAPTCHA |
+| `trusted_pass` | A sign-in, or a message, past a spent budget from a network the account trusts |
+| `message_limited` | A message refused because a budget is spent (`429 too_many_messages`) |
+| `new_device_alert` | A new-device email was sent |
+
+Alike events share one entry with a count: wrong passwords for one account
+from one network in one minute, or every attempt one spent budget refused
+until it reopened. An entry names the network (an IPv4 /24 or IPv6 /48),
+never the address; requests from one address share a digest, so you can
+tell one source from many. A wrong password for an address no account has
+is recorded without a user.
+
+On the dashboard's **Security** tab, search for a kind such as `held` or a
+network such as `203.0.113.0/24`. A user's panel shows their recent events
+and, while a budget still holds them, what holds them and until when. From
+a terminal:
+
+```sh
+printf '%s' "$ADMIN_KEY" | gregale auth activity shop-auth --security --kind held --admin-key-stdin
+```
+
+`--user ID` and `--network NET` narrow it, and `--json` prints the entries.
+The admin API serves them at `GET /admin/v1/security-events` (scope
+`users:read`; `user`, `kind`, `network`, `page`, `per_page`), and
+`GET /admin/v1/users/ID` lists `holds`.
+
+Entries are kept 30 days after their last event, and go with their user.
+Keep them longer or shorter:
+
+```sh
+gregale auth config shop-auth --security-log-days 90   # 1-365, or default
+```
+
+Recording never slows or fails a sign-in: if the database cannot take an
+entry, the Auth app logs `security_event_failed` and carries on. Address
+digests are keyed from the app's JWT secret, so rotating that secret
+starts new digests.
 
 ### Rate limits
 

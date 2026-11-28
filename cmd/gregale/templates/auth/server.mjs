@@ -11,10 +11,11 @@ import { callbackTokens, createRealtimeAuthorizer } from './realtime.mjs'
 import { storageBindings } from './storage.mjs'
 import { createWorkflowStarter, workflowsConfig } from './workflows.mjs'
 import { createEventPublisher, lifecycleConfig, publishesAfter, setLifecycleEvents } from './events.mjs'
-import { createAnonymousPruner, createAttemptPruner, createAuditPruner, createOrgAuditPruner, createSignInSeenPruner, createUnusedClientPruner } from './retention.mjs'
+import { createAnonymousPruner, createAttemptPruner, createAuditPruner, createOrgAuditPruner, createSecurityEventPruner, createSignInSeenPruner, createUnusedClientPruner } from './retention.mjs'
 import { addressBucket, budgetKey, budgets, createAttempts, goQueryValue, guardedPath, outcome, passwordEntries, secondStepEntries, signInSubject } from './attempts.mjs'
-import { createSignInSecurity, serverAgent, sessionFromAnswer, sessionFromLocation } from './security.mjs'
+import { createSignInSecurity, deviceLabel, serverAgent, sessionFromAnswer, sessionFromLocation } from './security.mjs'
 import { createSends, messageBudgets, sendRoute } from './sends.mjs'
+import { createSecurityLog, networkLabel } from './securitylog.mjs'
 import { bodyAllowed, smsSendPath } from './sms.mjs'
 import { createScimHandler } from './scim.mjs'
 import { signupRefusal } from './signups.mjs'
@@ -143,6 +144,11 @@ function limited(res, code, budget, observed, wait, extra = {}) {
   res.end(JSON.stringify({ status: 429, code, ...extra, limit: budget.limit, observed, window_seconds: budget.seconds, retry_after: wait, docs_url: limitsDocs }))
 }
 
+// budgetName names an attempt budget in security events.
+function budgetName(budget) {
+  return budget === budgets.passwordAddress ? 'password_address' : budget === budgets.passwordAccount ? 'password_account' : 'second_step'
+}
+
 // tokenRoute names a request whose answer may hand a client a session: a
 // token grant (by its grant type), a verified one-time code, or a sign-up
 // that signs the person in at once.
@@ -176,13 +182,16 @@ function tokenReply(res, status, payload, headers = {}) {
   res.end(JSON.stringify(payload))
 }
 
-export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz, ui, realtime, admin, settings, smsCountries = null, scim, oauth = null, serviceAccounts = null, attempts = null, adminKeys = [], signIns = null, sends = null, captcha = false } = {}) {
+export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz, ui, realtime, admin, settings, smsCountries = null, scim, oauth = null, serviceAccounts = null, attempts = null, adminKeys = [], signIns = null, sends = null, captcha = false, securityLog = null } = {}) {
   // signedIn records a session GoTrue handed this client (security.mjs). A
   // session only a redirect showed (an email link scanner may follow it)
   // neither alerts nor trusts its network, and a refreshed one trusts only
   // a network its account was already seen on (record's trust).
   const signedIn = (req, session, { alert = true, trust = true } = {}) => {
-    if (signIns && session && !serverAgent(req.headers['user-agent'])) signIns.record({ ...session, address: clientAddress(req), userAgent: req.headers['user-agent'], alert, trust }).catch(logFailure('sign_in_record_failed'))
+    if (!signIns || !session || serverAgent(req.headers['user-agent'])) return
+    const address = clientAddress(req), userAgent = req.headers['user-agent']
+    signIns.record({ ...session, address, userAgent, alert, trust })
+      .then(alerted => alerted && securityLog?.record('new_device_alert', { userId: session.userId, address, detail: { device: deviceLabel(userAgent) } }), logFailure('sign_in_record_failed'))
   }
   return http.createServer((req, res) => {
     // A third-party OAuth client's token is good here only for userinfo.
@@ -242,13 +251,13 @@ export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bo
     // Password sign-ins and second-step codes spend failed-attempt budgets
     // the instances share (attempts.mjs).
     const guarded = attempts ? guardedPath(req.method, path) : null
-    if (guarded) return readBody(req, res, bodyBytes, body => guardAttempt({ req, res, path, upstreamPort, body, oauth, attempts, kind: guarded, bearer, signIns, signedIn, captcha }))
+    if (guarded) return readBody(req, res, bodyBytes, body => guardAttempt({ req, res, path, upstreamPort, body, oauth, attempts, kind: guarded, bearer, signIns, signedIn, captcha, securityLog }))
     // A request that may send a message is read whole, checked against the
     // SMS country allowlist and the message budgets (sends.mjs), and
     // forwarded as read.
     const send = sends ? sendRoute(req.method, path) : null
     const sms = smsCountries !== null && smsSendPath(req.method, req.url)
-    if (send || sms) return readBody(req, res, bodyBytes, body => forwardSend({ req, res, path, upstreamPort, body, oauth, signedIn, send, sends, smsCountries: sms ? smsCountries : null, bearer }))
+    if (send || sms) return readBody(req, res, bodyBytes, body => forwardSend({ req, res, path, upstreamPort, body, oauth, signedIn, send, sends, smsCountries: sms ? smsCountries : null, bearer, securityLog }))
     // Other answers that hand out a session are read to record it.
     const issuing = signIns ? tokenRoute(req.method, path) : null
     const observe = issuing === null ? null : async (status, answer) => { if (status === 200) signedIn(req, sessionFromAnswer(answer), { trust: issuing === 'refresh_token' ? 'known' : true }) }
@@ -308,7 +317,7 @@ async function registerClient(req, res, path, upstreamPort, bodyBytes, oauth, at
 // back what it counted, and a success clears
 // the address's budget but not the account's, so the owner signing in does
 // not hand a guesser a fresh budget.
-async function guardAttempt({ req, res, path, upstreamPort, body, oauth, attempts, kind, bearer, signIns, signedIn, captcha }) {
+async function guardAttempt({ req, res, path, upstreamPort, body, oauth, attempts, kind, bearer, signIns, signedIn, captcha, securityLog }) {
   let entries, subject = null
   if (kind === 'password') {
     try { subject = signInSubject(body) } catch (err) { return problem(res, 400, err.message === 'ambiguous' ? 'ambiguous_sign_in' : 'bad_json') }
@@ -318,16 +327,27 @@ async function guardAttempt({ req, res, path, upstreamPort, body, oauth, attempt
   }
   const counted = []
   const giveBack = () => counted.length ? attempts.release(counted).catch(logFailure('attempt_budget_failed')) : undefined
+  // Security events name the account by its sign-in subject, or the user a
+  // second step's token names (securitylog.mjs).
+  const address = clientAddress(req), who = kind === 'password' ? { subject } : { userId: bearer?.sub }
+  const alike = [subject ?? bearer?.sub ?? null, networkLabel(address)]
   try {
     for (const entry of entries) {
       const { count, wait } = await attempts.take(entry)
       counted.push(entry)
       if (wait === 0) continue
       if (entry.budget === budgets.passwordAccount) {
-        if (captcha && count <= entry.budget.limit * limits.trustedBudgetMultiplier) continue
-        if (await signIns?.trusted(subject, clientAddress(req))) continue
+        if (captcha && count <= entry.budget.limit * limits.trustedBudgetMultiplier) {
+          securityLog?.record('captcha_pass', { ...who, address, alike, detail: { budget: 'password_account' } })
+          continue
+        }
+        if (await signIns?.trusted(subject, address)) {
+          securityLog?.record('trusted_pass', { ...who, address, alike, detail: { budget: 'password_account' } })
+          continue
+        }
       }
       await giveBack()
+      securityLog?.record('held', { ...who, address, hold: entry.key, detail: { budget: budgetName(entry.budget), limit: entry.budget.limit, until: new Date(Date.now() + wait * 1000).toISOString() } })
       return limited(res, 'too_many_attempts', entry.budget, count - 1, wait, { error_code: 'too_many_attempts' })
     }
   } catch (err) {
@@ -350,6 +370,7 @@ async function guardAttempt({ req, res, path, upstreamPort, body, oauth, attempt
     } catch (err) {
       logFailure('attempt_budget_failed')(err)
     }
+    if (result === 'failure') securityLog?.record(kind === 'password' ? 'password_failed' : 'code_failed', { ...who, address, alike })
     if (status === 200) signedIn(req, sessionFromAnswer(answer))
   }
   upstreamRequest(req, res, path, upstreamPort, { ...headers, 'content-length': String(body.length) }, { oauth, observe, signedIn, onError: giveBack }).end(body)
@@ -358,7 +379,7 @@ async function guardAttempt({ req, res, path, upstreamPort, body, oauth, attempt
 // forwardSend checks a request that may send a message: a texted number
 // against the country allowlist, then the message budgets. A budget GoTrue's
 // refusal shows was not spent is given back.
-async function forwardSend({ req, res, path, upstreamPort, body, oauth, signedIn, send, sends, smsCountries, bearer }) {
+async function forwardSend({ req, res, path, upstreamPort, body, oauth, signedIn, send, sends, smsCountries, bearer, securityLog }) {
   if (smsCountries && !bodyAllowed(body, smsCountries)) return problem(res, 422, 'sms_country_not_allowed')
   let taken = []
   if (send) {
@@ -373,7 +394,8 @@ async function forwardSend({ req, res, path, upstreamPort, body, oauth, signedIn
     try {
       const result = await sends.take(recipients, clientAddress(req))
       if (result.refused) {
-        const { name, budget, count, wait } = result.refused
+        const { name, key, recipient, budget, count, wait } = result.refused
+        securityLog?.record('message_limited', { subject: recipient, address: clientAddress(req), hold: key, detail: { scope: name, limit: budget.limit, until: new Date(Date.now() + wait * 1000).toISOString() } })
         return limited(res, 'too_many_messages', budget, count, wait, { error_code: 'too_many_messages', scope: name })
       }
       taken = result.taken
@@ -554,11 +576,12 @@ export function start(env = process.env) {
     clientCredentials: config.serviceAccounts,
   } : null
   const signIns = createSignInSecurity({ pool, mailer, alerts: config.security.newDeviceAlerts, app: config.app })
+  const securityLog = createSecurityLog({ pool, secret: config.gotrueEnv.GOTRUE_JWT_SECRET })
   const server = createServer({ authz, ui, realtime, admin, // Admin keys are not listed in the public settings; the CLI asks
     // /settings/v1/admin-keys/<ID> for each key it finds among the secrets.
     settings: config.settings, adminKeys: adminKeySummary(adminKeys), smsCountries: config.smsCountries, scim, oauth, serviceAccounts, attempts,
     // Trusted networks and new-device alerts, and message budgets.
-    signIns, sends: createSends({ attempts, pool, budgets: messageBudgets(config.security), trusted: signIns.trusted }), captcha: config.captcha !== null })
+    signIns, sends: createSends({ attempts, pool, budgets: messageBudgets(config.security), trusted: signIns.trusted, events: securityLog }), captcha: config.captcha !== null, securityLog })
   // Lifecycle events publish after requests that may change users, and
   // once at startup for anything recorded while the app was parked.
   const lifecycle = lifecycleConfig(env)
@@ -573,7 +596,7 @@ export function start(env = process.env) {
     console.error(JSON.stringify({ level: 'error', event: 'domain_join_setup_failed', sqlstate: err?.code ?? null }))
   })
   // Activity retention prunes on the same request-driven schedule.
-  const pruners = [createAuditPruner({ pool, days: config.auditRetentionDays }), createOrgAuditPruner({ pool, days: config.auditRetentionDays }), createAnonymousPruner({ pool, days: config.anonymousRetentionDays }), createAttemptPruner({ pool }), createSignInSeenPruner({ pool }),
+  const pruners = [createAuditPruner({ pool, days: config.auditRetentionDays }), createOrgAuditPruner({ pool, days: config.auditRetentionDays }), createAnonymousPruner({ pool, days: config.anonymousRetentionDays }), createAttemptPruner({ pool }), createSignInSeenPruner({ pool }), createSecurityEventPruner({ pool, days: config.security.logDays }),
     ...(config.oauth ? [createUnusedClientPruner({ pool })] : [])]
   for (const pruner of pruners) pruner.poke()
   server.on('request', (req, res) => {

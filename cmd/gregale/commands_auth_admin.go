@@ -604,19 +604,41 @@ type authActivityEntry struct {
 	Email     *string `json:"email"`
 }
 
+// authSecurityEvent is one row of the Auth app's security events: alike
+// events (one account, one network, one minute; or one hold) share a row.
+type authSecurityEvent struct {
+	Kind    string         `json:"kind"`
+	UserID  *string        `json:"user_id"`
+	Email   *string        `json:"email"`
+	Phone   *string        `json:"phone"`
+	Network *string        `json:"network"`
+	Detail  map[string]any `json:"detail"`
+	Count   int            `json:"count"`
+	FirstAt string         `json:"first_at"`
+	LastAt  string         `json:"last_at"`
+}
+
+// authSecurityKinds are the security event kinds the Auth app records.
+var authSecurityKinds = []string{"password_failed", "code_failed", "held", "captcha_pass", "trusted_pass", "message_limited", "new_device_alert"}
+
 // cmdAuthActivity lists GoTrue's audit log through the owner's admin key:
-// sign-ins, sign-ups, password and account changes, newest first.
+// sign-ins, sign-ups, password and account changes, newest first. With
+// --security it lists what the sign-in protection did instead.
 func cmdAuthActivity(args []string) int {
 	fs := newFlagSet("auth activity", flag.ContinueOnError)
 	user := fs.String("user", "", "only this user's activity (user ID)")
 	search := fs.String("search", "", "an event such as login, or part of an email address")
+	security := fs.Bool("security", false, "list security events: wrong passwords and codes, holds, passes, message limits, new-device alerts")
+	kind := fs.String("kind", "", "with --security, only this kind: "+strings.Join(authSecurityKinds, ", "))
+	network := fs.String("network", "", "with --security, only this network (203.0.113.0/24)")
 	limit := fs.Int("limit", 50, fmt.Sprintf("entries to show (1-%d)", api.AuthAdminPageSize))
 	keyStdin := fs.Bool("admin-key-stdin", false, "read the admin key from stdin (prompted on a terminal)")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || *limit < 1 || *limit > api.AuthAdminPageSize || len(*search) > 200 {
-		PrintUsage(os.Stderr, "usage: gregale auth activity NAME [--user ID] [--search TEXT] [--limit N] [--admin-key-stdin]", "auth")
+	misused := (*security && *search != "") || (!*security && (*kind != "" || *network != "")) || (*kind != "" && !slices.Contains(authSecurityKinds, *kind)) || len(*network) > 64
+	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || *limit < 1 || *limit > api.AuthAdminPageSize || len(*search) > 200 || misused {
+		PrintUsage(os.Stderr, "usage: gregale auth activity NAME [--user ID] [--search TEXT | --security [--kind KIND] [--network NET]] [--limit N] [--admin-key-stdin]", "auth")
 		return 1
 	}
 	key, _, err := readRealtimeEndpointSecret("", *keyStdin, "admin-key", "Auth admin key: ", 128, true)
@@ -640,6 +662,9 @@ func cmdAuthActivity(args []string) int {
 	query := url.Values{"per_page": {strconv.Itoa(*limit)}}
 	if *user != "" {
 		query.Set("user", *user)
+	}
+	if *security {
+		return authSecurityEvents(origin, key, query, *kind, *network)
 	}
 	if *search != "" {
 		query.Set("search", *search)
@@ -679,4 +704,66 @@ func cmdAuthActivity(args []string) int {
 		_, _ = fmt.Fprintln(osStdout, "More entries exist; narrow with --user or --search.")
 	}
 	return 0
+}
+
+// authSecurityEvents prints the Auth app's security events, newest first:
+// when, what and how many, the network, the account and the detail.
+func authSecurityEvents(origin, key string, query url.Values, kind, network string) int {
+	if kind != "" {
+		query.Set("kind", kind)
+	}
+	if network != "" {
+		query.Set("network", network)
+	}
+	var page struct {
+		Entries []authSecurityEvent `json:"entries"`
+		More    bool                `json:"more"`
+	}
+	if err := authAdminCall(http.MethodGet, origin, key, "/admin/v1/security-events?"+query.Encode(), nil, &page); err != nil {
+		return printErr("Could not read security events", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(page))
+	}
+	if len(page.Entries) == 0 {
+		_, _ = fmt.Fprintln(osStdout, "No security events match.")
+		return 0
+	}
+	for _, event := range page.Entries {
+		what := event.Kind
+		if event.Count > 1 {
+			what = fmt.Sprintf("%s x%d", what, event.Count)
+		}
+		who := "unknown account"
+		for _, value := range []*string{event.Email, event.Phone, event.UserID} {
+			if value != nil && *value != "" {
+				who = *value
+				break
+			}
+		}
+		where := "-"
+		if event.Network != nil {
+			where = *event.Network
+		}
+		_, _ = fmt.Fprintf(osStdout, "%s  %-24s  %-18s  %s%s\n", event.LastAt, what, where, who, authSecurityDetail(event.Detail))
+	}
+	if page.More {
+		_, _ = fmt.Fprintln(osStdout, "More entries exist; narrow with --user, --kind or --network.")
+	}
+	return 0
+}
+
+// authSecurityDetail renders an event's detail (budget, scope, device,
+// until) as sorted key=value pairs.
+func authSecurityDetail(detail map[string]any) string {
+	keys := make([]string, 0, len(detail))
+	for name := range detail {
+		keys = append(keys, name)
+	}
+	slices.Sort(keys)
+	var b strings.Builder
+	for _, name := range keys {
+		fmt.Fprintf(&b, "  %s=%v", name, detail[name])
+	}
+	return b.String()
 }

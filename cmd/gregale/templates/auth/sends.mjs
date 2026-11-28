@@ -1,5 +1,6 @@
 import { addressBucket, budgetKey, goLower } from './attempts.mjs'
 import { limits } from './config.mjs'
+import { networkLabel } from './securitylog.mjs'
 import { normalizePhone } from './sms.mjs'
 
 // Message budgets (ADR-1190). Every sign-in code, magic link, password reset
@@ -90,7 +91,7 @@ export function inbox(recipient) {
 // request, or, when that overspent a budget, the budget's name, the count
 // before this request and the seconds until it reopens; a refused request
 // gives back what it counted, so refusals do not prolong a wait.
-export function createSends({ attempts, pool, budgets, trusted = null }) {
+export function createSends({ attempts, pool, budgets, trusted = null, events = null }) {
   return {
     // recipients lists who a request may send to: from its body, or the
     // signed-in user for a re-authentication or a phone factor's challenge.
@@ -120,8 +121,9 @@ export function createSends({ attempts, pool, budgets, trusted = null }) {
           const passes = entry.recipient && trusted && count <= entry.budget.limit * limits.trustedBudgetMultiplier && await trusted(entry.recipient, address)
           if (!passes) {
             await attempts.release(taken)
-            return { refused: { name: entry.name, budget: entry.budget, count: count - 1, wait } }
+            return { refused: { name: entry.name, key: entry.key, recipient: entry.recipient ?? null, budget: entry.budget, count: count - 1, wait } }
           }
+          events?.record('trusted_pass', { subject: entry.recipient, address, alike: [entry.recipient, 'messages', networkLabel(address)], detail: { budget: 'message_recipient' } })
         }
       } catch (err) {
         if (taken.length) await attempts.release(taken).catch(() => {})

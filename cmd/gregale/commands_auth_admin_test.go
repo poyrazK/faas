@@ -344,6 +344,45 @@ func TestAuthActivityReadsTheAdminAPIWithTheOwnerKey(t *testing.T) {
 	}
 }
 
+func TestAuthActivitySecurityListsTheProtectionsEvents(t *testing.T) {
+	resetJSONEnv(t)
+	authIssuerServer(t, func(http.ResponseWriter, *http.Request) bool { return false })
+	key := "gaak_" + strings.Repeat("k", 43)
+	var seen *http.Request
+	old := (*main.AuthAdminHTTPClient)
+	(*main.AuthAdminHTTPClient) = &http.Client{Transport: authRoundTrip(func(r *http.Request) (*http.Response, error) {
+		seen = r
+		recorder := httptest.NewRecorder()
+		main.WriteJSONTest(recorder, map[string]any{"entries": []map[string]any{
+			{"kind": "held", "user_id": "u1", "email": "a@example.test", "network": "203.0.113.0/24", "count": 7, "detail": map[string]any{"budget": "password_account", "limit": 50}, "last_at": "2026-11-28T10:00:00Z"},
+			{"kind": "password_failed", "user_id": nil, "email": nil, "network": "198.51.100.0/24", "count": 1, "detail": map[string]any{}, "last_at": "2026-11-28T09:00:00Z"},
+		}, "more": false})
+		return recorder.Result(), nil
+	})}
+	t.Cleanup(func() { (*main.AuthAdminHTTPClient) = old })
+	oldIn := (*main.OsStdin)
+	(*main.OsStdin) = strings.NewReader(key + "\n")
+	t.Cleanup(func() { (*main.OsStdin) = oldIn })
+	out := captureAuthStdout(t)
+	if code := main.CmdAuth([]string{"activity", "shop-auth", "--security", "--kind", "held", "--network", "203.0.113.0/24", "--admin-key-stdin"}); code != 0 {
+		t.Fatalf("activity --security = %d", code)
+	}
+	if seen.URL.Path != "/admin/v1/security-events" || seen.URL.Query().Get("kind") != "held" || seen.URL.Query().Get("network") != "203.0.113.0/24" {
+		t.Fatalf("request = %s", seen.URL)
+	}
+	text := out.String()
+	for _, want := range []string{"held x7", "203.0.113.0/24", "a@example.test", "budget=password_account", "limit=50", "unknown account"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("output lacks %q:\n%s", want, text)
+		}
+	}
+	for _, args := range [][]string{{"--security", "--search", "login"}, {"--kind", "held"}, {"--security", "--kind", "nope"}} {
+		if code := main.CmdAuth(append([]string{"activity", "shop-auth"}, args...)); code == 0 {
+			t.Errorf("accepted %v", args)
+		}
+	}
+}
+
 func TestRestartAuthAppRetriesWhileARestartIsRunning(t *testing.T) {
 	resetJSONEnv(t)
 	attempts := 0

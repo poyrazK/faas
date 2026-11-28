@@ -1,5 +1,5 @@
 // Mirrors pkg/api/limits.go; TestAuthTemplateRuntimeBounds checks this contract.
-export const limits = Object.freeze({ accessTokenSeconds: 600, pool: 4, frontPool: 2, bodyBytes: 1048576, authzBodyBytes: 65536, authzConfigBytes: 65536, redirectURLs: 50, migrationStatementMs: 600000, invitationSeconds: 604800, emailTimeoutMs: 10000, hookBodyBytes: 262144, storageURLSeconds: 60, adminBodyBytes: 1048576, importBatch: 100, adminPageSize: 100, customClaimsBytes: 1000, signupDomains: 100, waitlistPending: 10000, signupApproveBatch: 100, impersonationDefaultMinutes: 30, impersonationMaxMinutes: 60, reauthenticationSeconds: 600, sessionMinMinutes: 15, sessionMaxMinutes: 525600, emailSubjectChars: 150, emailBodyBytes: 4000, signingKeys: 4, uiNameChars: 60, auditRetentionMaxDays: 3650, auditPruneBatch: 5000, auditPruneBatches: 20, auditPruneIntervalSeconds: 21600, eventBatch: 50, eventLeaseSeconds: 120, eventMaxBackoffSeconds: 3600, eventRetentionSeconds: 259200, smsCodeSeconds: 300, ssoMetadataBytes: 524288, ssoDomains: 50, smsCountries: 50, goTrueMemoryDivisor: 3, goTrueMemoryMinMiB: 32, scimPageSize: 100, scimBodyBytes: 65536, oauthClients: 1000, anonymousRetentionMaxDays: 3650, teamMembers: 500, teamInvitations: 500, teamEmailBytes: 320, teamContextBytes: 4096, teamInvitationMinSeconds: 300, teamInvitationMaxSeconds: 1209600, teamHistoryPageSize: 100, teamCursorBytes: 1024, emailGrantSeconds: 2592000, serviceAccountsPerOrg: 50, serviceAccountSecrets: 2, serviceAccountSecretMaxDays: 3650, serviceAccountTokensPerMinute: 60, passwordMinLength: 8, passwordFailuresPerAddress: 10, passwordFailuresPerAccount: 50, secondStepFailuresPerUser: 10, attemptWindowSeconds: 900, oauthRegistrationsPerAddress: 10, oauthRegistrationWindowSeconds: 3600, oauthUnusedClientHours: 24, oauthUnusedClients: 500, adminKeyLookupsPerAddress: 60, trustedNetworkDays: 30, trustedNetworkMaxAccounts: 20, trustedBudgetMultiplier: 4, newDeviceDays: 90, signInSeenRefreshSeconds: 3600, messagesPerRecipientDefault: 5, messagesPerRecipientMax: 50, messagesPerNetworkMax: 1000, messageWindowSeconds: 3600, storageUploadDefaultBytes: 104857600, storageUploadMaxBytes: 5368709120 })
+export const limits = Object.freeze({ accessTokenSeconds: 600, pool: 4, frontPool: 2, bodyBytes: 1048576, authzBodyBytes: 65536, authzConfigBytes: 65536, redirectURLs: 50, migrationStatementMs: 600000, invitationSeconds: 604800, emailTimeoutMs: 10000, hookBodyBytes: 262144, storageURLSeconds: 60, adminBodyBytes: 1048576, importBatch: 100, adminPageSize: 100, customClaimsBytes: 1000, signupDomains: 100, waitlistPending: 10000, signupApproveBatch: 100, impersonationDefaultMinutes: 30, impersonationMaxMinutes: 60, reauthenticationSeconds: 600, sessionMinMinutes: 15, sessionMaxMinutes: 525600, emailSubjectChars: 150, emailBodyBytes: 4000, signingKeys: 4, uiNameChars: 60, auditRetentionMaxDays: 3650, auditPruneBatch: 5000, auditPruneBatches: 20, auditPruneIntervalSeconds: 21600, eventBatch: 50, eventLeaseSeconds: 120, eventMaxBackoffSeconds: 3600, eventRetentionSeconds: 259200, smsCodeSeconds: 300, ssoMetadataBytes: 524288, ssoDomains: 50, smsCountries: 50, goTrueMemoryDivisor: 3, goTrueMemoryMinMiB: 32, scimPageSize: 100, scimBodyBytes: 65536, oauthClients: 1000, anonymousRetentionMaxDays: 3650, teamMembers: 500, teamInvitations: 500, teamEmailBytes: 320, teamContextBytes: 4096, teamInvitationMinSeconds: 300, teamInvitationMaxSeconds: 1209600, teamHistoryPageSize: 100, teamCursorBytes: 1024, emailGrantSeconds: 2592000, serviceAccountsPerOrg: 50, serviceAccountSecrets: 2, serviceAccountSecretMaxDays: 3650, serviceAccountTokensPerMinute: 60, passwordMinLength: 8, passwordFailuresPerAddress: 10, passwordFailuresPerAccount: 50, secondStepFailuresPerUser: 10, attemptWindowSeconds: 900, oauthRegistrationsPerAddress: 10, oauthRegistrationWindowSeconds: 3600, oauthUnusedClientHours: 24, oauthUnusedClients: 500, adminKeyLookupsPerAddress: 60, trustedNetworkDays: 30, trustedNetworkMaxAccounts: 20, trustedBudgetMultiplier: 4, newDeviceDays: 90, signInSeenRefreshSeconds: 3600, messagesPerRecipientDefault: 5, messagesPerRecipientMax: 50, messagesPerNetworkMax: 1000, messageWindowSeconds: 3600, securityLogDaysDefault: 30, securityLogMaxDays: 365, storageUploadDefaultBytes: 104857600, storageUploadMaxBytes: 5368709120 })
 
 import { createECDH, createPrivateKey } from 'node:crypto'
 import { totalmem } from 'node:os'
@@ -406,6 +406,7 @@ export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, bran
       new_device_alerts: security?.newDeviceAlerts !== false,
       messages_per_recipient: security?.messagesPerRecipient ?? limits.messagesPerRecipientDefault,
       messages_per_network: security?.messagesPerNetwork ?? null,
+      log_days: security?.logDays ?? limits.securityLogDaysDefault,
       trusted_network_days: limits.trustedNetworkDays,
     },
     phone: { enabled: g.GOTRUE_EXTERNAL_PHONE_ENABLED === 'true', provider: g.GOTRUE_EXTERNAL_PHONE_ENABLED === 'true' ? g.GOTRUE_SMS_PROVIDER : null, countries },
@@ -524,7 +525,8 @@ export function sessionPolicy(env) {
 // securityConfig reads sign-in security settings: new-device alerts (on
 // unless AUTH_NEW_DEVICE_ALERTS is 0; they need an email provider to send)
 // and how many sign-in messages one recipient may be sent, and one network
-// may ask for, an hour (sends.mjs). The network budget is off unless set:
+// may ask for, an hour (sends.mjs), and for how many days security events
+// are kept (securitylog.mjs). The network budget is off unless set:
 // an app that sends from its own server asks from one network for all its
 // users.
 export function securityConfig(env) {
@@ -540,6 +542,7 @@ export function securityConfig(env) {
     newDeviceAlerts: alerts !== '0',
     messagesPerRecipient: count('AUTH_MESSAGES_PER_RECIPIENT', limits.messagesPerRecipientDefault, limits.messagesPerRecipientMax),
     messagesPerNetwork: count('AUTH_MESSAGES_PER_NETWORK', null, limits.messagesPerNetworkMax),
+    logDays: count('AUTH_SECURITY_LOG_DAYS', limits.securityLogDaysDefault, limits.securityLogMaxDays),
   }
 }
 

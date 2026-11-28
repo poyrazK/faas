@@ -5954,6 +5954,7 @@ var cliCommands = []cliCommand{
 				{Name: "new-device-alerts", Value: "on|off", Short: "email people when their account signs in from a new network and device", ClosedSet: []string{"on", "off"}},
 				{Name: "messages-per-recipient", Value: "N|default", Short: "sign-in codes, links and resets one address or number may be sent an hour"},
 				{Name: "messages-per-network", Value: "N|off", Short: "sign-in messages one network may ask for an hour (off by default)"},
+				{Name: "security-log-days", Value: "N|default", Short: "days to keep security events (30 by default)"},
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 			}, Examples: []string{"gregale auth config shop-auth", "gregale auth config shop-auth --events on", "gregale auth config shop-auth --password-min-length 12 --password-require lower,upper,digit --mfa on"}},
 			{Name: "providers", Short: "Manage OAuth sign-in providers such as Google or GitHub", Subcommands: []cliSub{
@@ -6037,9 +6038,12 @@ var cliCommands = []cliCommand{
 			{Name: "activity", Short: "List sign-ins, sign-ups and account changes, newest first", Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "user", Value: "ID", Short: "only this user's activity (user ID)"},
 				{Name: "search", Value: "TEXT", Short: "an event such as login, or part of an email address"},
+				{Name: "security", Short: "list security events: wrong passwords and codes, holds, passes, message limits, new-device alerts"},
+				{Name: "kind", Value: "KIND", Short: "with --security, only this kind", ClosedSet: []string{"password_failed", "code_failed", "held", "captcha_pass", "trusted_pass", "message_limited", "new_device_alert"}},
+				{Name: "network", Value: "NET", Short: "with --security, only this network (203.0.113.0/24)"},
 				{Name: "limit", Value: "N", Short: "entries to show (1-100)"},
 				{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
-			}, Examples: []string{"printf '%s' \"$ADMIN_KEY\" | gregale auth activity shop-auth --search login --admin-key-stdin"}},
+			}, Examples: []string{"printf '%s' \"$ADMIN_KEY\" | gregale auth activity shop-auth --search login --admin-key-stdin", "printf '%s' \"$ADMIN_KEY\" | gregale auth activity shop-auth --security --kind held --admin-key-stdin"}},
 			{Name: "sso", Short: "Register SAML identity providers for organization single sign-on", Subcommands: []cliSub{
 				{Name: "list", Short: "List identity providers and the organizations their users join", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
 				{Name: "add", Short: "Register an identity provider for email domains", Notes: []string{"Can join its users to an organization."}, Positionals: []string{"<name>"}, Flags: []cliFlag{

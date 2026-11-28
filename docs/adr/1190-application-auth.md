@@ -180,6 +180,29 @@ info and debug lines, and replaces personal fields (`actor_username`, `email`,
 `phone`) in the warnings and errors it keeps. `--autoconfirm` (development)
 and `--disable-signup` map to GoTrue's own settings.
 
+Amendment (2026-11-28, security events): GoTrue's audit log records
+sign-ins but none of the front's protection, so the owner could not tell a
+guessing attack from a forgotten password. The front now records, in
+`gregale_auth.security_events` (sql/0026, the owner's database), wrong
+passwords and second-step codes, holds (`429 too_many_attempts`), passes past
+a spent account or recipient budget (CAPTCHA, trusted network), message
+limits (`429 too_many_messages`) and new-device alerts sent. A row stands
+for alike events and counts them: failures and passes per account, network
+and minute; refusals per spent budget until its window ends (the dedupe key
+is derived in SQL from the budget's `window_ends_at`). It names the network
+(IPv4 /24, IPv6 /48) and a 16-byte HMAC of the address keyed from the JWT
+secret, never the address (owner's choice: enough to group one source,
+less personal data); the account comes from the sign-in subject or token,
+and an unknown account leaves it empty. Rows go `AUTH_SECURITY_LOG_DAYS`
+(`AuthSecurityLogDaysDefault` 30, up to `AuthSecurityLogMaxDays`) after their
+last event, on the request-driven prune schedule, and with their user.
+Writes are fire-and-forget: a failed write is logged
+(`security_event_failed`), never fails or delays the request. Owners read
+them with `GET /admin/v1/security-events` (`users:read`; filters user, kind,
+network), `gregale auth activity --security` and the dashboard's Security
+tab; `GET /admin/v1/users/<id>` adds `holds`, the user's spent budgets whose
+window is still open.
+
 ### Database credential mode `auth`
 
 GoTrue's migrations enable RLS on every `auth` table, and its runtime needs

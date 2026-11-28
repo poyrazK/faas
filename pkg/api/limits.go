@@ -18542,6 +18542,14 @@ const (
 	AuthMessagesPerRecipientMax     = 50
 	AuthMessagesPerNetworkMax       = 1000
 	AuthMessageWindowSeconds        = 3600
+	// AuthSecurityLogDaysDefault is how long an Auth app keeps its security
+	// events (wrong passwords and codes, holds, passes past a spent account
+	// budget, message limits and new-device alerts) after the last one alike,
+	// unless the owner sets AUTH_SECURITY_LOG_DAYS, up to
+	// AuthSecurityLogMaxDays. They name networks and keyed address digests,
+	// never addresses, and live in the owner's own database.
+	AuthSecurityLogDaysDefault = 30
+	AuthSecurityLogMaxDays     = 365
 	// AuthAnonymousRetentionMaxDays bounds how long idle anonymous users may
 	// be kept before the Auth app deletes them, when the owner sets a limit.
 	AuthAnonymousRetentionMaxDays = 3650
