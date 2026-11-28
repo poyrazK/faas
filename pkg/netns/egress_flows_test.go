@@ -87,9 +87,9 @@ func TestTenantEgressBlockedRecordChain(t *testing.T) {
 	c.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("1.2.3.0/24")}
 	lines := renderedLines(c)
 	for _, tc := range []struct{ family, addrType string }{{"ip", "ipv4_addr"}, {"ip6", "ipv6_addr"}} {
-		set := lineIndex(t, lines, "add set "+tc.family+" faas egress_blocked { type "+tc.addrType+" . inet_proto . inet_service ; flags dynamic,timeout ; timeout 10m ; size 65535 ; }")
+		set := lineIndex(t, lines, "add set "+tc.family+" faas egress_blocked { type "+tc.addrType+" . inet_proto . inet_service ; flags dynamic,timeout ; timeout 10m ; size 4096 ; }")
 		chain := lineIndex(t, lines, "add chain "+tc.family+" faas egress_drop")
-		record := lineIndex(t, lines, "add rule "+tc.family+" faas egress_drop iifname tap0 meta l4proto { tcp,udp } ct state new update @egress_blocked { "+tc.family+" daddr . meta l4proto . th dport }")
+		record := lineIndex(t, lines, "add rule "+tc.family+" faas egress_drop iifname tap0 meta l4proto { tcp,udp } ct state new limit rate 20/second burst 100 packets update @egress_blocked { "+tc.family+" daddr . meta l4proto . th dport }")
 		var chainRules []string
 		for _, line := range lines {
 			if strings.Contains(line, "add rule "+tc.family+" faas egress_drop ") {

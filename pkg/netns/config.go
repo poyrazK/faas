@@ -1143,6 +1143,14 @@ const (
 	// new entries as blocked rows of the egress flow log.
 	EgressBlockedSet = "egress_blocked"
 	EgressDropChain  = "egress_drop"
+	// egressBlockedSetSize and egressBlockedRecordRate bound what one guest
+	// can make vmmd log: the policy drops run before the flood and rate
+	// limits, so a guest scanning an internal range would otherwise fill the
+	// set at line rate. Over the rate, attempts are still dropped and
+	// counted, just not recorded; a scan shows up as its first destinations.
+	egressBlockedSetSize     = 4096
+	egressBlockedRecordRate  = "20/second"
+	egressBlockedRecordBurst = "100"
 	// EgressDatabaseSet holds address . port pairs of the app's bound managed
 	// databases (ADR 20261026150000), each with the answer's timeout, so the
 	// database port opens only to those addresses on every plan.
@@ -1198,8 +1206,10 @@ func (c Config) egressPolicyObjects(nft func(...string) []string, family string)
 // the policy drops jump to. The chain records the destination, protocol and
 // port of a blocked guest TCP or UDP new flow, then drops it, so vmmd can
 // log blocked attempts next to the flows that went out (ADR-371 addendum).
-// The record and the drop are separate rules: a full set fails the update,
-// which ends that rule, and the next rule still drops. The chain's last rule
+// The record and the drop are separate rules: a full set fails the update
+// and an exceeded record rate ends the rule before it, and either way the
+// next rule still drops. Recording is rate-limited per instance and the set
+// is small (egressBlockedSetSize) so a scan cannot flood the log. The chain's last rule
 // is an unconditional drop, so `goto egress_drop` is a drop verdict. ICMP and
 // other protocols carry no port and are dropped without a record. Only
 // guest-originated (tap) packets are recorded; the callers already match
@@ -1211,9 +1221,10 @@ func (c Config) egressDropChain(nft func(...string) []string, family string) [][
 	}
 	return [][]string{
 		nft("add", "set", family, "faas", EgressBlockedSet, "{", "type", addrType, ".", "inet_proto", ".", "inet_service", ";", "flags", "dynamic,timeout", ";",
-			"timeout", EgressFlowTimeout, ";", "size", strconv.Itoa(egressDstSetSize), ";", "}"),
+			"timeout", EgressFlowTimeout, ";", "size", strconv.Itoa(egressBlockedSetSize), ";", "}"),
 		nft("add", "chain", family, "faas", EgressDropChain),
 		nft("add", "rule", family, "faas", EgressDropChain, "iifname", c.Tap, "meta", "l4proto", "{", "tcp,udp", "}", "ct", "state", "new",
+			"limit", "rate", egressBlockedRecordRate, "burst", egressBlockedRecordBurst, "packets",
 			"update", "@"+EgressBlockedSet, "{", family, "daddr", ".", "meta", "l4proto", ".", "th", "dport", "}"),
 		nft("add", "rule", family, "faas", EgressDropChain, "drop"),
 	}

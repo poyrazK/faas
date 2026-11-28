@@ -511,7 +511,7 @@ func cmdAccountsEgressFlows(args []string) int {
 		if protocol == "" {
 			protocol = "tcp"
 		}
-		_, _ = fmt.Fprintf(osStdout, "observed_at=%s verdict=%s node=%s account_id=%s app_id=%s instance_id=%s remote=%s %s\n",
+		_, _ = fmt.Fprintf(osStdout, "observed_at=%s verdict=%s node=%s account_id=%s app_id=%s instance_id=%s protocol=%s remote=%s\n",
 			f.ObservedAt.UTC().Format(time.RFC3339), verdict, f.Node, f.AccountID, f.AppID, f.InstanceID, protocol,
 			net.JoinHostPort(f.RemoteIP, strconv.Itoa(f.RemotePort)))
 	}

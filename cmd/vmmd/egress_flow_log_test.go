@@ -135,3 +135,68 @@ func TestEgressFlowLoggerWritesBlockedAttempts(t *testing.T) {
 		t.Fatal("drop state kept for a gone instance")
 	}
 }
+
+// failingFlowStore fails inserts of blocked (or allowed) rows on demand.
+type failingFlowStore struct {
+	*state.MemStore
+	failBlocked, failAllowed bool
+}
+
+func (s *failingFlowStore) InsertEgressFlows(ctx context.Context, records []state.EgressFlowRecord) error {
+	if len(records) > 0 && (records[0].Blocked && s.failBlocked || !records[0].Blocked && s.failAllowed) {
+		return errors.New("statement timeout")
+	}
+	return s.MemStore.InsertEgressFlows(ctx, records)
+}
+
+// A failed blocked insert does not cost the allowed flows, and a failed
+// insert is retried on the next poll while the pair is still in the set.
+func TestEgressFlowLoggerInsertsSetsSeparatelyAndRetries(t *testing.T) {
+	store := &failingFlowStore{MemStore: state.NewMemStore(), failBlocked: true}
+	flows := []netns.EgressFlow{flow("198.51.100.10", 443)}
+	drops := []netns.EgressFlow{{Addr: netip.MustParseAddr("198.51.100.25"), Protocol: "tcp", Port: 25}}
+	list := func(context.Context, string) ([]netns.EgressFlow, error) { return flows, nil }
+	listDrops := func(context.Context, string) ([]netns.EgressFlow, error) { return drops, nil }
+	l := newEgressFlowLogger(store, list, listDrops, "bhs-2", nil, nil)
+	live := map[string]fcvm.LiveEgressInstance{"i-1": {AccountID: "acct-1", Netns: "fc-1"}}
+	t0 := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+	window := state.EgressFlowFilter{From: t0, To: t0.Add(time.Hour), Limit: 100}
+
+	l.tick(context.Background(), t0, live)
+	rows, _ := store.ListEgressFlows(context.Background(), window)
+	if len(rows) != 1 || rows[0].Blocked {
+		t.Fatalf("rows after failed blocked insert = %+v, want the allowed flow only", rows)
+	}
+
+	store.failBlocked = false
+	l.tick(context.Background(), t0.Add(15*time.Second), live)
+	l.tick(context.Background(), t0.Add(30*time.Second), live)
+	rows, _ = store.ListEgressFlows(context.Background(), window)
+	if len(rows) != 2 || !rows[0].Blocked || rows[1].Blocked {
+		t.Fatalf("rows after retry = %+v, want the blocked pair once and the allowed flow once", rows)
+	}
+}
+
+// One poll logs at most egressBlockedRowsPerInstance blocked pairs per
+// instance; the rest follow on later polls while they stay in the set.
+func TestEgressFlowLoggerCapsBlockedRowsPerInstance(t *testing.T) {
+	store := state.NewMemStore()
+	var drops []netns.EgressFlow
+	for i := 0; i < egressBlockedRowsPerInstance+10; i++ {
+		drops = append(drops, netns.EgressFlow{Addr: netip.MustParseAddr("10.0.0.5"), Protocol: "tcp", Port: uint16(1000 + i)})
+	}
+	listDrops := func(context.Context, string) ([]netns.EgressFlow, error) { return drops, nil }
+	l := newEgressFlowLogger(store, noDrops, listDrops, "bhs-2", nil, nil)
+	live := map[string]fcvm.LiveEgressInstance{"i-1": {AccountID: "acct-1", Netns: "fc-1"}}
+	t0 := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+	window := state.EgressFlowFilter{From: t0, To: t0.Add(time.Hour), Limit: 1000}
+
+	l.tick(context.Background(), t0, live)
+	if rows, _ := store.ListEgressFlows(context.Background(), window); len(rows) != egressBlockedRowsPerInstance {
+		t.Fatalf("first poll rows = %d, want %d", len(rows), egressBlockedRowsPerInstance)
+	}
+	l.tick(context.Background(), t0.Add(15*time.Second), live)
+	if rows, _ := store.ListEgressFlows(context.Background(), window); len(rows) != len(drops) {
+		t.Fatalf("rows after second poll = %d, want %d", len(rows), len(drops))
+	}
+}

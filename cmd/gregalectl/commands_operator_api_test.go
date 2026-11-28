@@ -147,7 +147,7 @@ func TestOperatorEgressFlowsBlocked(t *testing.T) {
 		t.Fatalf("request = %+v", got)
 	}
 	want := "observed_at=2026-11-28T12:00:00Z verdict=blocked node=bhs-2 account_id=" + testAccountID +
-		" app_id=app-1 instance_id=i-1 remote=tcp [2001:db8::25]:587\n"
+		" app_id=app-1 instance_id=i-1 protocol=tcp remote=[2001:db8::25]:587\n"
 	if out.String() != want {
 		t.Fatalf("stdout = %q, want %q", out.String(), want)
 	}

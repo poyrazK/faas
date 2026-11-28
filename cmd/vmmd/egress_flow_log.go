@@ -47,8 +47,27 @@ func newEgressFlowLogger(store state.EgressFlowLogStore, list, listDrops listEgr
 		seenDrops: make(map[string]map[netns.EgressFlow]struct{})}
 }
 
+// egressBlockedRowsPerInstance caps the blocked rows one instance adds per
+// poll. Pairs over the cap are not marked seen, so they are logged on later
+// polls while they stay in the set; a scan cannot turn one poll into a huge
+// insert.
+const egressBlockedRowsPerInstance = 256
+
+// egressSetPoll is one set's pending rows and the state to remember once
+// they are stored.
+type egressSetPoll struct {
+	records []state.EgressFlowRecord
+	// next is the seen state after a successful insert: pairs still in the
+	// set that were logged before or are logged now.
+	next map[string]map[netns.EgressFlow]struct{}
+	// kept is the seen state after a failed insert: only pairs still in the
+	// set that were logged before, so the new ones are retried next poll.
+	kept map[string]map[netns.EgressFlow]struct{}
+}
+
 func (l *egressFlowLogger) tick(ctx context.Context, now time.Time, live map[string]fcvm.LiveEgressInstance) {
-	var records []state.EgressFlowRecord
+	allowed := egressSetPoll{next: map[string]map[netns.EgressFlow]struct{}{}, kept: map[string]map[netns.EgressFlow]struct{}{}}
+	blocked := egressSetPoll{next: map[string]map[netns.EgressFlow]struct{}{}, kept: map[string]map[netns.EgressFlow]struct{}{}}
 	for instance, meta := range live {
 		if ctx.Err() != nil {
 			return
@@ -56,38 +75,48 @@ func (l *egressFlowLogger) tick(ctx context.Context, now time.Time, live map[str
 		if meta.Netns == "" {
 			continue
 		}
-		records = l.collect(ctx, now, instance, meta, false, records)
-		records = l.collect(ctx, now, instance, meta, true, records)
+		l.collect(ctx, now, instance, meta, false, &allowed)
+		l.collect(ctx, now, instance, meta, true, &blocked)
 	}
-	for instance := range l.seen {
-		if _, ok := live[instance]; !ok {
-			delete(l.seen, instance)
-		}
-	}
-	for instance := range l.seenDrops {
-		if _, ok := live[instance]; !ok {
-			delete(l.seenDrops, instance)
-		}
-	}
-	if len(records) == 0 {
-		return
-	}
-	if err := l.store.InsertEgressFlows(ctx, records); err != nil {
-		// The pairs stay in seen, so a failed batch is not retried: the
-		// log is best-effort evidence and must not back up the poll.
-		l.log.Warn("egress flow log: insert failed", "rows", len(records), "err", err)
-		return
-	}
-	if l.ops != nil {
-		l.ops.EgressFlowLogRows().Add(float64(len(records)))
-	}
+	// Allowed flows and blocked attempts are separate inserts: a failed
+	// blocked batch must not cost the allowed flows abuse reports trace.
+	l.seen = l.persist(ctx, "flow", l.seen, allowed, live)
+	l.seenDrops = l.persist(ctx, "drop", l.seenDrops, blocked, live)
 }
 
-// collect lists one instance's allowed or blocked set, appends a record for
-// every pair not present on the previous poll, and remembers the current
-// set. A failed listing keeps the previous state.
+// persist inserts one set's rows and returns the seen state to keep. Seen
+// advances only when the insert succeeds; on failure the new pairs stay
+// unseen and are retried next poll while they remain in the set.
+func (l *egressFlowLogger) persist(ctx context.Context, what string, seen map[string]map[netns.EgressFlow]struct{},
+	poll egressSetPoll, live map[string]fcvm.LiveEgressInstance) map[string]map[netns.EgressFlow]struct{} {
+	nextState := poll.next
+	if len(poll.records) > 0 {
+		if err := l.store.InsertEgressFlows(ctx, poll.records); err != nil {
+			l.log.Warn("egress flow log: insert failed", "set", what, "rows", len(poll.records), "err", err)
+			nextState = poll.kept
+		} else if l.ops != nil {
+			l.ops.EgressFlowLogRows().Add(float64(len(poll.records)))
+		}
+	}
+	// Instances whose listing failed keep their previous state; gone
+	// instances are forgotten.
+	for instance, prev := range seen {
+		if _, ok := live[instance]; !ok {
+			continue
+		}
+		if _, ok := nextState[instance]; !ok {
+			nextState[instance] = prev
+		}
+	}
+	return nextState
+}
+
+// collect lists one instance's allowed or blocked set and adds a record for
+// every pair not logged before (at most egressBlockedRowsPerInstance for
+// blocked attempts). A failed listing leaves the instance out of poll, so it
+// keeps its previous state.
 func (l *egressFlowLogger) collect(ctx context.Context, now time.Time, instance string, meta fcvm.LiveEgressInstance,
-	blocked bool, records []state.EgressFlowRecord) []state.EgressFlowRecord {
+	blocked bool, poll *egressSetPoll) {
 	list, seen, what := l.list, l.seen, "flow"
 	if blocked {
 		list, seen, what = l.listDrops, l.seenDrops, "drop"
@@ -95,22 +124,30 @@ func (l *egressFlowLogger) collect(ctx context.Context, now time.Time, instance 
 	flows, err := list(ctx, meta.Netns)
 	if err != nil {
 		l.log.Warn("egress flow log: list failed", "set", what, "instance", instance, "netns", meta.Netns, "err", err)
-		return records
+		return
 	}
 	prev := seen[instance]
-	current := make(map[netns.EgressFlow]struct{}, len(flows))
+	next := make(map[netns.EgressFlow]struct{}, len(flows))
+	kept := make(map[netns.EgressFlow]struct{}, len(prev))
+	added := 0
 	for _, f := range flows {
-		current[f] = struct{}{}
 		if _, ok := prev[f]; ok {
+			next[f] = struct{}{}
+			kept[f] = struct{}{}
 			continue
 		}
-		records = append(records, state.EgressFlowRecord{
+		if blocked && added >= egressBlockedRowsPerInstance {
+			continue
+		}
+		added++
+		next[f] = struct{}{}
+		poll.records = append(poll.records, state.EgressFlowRecord{
 			ObservedAt: now, NodeName: l.nodeName, AccountID: meta.AccountID, AppID: meta.AppID,
 			InstanceID: instance, RemoteIP: f.Addr, RemotePort: f.Port, Protocol: f.Protocol, Blocked: blocked,
 		})
 	}
-	seen[instance] = current
-	return records
+	poll.next[instance] = next
+	poll.kept[instance] = kept
 }
 
 // runEgressFlowLog drives the egress flow logger on the counter poll's

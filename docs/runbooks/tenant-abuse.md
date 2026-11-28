@@ -241,5 +241,7 @@ Port 25/465/587 rows mean the workload tried to send mail; `10.*`, `172.16.*`,
 addresses. A pair is logged once and again only after 10 minutes without another
 attempt, so the rows show which destinations were tried, not how often; the
 `vmmd_egress_denied_total{class}` counters give the volume. Rate- and flood-limited
-connections, and ICMP, are counted but not logged. Instances started before this
+connections, and ICMP, are counted but not logged. Recording is capped per instance
+(about 20 attempts a second), so a scan of an internal range shows its first
+destinations, not all of them. Instances started before this
 was deployed log no blocked rows until they are recycled.
