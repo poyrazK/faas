@@ -30917,8 +30917,12 @@ CREATE FUNCTION public.stored_workflow_revision_environment() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
-  SELECT w.environment_id INTO NEW.environment_id FROM stored_workflows w
-  WHERE w.app_id = NEW.app_id AND w.name = NEW.name;
+  IF NEW.environment_id IS NULL THEN
+    SELECT w.environment_id INTO NEW.environment_id FROM stored_workflows w
+    WHERE w.app_id = NEW.app_id AND w.name = NEW.name
+    ORDER BY (w.environment_id IS NULL) DESC
+    LIMIT 1;
+  END IF;
   RETURN NEW;
 END;
 $$;

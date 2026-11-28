@@ -589,6 +589,18 @@ and what a clone does with rules that point at production's own objects.
   is refused. Publication proves that the stage holds exactly the captured
   consumers, plans and rules (every rule paused). A key may be missing, or a
   copy revoked, only when its source has been revoked since.
+- **Stored workflows (expand).** This release keeps
+  `stored_workflows_pkey (app_id, name)` but readies its writers for a
+  stage that reuses a production workflow name. A save conflicts on
+  `(app_id, name, environment)`, a delete matches the environment, and a
+  revision is written with its environment;
+  `20261128105922300_stored_workflow_revision_environment` keeps that
+  value and fills it only for an N-1 writer that leaves it out, preferring
+  production's workflow of the name. A stage's runs no longer count
+  toward production's failure policy of the same name. Readers stay
+  name-keyed, and side tables (failure policies, schedules, signals) stay
+  production's, because the next release lets a stage reuse a name only
+  after it drops the key, behind a runtime key that N-1 never sees.
 - Consumer billing policies, rate cards and sign-up settings still have no
   clone strategy, so a monetized source stays refused until a later slice.
 
@@ -596,6 +608,5 @@ and what a clone does with rules that point at production's own objects.
 
 - A client's production key works on a full clone's stage host from the
   start, and stops working there when production revokes it.
-- Stored workflows keep `stored_workflows_pkey (app_id, name)`; their side
-  tables move to the per-environment identity next, and the following
-  release drops that key and lets a clone copy workflows disabled.
+- The next release drops `stored_workflows_pkey`, moves the side tables to
+  the per-environment identity, and lets a clone copy workflows disabled.
