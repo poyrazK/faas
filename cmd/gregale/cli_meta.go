@@ -1237,7 +1237,9 @@ var cliCommands = []cliCommand{
 				{Name: "pagerduty-region", Short: "PagerDuty service region of the new key", Value: "REGION", ClosedSet: []string{"us", "eu"}},
 			}},
 			{Name: "test", Short: "Send a marked test notification", Positionals: []string{"<channel-id>"}},
-			{Name: "rm", Short: "Delete a channel", Positionals: []string{"<channel-id>"}},
+			{Name: "rm", Short: "Delete a channel", Positionals: []string{"<channel-id>"}, Flags: []cliFlag{
+				{Name: "yes", Short: "delete without prompting on a terminal", Bool: true},
+			}},
 		},
 	},
 	{

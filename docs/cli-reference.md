@@ -8641,7 +8641,11 @@ Send a marked test notification
 
 Delete a channel
 
-`gregale alert channel delete <channel-id>`
+`gregale alert channel delete [--yes] <channel-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | delete without prompting on a terminal |  |
 
 ### alert list
 

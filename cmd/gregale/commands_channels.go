@@ -199,9 +199,18 @@ func cmdChannelsTest(args []string) int {
 
 func cmdChannelsRm(args []string) int {
 	fs := newFlagSet("channels rm", flag.ContinueOnError)
+	// --yes was a usage error and the delete never asked, unlike other
+	// deletes (prod hunt r82). A terminal now asks; scripts keep working.
+	yes := fs.Bool("yes", false, "delete without prompting on a terminal")
+	fs.BoolVar(yes, "y", false, "alias for --yes")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alert channel delete <channel-id>", "channels")
+		PrintUsage(os.Stderr, "usage: gregale alert channel delete <channel-id> [--yes]", "channels")
 		return 1
+	}
+	if !*yes && !jsonOutput && !nonInteractive && stdinIsTTY() {
+		if code := confirmYesNo(fmt.Sprintf("Delete notification channel %s? Alert rules that use it stop notifying through it.", fs.Arg(0)), "--yes", "alert channel delete"); code != 0 {
+			return code
+		}
 	}
 	client, err := authedClient()
 	if err != nil {
