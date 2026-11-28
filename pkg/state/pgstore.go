@@ -5115,7 +5115,10 @@ func restoreAppTx(ctx context.Context, tx pgx.Tx, id string, limits api.Limits) 
 	var a App
 	row := tx.QueryRow(ctx, `
 		update apps
-		   set status = 'active', deleted_at = null, delete_grace_until = null, purge_claimed_at = null
+		   set status = 'active', deleted_at = null, delete_grace_until = null, purge_claimed_at = null,
+		       -- a restored route app is an ordinary app: its split is gone
+		       -- or was undone with it (ADR-20261121170000 amendment 6)
+		       route_of_app_id = null
 		 where id = $1
 		   and status = 'deleted'
 		   and delete_grace_until > now()

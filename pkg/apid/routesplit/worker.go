@@ -167,6 +167,12 @@ func (s *Service) ensureBlock(ctx context.Context, acct state.Account, source, t
 	// predates it.
 	if target.RouteOfAppID != source.ID {
 		if err := s.Store.MarkRouteApp(ctx, target.ID, source.ID); err != nil {
+			s.log().Warn("route split: could not mark the route's app", "split", split.ID, "app", target.ID, "err", err)
+			if errors.Is(err, state.ErrNotFound) {
+				// Gone, or no longer in the source's account: a retry cannot help.
+				return api.NewProblem(422, api.CodeRouteSplitUnsupported, "Split not supported for this app",
+					"the route's app is gone or belongs to another account")
+			}
 			return api.ErrCapacity("could not mark the route's app")
 		}
 	}

@@ -6655,9 +6655,15 @@ haveApp:
 	// ADR-732: a request addressed to a production fork never takes the
 	// serving path (no wake, no picker, no cache or edge rules).
 	if forkRequested(r) {
-		if !h.refuseDirectRouteApp(w, r, app) {
-			h.serveFork(w, r, app)
+		if h.refuseDirectRouteApp(w, r, app) {
+			h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+			return
 		}
+		h.serveFork(w, r, app)
+		return
+	}
+	if h.refuseDirectRouteAppEarly(w, r, app) {
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
 	}
 	if h.pinAppTrafficPolicy(w, r, &app) {

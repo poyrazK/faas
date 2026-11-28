@@ -20,6 +20,11 @@ func TestRouteAppServesOnlyThroughItsSourcesRoute(t *testing.T) {
 	t.Run("direct request", func(t *testing.T) {
 		h, b, _ := newTestHandler(t)
 		b.app.RouteOfAppID = "app-source"
+		// Refused before the serving path spends anything on it.
+		h.financialBudgetAdmission = func(context.Context, App) error {
+			t.Error("a direct request to a route app reached budget admission")
+			return nil
+		}
 		req := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/", nil)
 		req.Header.Set("X-Forwarded-For", "192.0.2.1")
 		rec := httptest.NewRecorder()

@@ -112,4 +112,9 @@ func TestApplyMarksTheRouteApp(t *testing.T) {
 	if source, _ := f.store.AppByID(f.ctx, f.source.ID); source.RouteOfAppID != "" {
 		t.Fatalf("the source app was marked: %+v", source)
 	}
+	// A route's app serves through its source, so it is never split itself.
+	_, prob = f.svc.Apply(f.ctx, f.acct, target, f.request())
+	if prob == nil || prob.Code != api.CodeRouteSplitUnsupported || !strings.Contains(prob.Detail, "source app") {
+		t.Fatalf("splitting the route's app = %+v, want refused", prob)
+	}
 }
