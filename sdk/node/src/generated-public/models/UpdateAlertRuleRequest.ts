@@ -31,7 +31,7 @@ export type UpdateAlertRuleRequest = {
    */
   mcp_for_minutes?: number;
   /**
-   * Change the completed-release recovery window. Omission preserves it and explicit 0 disables it. Positive values require action=rollback; only error_rate_pct with gt or gte and sufficient exact deployment telemetry qualifies.
+   * Change the completed-release recovery window. Omission preserves it and explicit 0 disables it. Positive values require action=rollback; only error_rate_pct or boot_failures with gt or gte and sufficient exact deployment evidence qualifies.
    */
   post_deploy_rollback_window_seconds?: number;
   /**

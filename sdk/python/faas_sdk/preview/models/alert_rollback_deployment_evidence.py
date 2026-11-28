@@ -26,9 +26,11 @@ class AlertRollbackDeploymentEvidence:
     """Exact deployment request evidence for post-deploy rollback. Windows contain only complete minutes after cutover and
     before the fire with 30 seconds of ingestion lag. Requests counts only 2xx and 5xx responses, weighted by telemetry
     publisher counts. At least 20 requests, one server error, and a sample within two minutes of the window end are
-    required. Only error_rate_pct with gt or gte comparisons qualifies. Unaccepted fires expire after two minutes.
-    Accepted evidence is immutable and included in intent and completion audits; existing accepted operations continue
-    without requalification.
+    required. Only error_rate_pct or boot_failures with gt or gte comparisons qualifies. A boot_failures rule is judged
+    on the deployment's own boots from cutover (or the rule window, if later) to the fire. Its failed VM boots must meet
+    the rule and it must have no completed boot or restore in that window; requests, server_errors, minimum_requests and
+    error_rate_pct are then 0. Unaccepted fires expire after two minutes. Accepted evidence is immutable and included in
+    intent and completion audits; existing accepted operations continue without requalification.
 
     """
 
@@ -44,10 +46,15 @@ class AlertRollbackDeploymentEvidence:
     requests: int
     server_errors: int
     minimum_requests: int
+    """20 for error_rate_pct evidence; 0 for boot_failures evidence."""
     error_rate_pct: float
     status: AlertRollbackDeploymentEvidenceStatus
     checked_at: datetime.datetime | Unset = UNSET
     last_sample_at: datetime.datetime | Unset = UNSET
+    boot_failures: int | Unset = UNSET
+    """The deployment's failed VM boots in the window (boot_failures evidence only)."""
+    boot_successes: int | Unset = UNSET
+    """The deployment's completed boots or restores in the window (boot_failures evidence only)."""
     code: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -88,6 +95,10 @@ class AlertRollbackDeploymentEvidence:
         if not isinstance(self.last_sample_at, Unset):
             last_sample_at = self.last_sample_at.isoformat()
 
+        boot_failures = self.boot_failures
+
+        boot_successes = self.boot_successes
+
         code = self.code
 
         field_dict: dict[str, Any] = {}
@@ -114,6 +125,10 @@ class AlertRollbackDeploymentEvidence:
             field_dict["checked_at"] = checked_at
         if last_sample_at is not UNSET:
             field_dict["last_sample_at"] = last_sample_at
+        if boot_failures is not UNSET:
+            field_dict["boot_failures"] = boot_failures
+        if boot_successes is not UNSET:
+            field_dict["boot_successes"] = boot_successes
         if code is not UNSET:
             field_dict["code"] = code
 
@@ -164,6 +179,10 @@ class AlertRollbackDeploymentEvidence:
         else:
             last_sample_at = datetime.datetime.fromisoformat(_last_sample_at)
 
+        boot_failures = d.pop("boot_failures", UNSET)
+
+        boot_successes = d.pop("boot_successes", UNSET)
+
         code = d.pop("code", UNSET)
 
         alert_rollback_deployment_evidence = cls(
@@ -183,6 +202,8 @@ class AlertRollbackDeploymentEvidence:
             status=status,
             checked_at=checked_at,
             last_sample_at=last_sample_at,
+            boot_failures=boot_failures,
+            boot_successes=boot_successes,
             code=code,
         )
 

@@ -39,7 +39,7 @@ export type CreateAlertRuleRequest = {
    */
   edge_rule_id?: string;
   /**
-   * Enable completed-release rollback for this many seconds after cutover; 0 disables it. Requires action=rollback. Only deployment-specific error_rate_pct breaches with gt or gte comparisons can qualify.
+   * Enable completed-release rollback for this many seconds after cutover; 0 disables it. Requires action=rollback. Only deployment-specific error_rate_pct or boot_failures breaches with gt or gte comparisons can qualify.
    */
   post_deploy_rollback_window_seconds?: number;
   /**

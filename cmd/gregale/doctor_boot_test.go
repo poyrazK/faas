@@ -20,8 +20,7 @@ import (
 
 // fakeBootDocker is a Docker client stand-in driven by files in dir: state
 // holds `inspect` output, addr the published address, procnet the
-// container's /proc/net/tcp, image the `image inspect` JSON, health the
-// `.State.Health` JSON; runfail makes
+// container's /proc/net/tcp, image the `image inspect` JSON; runfail makes
 // `run` fail. Every call is logged.
 type fakeBootDocker struct{ dir string }
 
@@ -33,7 +32,7 @@ d=` + dir + `
 echo "$@" >> "$d/log"
 case "$1" in
 run) if [ -f "$d/runfail" ]; then echo "pull access denied" >&2; exit 125; fi; echo cid ;;
-inspect) case "$*" in *Health*) cat "$d/health" 2>/dev/null || echo null ;; *) cat "$d/state" ;; esac ;;
+inspect) cat "$d/state" ;;
 port) cat "$d/addr" 2>/dev/null ;;
 logs) echo "Error: DATABASE_URL is not set" ;;
 exec) cat "$d/procnet" 2>/dev/null || exit 126 ;;

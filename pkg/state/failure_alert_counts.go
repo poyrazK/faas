@@ -12,7 +12,8 @@ import (
 
 // Mirrors of pkg/events values; pkg/state cannot import pkg/events.
 const (
-	wakeBootFailedKind = "wake.boot_failed"
+	wakeBootFailedKind    = "wake.boot_failed"
+	wakeBootCompletedKind = "wake.boot_completed"
 	// vmmBootFailedReason is the only BootFailed reason the boot_failures
 	// metric counts: the VM failed to start. record_runtime_failed is schedd
 	// failing to publish runtime state, a platform cause.
@@ -97,4 +98,29 @@ func (m *MemStore) CountAccountFailedJobRuns(_ context.Context, accountID string
 		}
 	}
 	return n, nil
+}
+
+// deploymentBootEvidenceLocked is the in-memory ReadDeploymentBootEvidence.
+// The caller holds m.mu.
+func (m *MemStore) deploymentBootEvidenceLocked(appID, deploymentID string, start, end time.Time) (failures, successes int64) {
+	for _, e := range m.events {
+		if e.At.Before(start) || e.At.After(end) || e.Kind != wakeBootFailedKind && e.Kind != wakeBootCompletedKind {
+			continue
+		}
+		var data struct {
+			AppID        string `json:"app_id"`
+			DeploymentID string `json:"deployment_id"`
+			Reason       string `json:"reason"`
+			Mirror       *bool  `json:"mirror"`
+		}
+		if json.Unmarshal(e.Data, &data) != nil || data.AppID != appID || data.DeploymentID != deploymentID {
+			continue
+		}
+		if e.Kind == wakeBootCompletedKind {
+			successes++
+		} else if data.Reason == vmmBootFailedReason && data.Mirror == nil {
+			failures++
+		}
+	}
+	return failures, successes
 }

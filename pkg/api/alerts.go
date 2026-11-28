@@ -370,8 +370,12 @@ func AlertRuleActionAllowedForMetric(metric, action string) bool {
 		metric == "workflow_failures" || metric == "workflow_schedule_quota_skips" ||
 		metric == "workflow_pending_age_seconds" || metric == "workflow_waiting_age_seconds" || metric == "workflow_due_age_seconds" ||
 		metric == AlertRuleMetricCustomMetric || metric == AlertRuleMetricLogSearchMatches || metric == "queue_backlog" || metric == "queue_oldest_age_seconds" || IsEdgeRuleAlertMetric(metric) || metric == AlertMetricRouteInsightsDetected || IsRouteAlertMetric(metric) ||
-		metric == AlertMetricAIBudgetAlerts || metric == AlertMetricBootFailures || metric == AlertMetricJobFailures {
+		metric == AlertMetricAIBudgetAlerts || metric == AlertMetricJobFailures {
 		return action == "" || action == "webhook"
+	}
+	if metric == AlertMetricBootFailures {
+		// Failing boots never justify promoting a canary.
+		return action != "promote"
 	}
 	if metric == MetricMCPReadinessUnhealthy || IsMCPProtocolMetric(metric) || IsMCPConnectionHealthMetric(metric) || IsMCPCatalogMonitorMetric(metric) || IsMCPPolicyConvergenceMetric(metric) || metric == "mcp_tasks_oldest_age_seconds" || metric == "mcp_tasks_metrics_stale" || metric == "mcp_task_promotion_hold_age_seconds" {
 		return action == "" || action == "webhook"
@@ -774,9 +778,11 @@ const AlertMetricOOMKills = "oom_kills"
 // runtime-state write failures. An app that crashes on start and scales to
 // zero between wakes answers some requests and never trips api_up; support
 // saw these as boot_failing attention signals with no alert a customer could
-// set. App-scoped. Webhook action only: a node fault also fails boots, and
-// the count is not tied to one deployment, so a rollback could undo a
-// healthy release, and fire again on the same failures after the cooldown.
+// set. App-scoped. Rollback and demote act on an in-flight canary; with a
+// post-deploy rollback window, rollback also undoes a completed release, but
+// only on that release's own evidence: its failed boots meet the rule and it
+// has not started once since cutover, so a node fault under a healthy release
+// never rolls it back (ADR-604 amendment 2026-11-28).
 const AlertMetricBootFailures = "boot_failures"
 
 // AlertMetricJobFailures counts the account's job runs that finished failed
@@ -856,7 +862,7 @@ func AlertMetricActionRestriction(metric string) string {
 	case AlertMetricAIBudgetAlerts:
 		return "AI budget alerts support webhook action only"
 	case AlertMetricBootFailures:
-		return "boot failure alerts support webhook action only"
+		return "boot failure alerts support webhook, rollback and demote actions"
 	case AlertMetricJobFailures:
 		return "job failure alerts support webhook action only"
 	}

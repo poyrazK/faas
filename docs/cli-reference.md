@@ -252,7 +252,7 @@ gregale deploy --path packages/api --source=worktree
 
 Check local source, an image or project prerequisites before deploying
 
-`gregale deploy check [--project] [--image <REF>] [--registry-user <USER>] [--registry-password-stdin] [--docker-config <PATH>] [--boot] [--env-file <FILE>] [--ram <MB>] [--healthcheck-path <PATH>] [--strict] [--app <SLUG>] [--project-slug <SLUG>] [--path <DIR>] [--source <MODE>] [--worktree] [--env <ENV>] [--from <ENV>] [--expected-state <SHA256>] [--atomic] [--add-services] [--verify] [--workers] [--worker-health] [--migrate] [--progressive] [--stabilize] [--sync-config] [--config-file <PATH>] [--secrets-file <PATH>]`
+`gregale deploy check [--project] [--image <REF>] [--registry-user <USER>] [--registry-password-stdin] [--docker-config <PATH>] [--boot] [--env-file <FILE>] [--ram <MB>] [--strict] [--app <SLUG>] [--project-slug <SLUG>] [--path <DIR>] [--source <MODE>] [--worktree] [--env <ENV>] [--from <ENV>] [--expected-state <SHA256>] [--atomic] [--add-services] [--verify] [--workers] [--worker-health] [--migrate] [--progressive] [--stabilize] [--sync-config] [--config-file <PATH>] [--secrets-file <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -264,7 +264,6 @@ Check local source, an image or project prerequisites before deploying
 | `--boot` | without --project: with --image, also run the image with local Docker and check it starts, answers GET / on 0.0.0.0:$PORT and stays up |  |
 | `--env-file <FILE>` | without --project: with --boot, pass KEY=VALUE lines from this file to the container |  |
 | `--ram <MB>` | without --project: with --boot, the container&#39;s memory limit in MB (default: --app&#39;s RAM, else your plan&#39;s default for a new app) |  |
-| `--healthcheck-path <PATH>` | without --project: with --boot, probe this readiness path instead of / and require 2xx |  |
 | `--strict` | without --project: exit 1 on warnings |  |
 | `--app <SLUG>` | without --project: app whose env and secret names count as declared (defaults to linked context) |  |
 | `--project-slug <SLUG>` | with --project: project slug (defaults to linked context or selected directory) |  |

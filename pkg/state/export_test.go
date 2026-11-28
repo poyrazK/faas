@@ -442,6 +442,7 @@ var PublishRuntimeCaptureTestReceipt = publishRuntimeCaptureTestReceipt
 var PublishWorkflowEvent = publishWorkflowEvent
 var QualificationSmokeReceiptMatchesRequest = qualificationSmokeReceiptMatchesRequest
 var QualifyHistoricalAlertEvidence = qualifyHistoricalAlertEvidence
+var QualifyBootFailureEvidence = qualifyBootFailureEvidence
 var QueueCanaryStatus = queueCanaryStatus
 var QueueHealthFixtureLease = queueHealthFixtureLease
 var QueueHealthRun = queueHealthRun
@@ -1240,3 +1241,10 @@ func (s *PgStore) FinalUsageBeforeForTest(ctx context.Context, accountID string,
 
 // UsageFinalBefore reports whether usage before at is final as of now.
 func UsageFinalBefore(at, now time.Time) bool { return usageFinalBefore(at, now) }
+
+// DeploymentBootEvidence exposes the in-memory ADR-605 boot evidence.
+func (m *MemStore) DeploymentBootEvidence(appID, deploymentID string, start, end time.Time) (int64, int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.deploymentBootEvidenceLocked(appID, deploymentID, start, end)
+}

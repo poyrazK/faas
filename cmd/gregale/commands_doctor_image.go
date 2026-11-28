@@ -37,9 +37,7 @@ type doctorImageFlags struct {
 	// ramMB overrides the boot's memory limit; app is doctor's --app, whose
 	// RAM is the limit otherwise (doctorBootMemory).
 	ramMB int
-	// healthPath is the readiness path --boot probes instead of /.
-	healthPath string
-	app        string
+	app   string
 }
 
 func registerDoctorImageFlags(fs *flag.FlagSet) *doctorImageFlags {
@@ -51,7 +49,6 @@ func registerDoctorImageFlags(fs *flag.FlagSet) *doctorImageFlags {
 	fs.BoolVar(&f.boot, "boot", false, "with --image, run the image with local Docker and check it starts, serves HTTP on 0.0.0.0:$PORT and stays up")
 	fs.StringVar(&f.envFile, "env-file", "", "with --boot, pass KEY=VALUE lines from this file to the container, docker env-file format")
 	fs.IntVar(&f.ramMB, "ram", 0, "with --boot, memory limit in MB (default: --app's RAM, else your plan's default for a new app)")
-	fs.StringVar(&f.healthPath, "healthcheck-path", "", "with --boot, probe this readiness path instead of / and require 2xx, as Gregale does (for example /healthz)")
 	return f
 }
 
@@ -79,9 +76,6 @@ func (f *doctorImageFlags) validate(fs *flag.FlagSet) error {
 	}
 	if visited["env-file"] && (!f.boot || strings.TrimSpace(f.envFile) == "") {
 		return errors.New("--env-file requires --boot and a file path")
-	}
-	if visited["healthcheck-path"] && (!f.boot || !strings.HasPrefix(f.healthPath, "/") || strings.ContainsFunc(f.healthPath, func(r rune) bool { return r <= ' ' || r == 0x7f })) {
-		return errors.New("--healthcheck-path requires --boot and an HTTP path that starts with / and has no spaces")
 	}
 	// Docker itself refuses a limit below its minimum, with its own message.
 	if visited["ram"] && (!f.boot || f.ramMB <= 0) {
@@ -235,13 +229,8 @@ func addDoctorBootChecks(report *doctorReport, flags *doctorImageFlags) {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	app := doctorBootLookupApp(ctx, flags.app)
-	memoryMB, memorySource := doctorBootMemory(ctx, flags, app)
-	opts := doctorBootOptions{image: flags.image, port: port, envFile: flags.envFile, memoryMB: memoryMB, memorySource: memorySource, healthPath: flags.healthPath, probeHost: app.host}
-	if report.Image != nil {
-		opts.imageHealthcheck = doctorBootImageHealthcheck(report.Image.Healthcheck)
-	}
-	boot := runDoctorBootChecks(ctx, opts)
+	memoryMB, memorySource := doctorBootMemory(ctx, flags)
+	boot := runDoctorBootChecks(ctx, doctorBootOptions{image: flags.image, port: port, envFile: flags.envFile, memoryMB: memoryMB, memorySource: memorySource})
 	checks := report.Checks[:0]
 	for _, c := range report.Checks {
 		if c.Name != "startup-and-port" {

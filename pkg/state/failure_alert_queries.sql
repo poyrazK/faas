@@ -22,3 +22,20 @@ SELECT count(*)::bigint AS total
    AND aggregate_status IN ('failed', 'dead_letter')
    AND finished_at >= sqlc.arg(since)::timestamptz
    AND finished_at <= sqlc.arg(until)::timestamptz;
+
+-- name: ReadDeploymentBootEvidence :one
+-- ADR-605 amendment 2: a boot_failures rollback judges a completed release on
+-- its own boots in [window_start, window_end]: failed VM boots (not
+-- mirror-mode, not schedd's own runtime-state failures) and boots or
+-- restores that completed. Both events carry deployment_id from schedd.
+SELECT
+  count(*) FILTER (WHERE kind = 'wake.boot_failed'
+                     AND data->>'reason' = 'vmm_boot_failed'
+                     AND NOT (data ? 'mirror'))::bigint AS failures,
+  count(*) FILTER (WHERE kind = 'wake.boot_completed')::bigint AS successes
+  FROM events
+ WHERE kind IN ('wake.boot_failed', 'wake.boot_completed')
+   AND data->>'app_id' = sqlc.arg(app_id)::text
+   AND data->>'deployment_id' = sqlc.arg(deployment_id)::text
+   AND at >= sqlc.arg(window_start)::timestamptz
+   AND at <= sqlc.arg(window_end)::timestamptz;

@@ -63,3 +63,45 @@ func (q *Queries) CountAppBootFailures(ctx context.Context, db DBTX, arg CountAp
 	err := row.Scan(&total)
 	return total, err
 }
+
+const readDeploymentBootEvidence = `-- name: ReadDeploymentBootEvidence :one
+SELECT
+  count(*) FILTER (WHERE kind = 'wake.boot_failed'
+                     AND data->>'reason' = 'vmm_boot_failed'
+                     AND NOT (data ? 'mirror'))::bigint AS failures,
+  count(*) FILTER (WHERE kind = 'wake.boot_completed')::bigint AS successes
+  FROM events
+ WHERE kind IN ('wake.boot_failed', 'wake.boot_completed')
+   AND data->>'app_id' = $1::text
+   AND data->>'deployment_id' = $2::text
+   AND at >= $3::timestamptz
+   AND at <= $4::timestamptz
+`
+
+type ReadDeploymentBootEvidenceParams struct {
+	AppID        string
+	DeploymentID string
+	WindowStart  pgtype.Timestamptz
+	WindowEnd    pgtype.Timestamptz
+}
+
+type ReadDeploymentBootEvidenceRow struct {
+	Failures  int64
+	Successes int64
+}
+
+// ADR-605 amendment 2: a boot_failures rollback judges a completed release on
+// its own boots in [window_start, window_end]: failed VM boots (not
+// mirror-mode, not schedd's own runtime-state failures) and boots or
+// restores that completed. Both events carry deployment_id from schedd.
+func (q *Queries) ReadDeploymentBootEvidence(ctx context.Context, db DBTX, arg ReadDeploymentBootEvidenceParams) (ReadDeploymentBootEvidenceRow, error) {
+	row := db.QueryRow(ctx, readDeploymentBootEvidence,
+		arg.AppID,
+		arg.DeploymentID,
+		arg.WindowStart,
+		arg.WindowEnd,
+	)
+	var i ReadDeploymentBootEvidenceRow
+	err := row.Scan(&i.Failures, &i.Successes)
+	return i, err
+}

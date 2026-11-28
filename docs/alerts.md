@@ -455,10 +455,20 @@ app.
 `failed` or `dead_letter` within the window. Jobs belong to the account, not
 an app, so the rule counts every job whichever app you create it on.
 
-Both support the webhook action only. A failed boot can also come from the
-node the instance landed on, so an automatic rollback could undo a healthy
-release; roll back yourself with `gregale rollback <app>` when the logs show
-the release is at fault.
+`job_failures` supports the webhook action only. `boot_failures` also takes
+`--action rollback` or `--action demote`, which act on a canary in flight. With
+`--post-deploy-rollback-window` it can roll back a release that already
+finished, judged only on that release's own boots: its failed boots since the
+release went live must meet the rule, and it must not have started once. A
+release that crashes on start rolls back; a node fault under a healthy
+release, which still starts on other nodes, does not. A release rolled back
+this way is not rolled back again.
+
+```bash
+gregale alert create --app shop --name "Crash on start" \
+  --metric boot_failures --comparison gte --threshold 3 --window-spec 15m \
+  --action rollback --post-deploy-rollback-window 30m --channel OPS_SLACK_ID
+```
 
 ```bash
 gregale alert preset enable boot_failing --app shop --channel OPS_SLACK_ID

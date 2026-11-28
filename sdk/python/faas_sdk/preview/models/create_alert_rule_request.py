@@ -82,7 +82,8 @@ class CreateAlertRuleRequest:
     7d (hourly hit buckets, kept 14 days)."""
     post_deploy_rollback_window_seconds: int | Unset = UNSET
     """Enable completed-release rollback for this many seconds after cutover; 0 disables it. Requires
-    action=rollback. Only deployment-specific error_rate_pct breaches with gt or gte comparisons can qualify."""
+    action=rollback. Only deployment-specific error_rate_pct or boot_failures breaches with gt or gte comparisons
+    can qualify."""
     notify_resolved: bool | Unset = UNSET
     """Also send the webhook a signed alert.resolved event when the rule recovers. Requires webhook_url;
     notification channels always receive resolves. Defaults to false, because receivers that predate it count every

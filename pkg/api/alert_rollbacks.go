@@ -55,8 +55,13 @@ type AlertRollbackDeploymentEvidence struct {
 	ServerErrors    int64      `json:"server_errors"`
 	MinimumRequests int64      `json:"minimum_requests"`
 	ErrorRatePct    float64    `json:"error_rate_pct"`
-	Status          string     `json:"status"`
-	Code            string     `json:"code,omitempty"`
+	// BootFailures and BootSuccesses are a boot_failures rule's evidence: the
+	// deployment's own failed VM boots and successful boots or restores in
+	// the window (ADR-604 amendment 2026-11-28).
+	BootFailures  int64  `json:"boot_failures,omitempty"`
+	BootSuccesses int64  `json:"boot_successes,omitempty"`
+	Status        string `json:"status"`
+	Code          string `json:"code,omitempty"`
 }
 
 func (c *Client) ListAlertRollbacks(ctx context.Context, slug string) ([]AlertRollback, error) {

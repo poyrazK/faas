@@ -7040,6 +7040,11 @@ type Querier interface {
 	ReadCustomerOperationWorkflowTarget(ctx context.Context, db DBTX, appID pgtype.UUID) (ReadCustomerOperationWorkflowTargetRow, error)
 	ReadDependencyGateTarget(ctx context.Context, db DBTX, arg ReadDependencyGateTargetParams) (ReadDependencyGateTargetRow, error)
 	ReadDeploySettingsLatest(ctx context.Context, db DBTX, appID string) (ReadDeploySettingsLatestRow, error)
+	// ADR-605 amendment 2: a boot_failures rollback judges a completed release on
+	// its own boots in [window_start, window_end]: failed VM boots (not
+	// mirror-mode, not schedd's own runtime-state failures) and boots or
+	// restores that completed. Both events carry deployment_id from schedd.
+	ReadDeploymentBootEvidence(ctx context.Context, db DBTX, arg ReadDeploymentBootEvidenceParams) (ReadDeploymentBootEvidenceRow, error)
 	ReadDeploymentConfiguration(ctx context.Context, db DBTX, arg ReadDeploymentConfigurationParams) (ReadDeploymentConfigurationRow, error)
 	ReadDeploymentCronSnapshot(ctx context.Context, db DBTX, arg ReadDeploymentCronSnapshotParams) (ReadDeploymentCronSnapshotRow, error)
 	ReadDeploymentCronState(ctx context.Context, db DBTX, appID string) (ReadDeploymentCronStateRow, error)
