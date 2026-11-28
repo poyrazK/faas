@@ -67,7 +67,6 @@ func TestJourneyFixtureMintTokenOneAccountPerPlan(t *testing.T) {
 // must not count it as a paid subject it never bills. Free needs no grant,
 // and a grant the account already has (an operator's) is kept.
 func TestJourneyFixtureComplimentaryForPaidPlans(t *testing.T) {
-	ctx := context.Background()
 	operatorID := "8f1c0d7e-2b4a-4c3e-9a51-6d2f0b7e4c10"
 	for _, tt := range []struct {
 		name       string
@@ -88,11 +87,11 @@ func TestJourneyFixtureComplimentaryForPaidPlans(t *testing.T) {
 			store := state.NewMemStore()
 			stderr := withJourneyFixtureStore(t, store)
 			if tt.preGranted {
-				acct, err := store.CreateAccount(ctx, journeyFixtureEmail(tt.plan), tt.plan)
+				acct, err := store.CreateAccount(context.Background(), journeyFixtureEmail(tt.plan), tt.plan)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := store.SetComplimentaryAccount(ctx, state.ComplimentaryAccount{AccountID: acct.ID, Plan: tt.plan,
+				if err := store.SetComplimentaryAccount(context.Background(), state.ComplimentaryAccount{AccountID: acct.ID, Plan: tt.plan,
 					Reason: "internal_test_account_no_billing_identity", GrantedBy: operatorID, GrantedAt: time.Now().UTC()}); err != nil {
 					t.Fatal(err)
 				}
@@ -102,7 +101,7 @@ func TestJourneyFixtureComplimentaryForPaidPlans(t *testing.T) {
 				if code != 0 {
 					t.Fatalf("mint code=%d stderr=%s", code, stderr)
 				}
-				comp, err := store.ComplimentaryAccount(ctx, c.AccountID)
+				comp, err := store.ComplimentaryAccount(context.Background(), c.AccountID)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -116,7 +115,7 @@ func TestJourneyFixtureComplimentaryForPaidPlans(t *testing.T) {
 					t.Fatalf("complimentary = %+v, want %s / %s, no expiry", comp, tt.plan, tt.wantReason)
 				}
 				if !tt.preGranted {
-					if cents, ok, err := store.GetAccountOverageCapCents(ctx, c.AccountID); err != nil || !ok || cents != 0 {
+					if cents, ok, err := store.GetAccountOverageCapCents(context.Background(), c.AccountID); err != nil || !ok || cents != 0 {
 						t.Fatalf("overage cap = %d, %t, %v; want $0", cents, ok, err)
 					}
 				}
