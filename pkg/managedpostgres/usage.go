@@ -455,6 +455,11 @@ func (c *UsageCollector) recordSharedUsage(ctx context.Context, database Databas
 
 func (c *UsageCollector) collectWindow(ctx context.Context, database Database, backend Backend, from, to, observedAt time.Time) (Usage, error) {
 	usage, err := backend.Provider.Usage(ctx, database.ProviderResourceID, UsageWindow{From: from, To: to})
+	if errors.Is(err, ErrUsageNotReported) && c.settlesUnreportedWindow(database, to) {
+		c.logger.Info("managed postgres usage settled a deleted database's unreported final window",
+			"database_id", database.ID, "window_from", from, "window_to", to)
+		usage, err = unreportedUsage(backend, from, to), nil
+	}
 	if err != nil {
 		return Usage{}, normalizeProviderError(err)
 	}
@@ -502,6 +507,34 @@ func (c *UsageCollector) collectWindow(ctx context.Context, database Database, b
 		return Usage{}, err
 	}
 	return usage, nil
+}
+
+// settlesUnreportedWindow reports whether a window the provider reported no
+// consumption for is a deleted database's final window, now closed. Neon
+// reports nothing for the hour a project was deleted in (production
+// 2026-11-27). Without this the final window never completes: every sweep
+// deferred it, FaasManagedPostgresUsageCollectionStale fired, and admission
+// refused the account's new databases as stale. Neon bills from the same
+// consumption data, so the unreported partial hour is zero on both sides.
+// Earlier windows and live databases still wait for a report, and the final
+// correction tail asks for this window again, so a late report replaces the
+// zeros.
+func (c *UsageCollector) settlesUnreportedWindow(database Database, to time.Time) bool {
+	if database.State != StateDeleted || database.DeletedAt == nil {
+		return false
+	}
+	end := usageEnd(*database.DeletedAt, c.policy.Window)
+	return !end.IsZero() && to.Equal(end) && !c.now().Before(end)
+}
+
+// unreportedUsage is a zero reading for every meter the backend promises, so
+// the settled window passes the same completeness checks as a reported one.
+func unreportedUsage(backend Backend, from, to time.Time) Usage {
+	readings := make([]MeterReading, 0, len(backend.Capabilities.UsageMeters))
+	for _, meter := range backend.Capabilities.UsageMeters {
+		readings = append(readings, MeterReading{Meter: meter})
+	}
+	return Usage{Window: UsageWindow{From: from, To: to}, Readings: readings}
 }
 
 func (c *UsageCollector) Run(ctx context.Context) error {
