@@ -95,6 +95,13 @@ func TestAlertPostDeployWindowValidationAndMerge(t *testing.T) {
 	if p := validateAlertRollbackWindow(600, "rollback", "boot_failures", "gte", "15m", 3); p != nil {
 		t.Fatalf("boot-failure window refused: %+v", p)
 	}
+	// ...and only that way: it never rolls back a live canary.
+	if validateAlertRollbackWindow(0, "rollback", "boot_failures", "gte", "15m", 3) == nil {
+		t.Fatal("boot-failure rollback accepted without a post-deploy window")
+	}
+	if p := validateAlertRollbackWindow(0, "webhook", "boot_failures", "gte", "15m", 3); p != nil {
+		t.Fatalf("boot-failure webhook refused: %+v", p)
+	}
 	for _, c := range []struct{ metric, comparison string }{{"latency_p95_ms", "gt"}, {"error_rate_pct", "lt"}, {"custom_metric", "gt"}, {"boot_failures", "lt"}, {"job_failures", "gt"}} {
 		if validateAlertRollbackWindow(600, "rollback", c.metric, c.comparison, "5m", 40) == nil {
 			t.Errorf("post-deploy window accepted on %s %s, which can never roll a release back", c.metric, c.comparison)

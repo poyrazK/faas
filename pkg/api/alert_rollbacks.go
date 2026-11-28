@@ -57,7 +57,7 @@ type AlertRollbackDeploymentEvidence struct {
 	ErrorRatePct    float64    `json:"error_rate_pct"`
 	// BootFailures and BootSuccesses are a boot_failures rule's evidence: the
 	// deployment's own failed VM boots and successful boots or restores in
-	// the window (ADR-604 amendment 2026-11-28).
+	// the window (ADR-605 amendment 2).
 	BootFailures  int64  `json:"boot_failures,omitempty"`
 	BootSuccesses int64  `json:"boot_successes,omitempty"`
 	Status        string `json:"status"`

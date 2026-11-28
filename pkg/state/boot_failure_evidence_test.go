@@ -1,8 +1,6 @@
 package state_test
 
 import (
-	"context"
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -76,39 +74,5 @@ func TestHistoricalAlertRollbackSupportsBootFailures(t *testing.T) {
 		if got := state.HistoricalAlertRollbackSupported(test.metric, test.comparison, "15m", test.threshold); got != test.want {
 			t.Errorf("%s %s %v = %t, want %t", test.metric, test.comparison, test.threshold, got, test.want)
 		}
-	}
-}
-
-// The in-memory evidence counts only this deployment's live failed VM boots
-// and its completed boots, inside the window.
-func TestMemStoreBootFailureEvidence(t *testing.T) {
-	ctx := context.Background()
-	now := time.Now().UTC().Truncate(time.Second)
-	store := state.NewMemStore()
-	app, dep, other := uuid.NewString(), uuid.NewString(), uuid.NewString()
-	for _, ev := range []struct {
-		kind string
-		data map[string]any
-		ago  time.Duration
-	}{
-		{"wake.boot_failed", map[string]any{"app_id": app, "deployment_id": dep, "reason": "vmm_boot_failed"}, time.Minute},
-		{"wake.boot_failed", map[string]any{"app_id": app, "deployment_id": dep, "reason": "vmm_boot_failed"}, 2 * time.Minute},
-		{"wake.boot_failed", map[string]any{"app_id": app, "deployment_id": dep, "reason": "vmm_boot_failed", "mirror": true}, time.Minute},
-		{"wake.boot_failed", map[string]any{"app_id": app, "deployment_id": dep, "reason": "record_runtime_failed"}, time.Minute},
-		{"wake.boot_failed", map[string]any{"app_id": app, "deployment_id": other, "reason": "vmm_boot_failed"}, time.Minute},
-		{"wake.boot_failed", map[string]any{"app_id": app, "deployment_id": dep, "reason": "vmm_boot_failed"}, time.Hour},
-		{"wake.boot_completed", map[string]any{"app_id": app, "deployment_id": other}, time.Minute},
-	} {
-		data, _ := json.Marshal(ev.data)
-		if err := store.AppendEventAt(ctx, "schedd", ev.kind, nil, data, now.Add(-ev.ago)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	failures, successes := store.DeploymentBootEvidence(app, dep, now.Add(-15*time.Minute), now)
-	if failures != 2 || successes != 0 {
-		t.Fatalf("evidence = %d failures, %d successes; want 2, 0", failures, successes)
-	}
-	if failures, successes = store.DeploymentBootEvidence(app, other, now.Add(-15*time.Minute), now); failures != 1 || successes != 1 {
-		t.Fatalf("other deployment evidence = %d, %d; want 1, 1", failures, successes)
 	}
 }

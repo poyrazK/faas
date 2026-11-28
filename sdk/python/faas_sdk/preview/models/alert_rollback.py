@@ -47,8 +47,10 @@ class AlertRollback:
     weighted by telemetry publisher counts. At least 20 requests, one server error, and a sample within two minutes
     of the window end are required. Only error_rate_pct or boot_failures with gt or gte comparisons qualifies. A
     boot_failures rule is judged on the deployment's own boots from cutover (or the rule window, if later) to the
-    fire. Its failed VM boots must meet the rule and it must have no completed boot or restore in that window;
-    requests, server_errors, minimum_requests and error_rate_pct are then 0. Unaccepted fires expire after two
+    fire. A failed VM boot counts only on a node that completed a boot of another deployment in the window. Those
+    failures must meet the rule and the deployment must have no completed boot or restore in that window; requests,
+    server_errors, minimum_requests and error_rate_pct are then 0. Boot evidence is PostgreSQL-only, and a
+    boot_failures rule never rolls back an in-flight canary or service rollout. Unaccepted fires expire after two
     minutes. Accepted evidence is immutable and included in intent and completion audits; existing accepted
     operations continue without requalification."""
     historical: bool | Unset = UNSET

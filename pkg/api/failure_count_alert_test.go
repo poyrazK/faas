@@ -3,8 +3,8 @@ package api
 import "testing"
 
 // job_failures is notification-only: it counts the whole account's jobs, so
-// no app action fits it. boot_failures may roll back or demote (ADR-605
-// amendment 2) but never promotes.
+// no app action fits it. boot_failures may roll back a completed release
+// (ADR-605 amendment 2) but never acts on a canary.
 func TestFailureCountAlertActions(t *testing.T) {
 	for _, test := range []struct {
 		metric, action string
@@ -18,7 +18,7 @@ func TestFailureCountAlertActions(t *testing.T) {
 		{AlertMetricBootFailures, "", true},
 		{AlertMetricBootFailures, "webhook", true},
 		{AlertMetricBootFailures, "rollback", true},
-		{AlertMetricBootFailures, "demote", true},
+		{AlertMetricBootFailures, "demote", false},
 		{AlertMetricBootFailures, "promote", false},
 	} {
 		if got := AlertRuleActionAllowedForMetric(test.metric, test.action); got != test.want {

@@ -1,10 +1,11 @@
 -- filename: 20261128090000100_boot_failures_rollback_action.sql
 -- migration-compat: expand
--- ADR-605 amendment 2: boot_failures rules may roll back or demote. A
--- completed release rolls back only on its own boot evidence (failed boots
--- meet the rule, none completed since cutover), so a node fault under a
--- healthy release never rolls it back. job_failures stays webhook-only and
--- boot_failures never promotes. alert_rules_failure_actions_chk is added NOT
+-- ADR-605 amendment 2: a boot_failures rule may roll back a completed
+-- release inside its post-deploy rollback window, judged only on that
+-- release's own boots (failed boots on otherwise healthy nodes meet the rule,
+-- none completed since cutover), so a node or fleet fault never rolls a
+-- healthy release back. It never acts on an in-flight canary (no demote, no
+-- promote) and its rollback needs a window. job_failures stays webhook-only. alert_rules_failure_actions_chk is added NOT
 -- VALID and validated, then the webhook-only check it replaces is dropped.
 -- +goose NO TRANSACTION
 
@@ -15,7 +16,8 @@ DO $$ BEGIN
  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'alert_rules'::regclass AND conname = 'alert_rules_failure_actions_chk') THEN
   ALTER TABLE alert_rules ADD CONSTRAINT alert_rules_failure_actions_chk CHECK (
     ((metric <> 'job_failures') OR (action = 'webhook'))
-    AND ((metric <> 'boot_failures') OR (action <> 'promote'))) NOT VALID;
+    AND ((metric <> 'boot_failures') OR (action = 'webhook')
+         OR (action = 'rollback' AND post_deploy_rollback_window_seconds > 0))) NOT VALID;
  END IF;
 END $$;
 -- +goose StatementEnd

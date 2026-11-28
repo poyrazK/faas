@@ -18,10 +18,15 @@ func alertRollbackWindowFrom(p *int) int {
 // (ADR-604). A window needs action rollback and a rule the deployment
 // evidence can judge: an error_rate_pct or boot_failures rule with gt or gte
 // (ADR-605 amendment 2). Any other rule would fire and then fail with
-// alert_rollback_metric_unsupported.
+// alert_rollback_metric_unsupported. A boot_failures rollback works only
+// through the window, so it needs one.
 func validateAlertRollbackWindow(seconds int, action, metric, comparison, windowSpec string, threshold float64) *api.Problem {
 	if seconds < 0 || seconds > api.AlertRollbackMaxWindowSeconds || seconds > 0 && action != "rollback" {
 		return api.ErrAlertRuleInvalid(fmt.Sprintf("post_deploy_rollback_window_seconds must be 0 (off) or 1..%d with action=rollback", api.AlertRollbackMaxWindowSeconds))
+	}
+	if seconds == 0 && action == "rollback" && metric == api.AlertMetricBootFailures {
+		return api.ErrAlertRuleInvalid(fmt.Sprintf("a boot_failures rule with action=rollback needs post_deploy_rollback_window_seconds (1..%d): "+
+			"it rolls back only a completed release, judged on that release's own boots", api.AlertRollbackMaxWindowSeconds))
 	}
 	if seconds > 0 && !state.HistoricalAlertRollbackSupported(metric, comparison, windowSpec, threshold) {
 		return api.ErrAlertRuleInvalid("post_deploy_rollback_window_seconds needs an error_rate_pct or boot_failures rule compared with gt or gte " +

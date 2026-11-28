@@ -374,8 +374,10 @@ func AlertRuleActionAllowedForMetric(metric, action string) bool {
 		return action == "" || action == "webhook"
 	}
 	if metric == AlertMetricBootFailures {
-		// Failing boots never justify promoting a canary.
-		return action != "promote"
+		// Rollback only undoes a completed release inside its post-deploy
+		// window, on that release's own boots (ADR-605 amendment 2); an
+		// app-wide count never acts on an in-flight canary.
+		return action == "" || action == "webhook" || action == "rollback"
 	}
 	if metric == MetricMCPReadinessUnhealthy || IsMCPProtocolMetric(metric) || IsMCPConnectionHealthMetric(metric) || IsMCPCatalogMonitorMetric(metric) || IsMCPPolicyConvergenceMetric(metric) || metric == "mcp_tasks_oldest_age_seconds" || metric == "mcp_tasks_metrics_stale" || metric == "mcp_task_promotion_hold_age_seconds" {
 		return action == "" || action == "webhook"
@@ -778,11 +780,11 @@ const AlertMetricOOMKills = "oom_kills"
 // runtime-state write failures. An app that crashes on start and scales to
 // zero between wakes answers some requests and never trips api_up; support
 // saw these as boot_failing attention signals with no alert a customer could
-// set. App-scoped. Rollback and demote act on an in-flight canary; with a
-// post-deploy rollback window, rollback also undoes a completed release, but
-// only on that release's own evidence: its failed boots meet the rule and it
-// has not started once since cutover, so a node fault under a healthy release
-// never rolls it back (ADR-604 amendment 2026-11-28).
+// set. App-scoped. Rollback needs a post-deploy rollback window and undoes
+// only a completed release, on that release's own evidence: its failed boots
+// on otherwise healthy nodes meet the rule and it has not started once since
+// cutover, so a node or fleet fault under a healthy release never rolls it
+// back. It never acts on an in-flight canary (ADR-605 amendment 2).
 const AlertMetricBootFailures = "boot_failures"
 
 // AlertMetricJobFailures counts the account's job runs that finished failed
@@ -862,7 +864,7 @@ func AlertMetricActionRestriction(metric string) string {
 	case AlertMetricAIBudgetAlerts:
 		return "AI budget alerts support webhook action only"
 	case AlertMetricBootFailures:
-		return "boot failure alerts support webhook, rollback and demote actions"
+		return "boot failure alerts support webhook and rollback actions; rollback needs post_deploy_rollback_window_seconds"
 	case AlertMetricJobFailures:
 		return "job failure alerts support webhook action only"
 	}

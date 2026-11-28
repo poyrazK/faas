@@ -55,7 +55,7 @@ class UpdateAlertRuleRequest:
     post_deploy_rollback_window_seconds: int | Unset = UNSET
     """Change the completed-release recovery window. Omission preserves it and explicit 0 disables it. Positive
     values require action=rollback; only error_rate_pct or boot_failures with gt or gte and sufficient exact
-    deployment evidence qualifies."""
+    deployment evidence qualifies. A boot_failures rule with action=rollback needs a positive window."""
     notify_resolved: bool | Unset = UNSET
     """Turn the webhook's alert.resolved events on or off. Turning them on requires the rule to have a webhook_url."""
     name: str | Unset = UNSET

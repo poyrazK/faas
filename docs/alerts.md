@@ -456,13 +456,14 @@ app.
 an app, so the rule counts every job whichever app you create it on.
 
 `job_failures` supports the webhook action only. `boot_failures` also takes
-`--action rollback` or `--action demote`, which act on a canary in flight. With
-`--post-deploy-rollback-window` it can roll back a release that already
-finished, judged only on that release's own boots: its failed boots since the
-release went live must meet the rule, and it must not have started once. A
-release that crashes on start rolls back; a node fault under a healthy
-release, which still starts on other nodes, does not. A release rolled back
-this way is not rolled back again.
+`--action rollback` together with `--post-deploy-rollback-window`: it rolls
+back a release that already finished, judged only on that release's own
+boots. Its failed boots since the release went live must meet the rule, and
+it must not have started once. A failed boot counts only on a node that
+started other apps in the same window, so a broken node or a platform
+incident never rolls your release back. A release that crashes on start rolls
+back. A canary still in flight is never rolled back or demoted on this
+metric, and a release rolled back this way is not rolled back again.
 
 ```bash
 gregale alert create --app shop --name "Crash on start" \
