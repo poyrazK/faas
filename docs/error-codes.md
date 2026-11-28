@@ -2000,7 +2000,7 @@ See [Account and organization management](account.md#member-limits).
 
 ### `org_invitation_cap_exceeded`
 
-HTTP 403 Forbidden · Organization invitation limit reached
+HTTP 403 Forbidden · Organization invitation limit reached; Organization plan has no member seats
 
 See [Account and organization management](account.md#member-limits).
 
@@ -2024,7 +2024,7 @@ See [Account and organization management](account.md#changing-roles-removing-mem
 
 ### `org_member_cap_exceeded`
 
-HTTP 403 Forbidden · Organization member limit reached
+HTTP 403 Forbidden · Organization has no free member seat; Organization member limit reached; Organization plan has no member seats
 
 See [Account and organization management](account.md#member-limits).
 
@@ -3994,9 +3994,9 @@ HTTP 422 Unprocessable Entity · Too many changes
 
 ### `unsupported_by_cli`
 
-HTTP 403 Forbidden · Endpoint requires the dashboard session cookie
+HTTP 400 Bad Request or 403 Forbidden · --org does not apply to personal API keys; --org does not apply to this command; Endpoint requires the dashboard session cookie
 
-See [CLI guide](cli-setup.md).
+See [CLI guide](cli-setup.md), [Account and organization management](account.md).
 
 ### `unsupported_media_type`
 
