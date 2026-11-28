@@ -10,4 +10,6 @@ import (
 // the consumer sign-up host plus who made the request.
 type mcpContractHost struct{ consumerSignupHost }
 
-func (h mcpContractHost) Actor(r *http.Request, acct state.Account) string { return configActor(r, acct) }
+func (h mcpContractHost) Actor(r *http.Request, acct state.Account) string {
+	return configActor(r, acct)
+}
