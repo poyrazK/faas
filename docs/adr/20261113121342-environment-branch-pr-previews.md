@@ -139,6 +139,13 @@ The slice 4 trial (2026-11-28) found three gaps, now closed:
   attempt for 10 minutes from when it was made, not from the branch's creation. A branch whose
   copy could not start for two hours (stale usage) spent its last attempts on a database that
   was only provisioning.
+- **Compose build context on GitHub builds.** A project deploy stages a Compose service's build
+  context (`build: ./web`) as the archive root; a GitHub build staged the whole repository, so
+  the service's Dockerfile built against the repository root (`"/app.py": not found`), on push
+  and on PR builds alike. Project reconcile now records `build_compose_context` on the app, and
+  the GitHub bridge narrows the staged repository to the app's RootDir when its Dockerfile is
+  there. gregale.yaml, release commands and the source checks are still read from the
+  repository, as before. An app reconciled earlier gets the field with its next change.
 
 ## Consequences
 

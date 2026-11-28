@@ -44,8 +44,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/previewconfig"
 	"github.com/onebox-faas/faas/pkg/apid/previewdb"
 	"github.com/onebox-faas/faas/pkg/apid/release"
+	"github.com/onebox-faas/faas/pkg/githubd"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
+	"github.com/onebox-faas/faas/pkg/reposcan"
+	"github.com/onebox-faas/faas/pkg/sourcecontext"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -597,11 +600,15 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	if cronProblem != nil {
 		return nil, grpcerr.ToStatus(cronProblem)
 	}
-	spooled, err := g.spoolSource(req.SourcePath)
+	spooled, narrowedBytes, err := g.spoolBuildSource(ctx, req.SourcePath, app, resource.Plan)
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "EnqueueBuild: %v", err)
 	}
 	params.SourcePath = spooled
+	if narrowedBytes > 0 {
+		// The archive root is the service's build context now.
+		params.SourceRoot, params.SourceBytes = "", narrowedBytes
+	}
 	undoSettings := func(context.Context) {}
 	// A branch build serves the branch's copied settings: the pull request's
 	// gregale.yaml would otherwise change the production app's.
@@ -669,6 +676,52 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 // source storage; githubd's staging tree is outside it, so a build pointed
 // at the staged file failed with "outside spool root". A source already in
 // the spool is used as it is.
+// spoolBuildSource spools the staged source for the build. githubd stages
+// the whole repository; a Compose service built from a Dockerfile in its
+// own directory gets that directory as the archive root instead, as a
+// project deploy stages it (stageApplyTarball), so the Dockerfile's COPY
+// paths resolve the same from the CLI and from GitHub (trial 2026-11-28:
+// `build: ./web` failed on GitHub with "/app.py": not found). narrowedBytes
+// is the narrowed archive's size, or 0 when the source is spooled as it is.
+func (g *githubdBridge) spoolBuildSource(ctx context.Context, sourcePath string, app state.App, plan api.Plan) (spooled string, narrowedBytes int64, err error) {
+	if !app.Manifest.BuildComposeContext || app.Manifest.ProjectImage != "" {
+		spooled, err = g.spoolSource(sourcePath)
+		return spooled, 0, err
+	}
+	if root, rootErr := sourcecontext.EffectiveRoot(app.RootDir); rootErr != nil || root == sourcecontext.DefaultRoot {
+		spooled, err = g.spoolSource(sourcePath)
+		return spooled, 0, err
+	}
+	//nolint:forbidigo // sourcePath passed the staging-root allowlist.
+	dir, problem := extractTarGzToDir(sourcePath, defaultExtractLimits(api.MustLimitsFor(plan)))
+	if problem != nil {
+		return "", 0, fmt.Errorf("extract staged source: %s", problem.Detail)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+	compose := reposcan.Workload{DetectedBy: reposcan.Detection{Detector: reposcan.DetectorCompose}}
+	if !composeDockerBuildContext(dir, compose, app) {
+		// No Dockerfile in the service's directory at this commit: the
+		// build keeps the repository, as before.
+		spooled, err = g.spoolSource(sourcePath)
+		return spooled, 0, err
+	}
+	root := filepath.Clean(g.spool)
+	if err := os.MkdirAll(root, 0o770); err != nil {
+		return "", 0, fmt.Errorf("create source spool: %w", err)
+	}
+	dst := filepath.Join(root, randomToken(12)+".tar.gz")
+	if err := githubd.RepackageRootTree(ctx, os.DirFS(dir), app.RootDir, dst); err != nil {
+		_ = os.Remove(dst)
+		return "", 0, fmt.Errorf("stage the service's build context: %w", err)
+	}
+	info, err := os.Stat(dst)
+	if err != nil {
+		_ = os.Remove(dst)
+		return "", 0, fmt.Errorf("stat the service's build context: %w", err)
+	}
+	return dst, info.Size(), nil
+}
+
 func (g *githubdBridge) spoolSource(sourcePath string) (string, error) {
 	root := filepath.Clean(g.spool)
 	if strings.HasPrefix(filepath.Clean(sourcePath), root+string(filepath.Separator)) {

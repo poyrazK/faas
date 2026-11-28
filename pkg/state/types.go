@@ -2170,6 +2170,12 @@ type AppManifest struct {
 	// Dockerfile build (ADR-20261019142544); project-managed like
 	// BuildDockerfile and captured per deployment at enqueue.
 	DockerfileBuild *api.DockerfileBuildOptions `json:"dockerfile_build,omitempty"`
+	// BuildComposeContext says the app is a Compose service that builds
+	// from source: its RootDir is the service's build context, which a
+	// project deploy stages as the archive root. A GitHub build, which
+	// stages the whole repository, narrows to it the same way when the
+	// Dockerfile is there. Project-managed like BuildDockerfile.
+	BuildComposeContext bool `json:"build_compose_context,omitempty"`
 	// BuildGoCommand selects the `cmd/<name>` main package a Railpack build
 	// of a multi-command Go module compiles (ADR-20261025134512);
 	// project-managed like BuildDockerfile.
