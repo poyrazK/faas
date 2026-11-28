@@ -41,7 +41,9 @@ func TestMCPOAuthConsumerIsMeteredAndCapped(t *testing.T) {
 		body, route string
 	}{
 		"tool call": {greet, api.MCPBillingToolsPrefix + "/greet"},
-		"resource":  {`{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"greeting://welcome"}}`, api.MCPBillingResourcesLabel},
+		// Protocol overhead carries the path label, as a consumer key's does.
+		"tools/list": {`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`, "POST /mcp"},
+		"resource":   {`{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"greeting://welcome"}}`, api.MCPBillingResourcesLabel},
 	} {
 		_, r := call(handler(&fakeConsumerPlanStore{}), production, tc.body)
 		if got := planRouteFrom(r); got != tc.route {
@@ -81,6 +83,37 @@ func TestMCPOAuthConsumerIsMeteredAndCapped(t *testing.T) {
 		admitted := h.enforceConsumerPlan(httptest.NewRecorder(), r, &statusRecorder{}, tc.app, false)
 		if billed := requestUsageAttribution(r).financial(); billed != tc.billed || admitted == tc.billed {
 			t.Errorf("%s: billed=%v admitted=%v, want billed=%v", name, billed, admitted, tc.billed)
+		}
+	}
+}
+
+// A closed account or a refused enrollment is not about the token's scopes:
+// the 403 carries no WWW-Authenticate challenge, so clients do not sign in
+// again to retry it. A missing endpoint scope still challenges.
+func TestMCPOAuthConsumerRefusalHasNoChallenge(t *testing.T) {
+	p := &api.MCPResourcePolicy{Resource: "https://app.example/mcp", Scopes: []string{"mcp:tools"}, ToolScopes: map[string][]string{"greet": {}}}
+	rule := &EdgeRuleJWTResolved{Issuer: "https://issuer.example", MCP: p}
+	app := App{ID: "app-1", AccountID: "acct-1"}
+	for name, tc := range map[string]struct {
+		scope     string
+		enroller  *fakeOAuthEnroller
+		challenge string
+	}{
+		"closed account": {"mcp:tools", &fakeOAuthEnroller{id: "consumer-1"}, ""},
+		"missing scope":  {"openid", &fakeOAuthEnroller{id: "consumer-1", active: true}, `error="insufficient_scope"`},
+	} {
+		h := (&Handler{apiMonetization: monetizationOn, jwtVerifier: &countingJWTVerifier{onVerify: func(context.Context, string, *EdgeRuleJWTResolved) (*JWTClaims, error) {
+			return &JWTClaims{Subject: "u1", Exp: time.Now().Add(time.Minute), Custom: map[string]string{"scope": tc.scope}}, nil
+		}}}).WithOAuthConsumers(tc.enroller)
+		r := httptest.NewRequest("POST", "https://app.example/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+		r.Header.Set("Authorization", "Bearer jwt")
+		w := httptest.NewRecorder()
+		if !h.applyMCPResourcePolicy(w, r, app, rule) || w.Code != http.StatusForbidden {
+			t.Fatalf("%s: status %d %s", name, w.Code, w.Body)
+		}
+		got := w.Header().Get("Www-Authenticate")
+		if (tc.challenge == "" && got != "") || !strings.Contains(got, tc.challenge) {
+			t.Errorf("%s: WWW-Authenticate = %q, want %q", name, got, tc.challenge)
 		}
 	}
 }
