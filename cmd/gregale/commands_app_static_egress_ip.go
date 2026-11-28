@@ -35,6 +35,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -104,15 +105,27 @@ func cmdAppStaticEgressIPShow(slug string, args []string) int {
 	}
 	if resp.IP == nil {
 		PrintOK(osStdout, "App %s has no static egress IP pinned.", slug)
-		_, _ = fmt.Fprintf(osStdout, "  plan_cap: %d\n", resp.PlanCap)
-		return 0
-	}
-	PrintOK(osStdout, "App %s static egress IP:", slug)
-	_, _ = fmt.Fprintf(osStdout, "  ip: %s\n", resp.IP.String())
-	if resp.SetAt != nil {
-		_, _ = fmt.Fprintf(osStdout, "  set_at: %s\n", resp.SetAt.Format("2006-01-02 15:04:05 UTC"))
+	} else {
+		PrintOK(osStdout, "App %s static egress IP:", slug)
+		_, _ = fmt.Fprintf(osStdout, "  ip: %s\n", resp.IP.String())
+		if resp.SetAt != nil {
+			_, _ = fmt.Fprintf(osStdout, "  set_at: %s\n", resp.SetAt.Format("2006-01-02 15:04:05 UTC"))
+		}
+		_, _ = fmt.Fprintf(osStdout, "  active: %t\n", resp.Active)
+		if !resp.Active {
+			_, _ = fmt.Fprintln(osStdout, "  (inactive: the plan does not include static egress; the app uses shared egress)")
+		}
 	}
 	_, _ = fmt.Fprintf(osStdout, "  plan_cap: %d\n", resp.PlanCap)
+	available := make([]string, 0, len(resp.AvailableIPs))
+	for _, ip := range resp.AvailableIPs {
+		available = append(available, ip.String())
+	}
+	if len(available) == 0 {
+		_, _ = fmt.Fprintln(osStdout, "  available_ips: none (ask support to assign a static egress address)")
+	} else {
+		_, _ = fmt.Fprintf(osStdout, "  available_ips: %s\n", strings.Join(available, ", "))
+	}
 	return 0
 }
 

@@ -374,11 +374,13 @@ func staticEgressIPString(ip *netip.Addr) string {
 // deploymentStaticEgressIP pins the app's static egress IP (ADR-119) only for
 // a production-lane deployment. A stage leaves through the shared egress pool,
 // so a partner allowlist for production's address never accepts stage traffic.
-func deploymentStaticEgressIP(app state.App, dep state.Deployment) string {
+// A pin kept after the account left a plan that allows static egress is
+// inactive (ADR-20261128090000); vmmd's intent read applies the same rule.
+func deploymentStaticEgressIP(app state.App, dep state.Deployment, plan api.Plan) string {
 	if !state.ProductionDeploymentScope(dep.Scope) {
 		return ""
 	}
-	return staticEgressIPString(app.StaticEgressIP)
+	return staticEgressIPString(state.EffectiveStaticEgressIP(app, plan))
 }
 
 // startupDeadlineForApp resolves the readiness budget at the scheduler
@@ -3826,6 +3828,10 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		SpreadReplicas:             spreadsReplicas(ctx, trigger),
 		ownerApp:                   &app,
 	}
+	placementRequest, err = e.withStaticEgressPlacement(ctx, placementRequest, acct.ID, deploymentStaticEgressIP(app, dep, acct.Plan))
+	if err != nil {
+		return WakeResult{}, err
+	}
 	var placement Placement
 	var ins state.Instance
 	// ADR-1741: the boot's reads of the app and deployment alone run while
@@ -4239,7 +4245,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// their old netns — the app_changed pg_notify path
 		// fires UpdateStaticEgressIP gRPC to patch them
 		// (pkg/sched/egress_drift.go).
-		StaticEgressIP:       deploymentStaticEgressIP(app, dep),
+		StaticEgressIP:       deploymentStaticEgressIP(app, dep, acct.Plan),
 		StaticEgressExcluded: !state.ProductionDeploymentScope(dep.Scope),
 		// Issue #460 / ADR-053 (PR-C): per-deployment runtime port
 		// resolved from the explicit override or persisted source
@@ -6423,7 +6429,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		// ADR-119: customer-supplied static egress IPv4
 		// (BYOIP, Scale-only). Same threading as the Wake
 		// path above.
-		StaticEgressIP:       deploymentStaticEgressIP(app, dep),
+		StaticEgressIP:       deploymentStaticEgressIP(app, dep, acct.Plan),
 		StaticEgressExcluded: !state.ProductionDeploymentScope(dep.Scope),
 		// Issue #460 / ADR-053 (PR-C): effective deployment runtime
 		// port. 0 = legacy 8080 (vmmd wire default).
@@ -7172,6 +7178,10 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) (primeEr
 		RAMMB: app.RAMMB, VCPU: appVCPUs(app), CPUMillicores: primeStartupCPU, MaxConcurrency: app.MaxConcurrency,
 		BookedCPUMillicores: appCPUBookingMillicores(app),
 		PreferredNodeID:     app.NodeID,
+	}
+	primePlacementRequest, err = e.withStaticEgressPlacement(ctx, primePlacementRequest, acct.ID, deploymentStaticEgressIP(app, dep, acct.Plan))
+	if err != nil {
+		return err
 	}
 	// Prime is a wake-shape event (gaps analysis 2026-07-23): the
 	// instance is being created for the first time as part of a fresh

@@ -1,5 +1,6 @@
 # ADR-171 · Provider-neutral reserved public IP leases
 
+- **Superseded for static egress** by [ADR-20261128090000](20261128090000-static-egress-address-inventory-and-placement.md) (2026-11-28): no consumer was ever wired to these leases; static egress uses the operator inventory instead.
 - **Status:** accepted control-plane foundation
 - **Date:** 2026-09-18
 - **Decision:** model a reserved public address as an account-owned lease with

@@ -955,6 +955,26 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    dispatchStaticEgress,
+		DocSlug: "static-egress-ips",
+		Short:   "Static egress address inventory: node routing and account assignment (ADR-20261128090000)",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List addresses with their node, account and pinning app"},
+			{Name: "set", Short: "Add an address or change its node, account and note", Flags: []cliFlag{
+				{Name: "ip", Short: "the public IPv4 address", Req: true},
+				{Name: "node", Short: "compute node name the provider routes the address to", Req: true},
+				{Name: "account-id", Short: "account UUID it is assigned to; omit to leave it unassigned"},
+				{Name: "note", Short: "free text, e.g. the provider order reference"},
+				{Name: "trace-id", Short: "OTel 32-char-hex trace id (auto-generated when empty)"},
+			}},
+			{Name: "remove", Short: "Remove an address no live app pins", Flags: []cliFlag{
+				{Name: "ip", Short: "the public IPv4 address", Req: true},
+				{Name: "yes", Short: "acknowledge the removal", Req: true},
+				{Name: "trace-id", Short: "OTel 32-char-hex trace id (auto-generated when empty)"},
+			}},
+		},
+	},
+	{
 		Name:    dispatchFlags,
 		DocSlug: "flags",
 		Short:   "Release platform features to selected accounts (ADR-1700)",

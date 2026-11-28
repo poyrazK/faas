@@ -690,6 +690,8 @@ type MemStore struct {
 	// as the Postgres table. Test fixture only.
 	staticEgressProvisioningSources map[string][]StaticEgressIPGrant
 	provisionedStaticEgressIPs      map[string]map[string]netip.Addr // accountID → customerIP → Addr
+	// staticEgressAddresses is the operator inventory (ADR-20261128090000).
+	staticEgressAddresses map[netip.Addr]StaticEgressAddress
 	// githubBindings is keyed by appID. Holds the (install_id,
 	// repo_full_name, production_branch) tuple the /oauth/callback
 	// handler writes after verifying the install against api.github.com
@@ -29585,6 +29587,9 @@ func (m *MemStore) ProvisionedStaticEgressIPExists(_ context.Context, accountID 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	_, ok := m.provisionedStaticEgressIPs[accountID][ip.String()]
+	if m.staticEgressAddressGrantedLocked(accountID, ip) {
+		return true, nil
+	}
 	for _, grants := range m.staticEgressProvisioningSources {
 		for _, grant := range grants {
 			if grant.AccountID == accountID && grant.IP == ip {

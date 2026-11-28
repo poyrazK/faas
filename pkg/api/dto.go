@@ -8412,6 +8412,13 @@ type AppStaticEgressIPResponse struct {
 	SetAt       *time.Time  `json:"set_at"`
 	PlanCap     int         `json:"plan_cap"`
 	PlanAllowed bool        `json:"plan_allowed"`
+	// Active reports whether the pin is in effect: an IP is set and the
+	// account's plan allows static egress. A pin kept after a downgrade is
+	// inactive and the app leaves through shared egress until an upgrade.
+	Active bool `json:"active"`
+	// AvailableIPs are the static egress addresses assigned to the account,
+	// the only addresses its apps can pin.
+	AvailableIPs []netip.Addr `json:"available_ips"`
 }
 
 // SetAppStaticEgressIPRequest is the body of PUT

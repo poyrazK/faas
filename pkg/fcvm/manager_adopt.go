@@ -236,8 +236,8 @@ func adoptionScope(chrootRoot func(string) string, adoptAdmitted bool, r resourc
 		return adoptionRefusedAdmitted, "the block does not carry the admission receipt"
 	case (a.Network.PrivateNetworkHandleV4 != 0 || a.Network.PrivateNetworkHandleV6 != 0) && a.Network.Private == nil:
 		return adoptionRefusedPrivateNetwork, "private network member recorded before attachments were"
-	case a.Network.StaticEgressIP != "" || a.Network.StaticEgressBlocked:
-		return adoptionRefusedStaticEgress, "static egress SNAT is not rebuilt yet"
+	case (a.Network.StaticEgressIP != "" || a.Network.StaticEgressBlocked) && (a.Instance.AppID == "" || a.Instance.AccountID == ""):
+		return adoptionRefusedStaticEgress, "static egress record lacks its app or account"
 	case a.Network.RehearsalRunID != "":
 		return adoptionRefusedRehearsal, "rehearsal containment and recorder are not rebuilt"
 	case a.Network.EnvironmentBranchContained:
@@ -401,6 +401,10 @@ func (m *Manager) adoptGuest(ctx context.Context, adopter guestAdopter, r resour
 			m.alloc.unadopt(id)
 			return fmt.Errorf("restore adopted egress: %w", err)
 		}
+	}
+	if err := m.restoreAdoptedStaticEgress(ctx, inst.AccountID, inst.AppID, r.Adoption); err != nil {
+		m.alloc.unadopt(id)
+		return fmt.Errorf("restore adopted static egress: %w", err)
 	}
 	if inst.Net.PrivateNetworkAddress.IsValid() {
 		if err := m.reservePrivateNetworkAddresses(inst.Net, id); err != nil {

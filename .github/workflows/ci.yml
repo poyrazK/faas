@@ -516,7 +516,7 @@ jobs:
           set -euo pipefail
           go test -c -tags metal -o "$RUNNER_TEMP/netns.test" ./pkg/netns
           sudo "$RUNNER_TEMP/netns.test" -test.count=1 -test.v \
-            -test.run '^TestMetal(TenantEgress|AllowlistRuleInstalled|AllowlistV6RuleInstalled|AllowlistSkippedWhenEmpty|HostPolicyStaticEgressIPRules)'
+            -test.run '^TestMetal(TenantEgress|AllowlistRuleInstalled|AllowlistV6RuleInstalled|AllowlistSkippedWhenEmpty|HostPolicyStaticEgressIPRules|StaticEgressPacketFlow)'
 
       - name: systemd hardening gate
         run: make systemd-hardening-check

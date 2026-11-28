@@ -354,6 +354,12 @@ type Request struct {
 	// starting its VM (ADR-20261022184531). The chooser skips them like
 	// nodes without headroom; hints never bring them back.
 	ExcludeNodeIDs []string
+	// StaticEgressPinned restricts placement to StaticEgressNodeIDs: the
+	// nodes the provider routes the app's pinned static egress address to
+	// (ADR-20261128090000). Unlike the hints above it is a gate; an empty
+	// list refuses every node, because no node can send from the address.
+	StaticEgressPinned  bool
+	StaticEgressNodeIDs []string
 	// PrioritizeSnapshotLocality is reserved for an authenticated deployment
 	// smoke. The candidate's first public request must use a fitting node
 	// already holding its snapshot when one is known; choosing an empty node

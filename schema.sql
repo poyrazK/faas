@@ -64440,6 +64440,22 @@ CREATE TABLE public.stage_workflow_schedule_cursors (
 
 
 --
+-- Name: static_egress_addresses; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.static_egress_addresses (
+    ip inet NOT NULL,
+    node_id uuid NOT NULL,
+    account_id uuid,
+    note text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT static_egress_addresses_ip_check CHECK (((family(ip) = 4) AND (masklen(ip) = 32))),
+    CONSTRAINT static_egress_addresses_note_check CHECK ((length(note) <= 200))
+);
+
+
+--
 -- Name: static_egress_provisioning_grants; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -81248,6 +81264,14 @@ ALTER TABLE ONLY public.stage_workflow_schedule_cursors
 
 
 --
+-- Name: static_egress_addresses static_egress_addresses_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.static_egress_addresses
+    ADD CONSTRAINT static_egress_addresses_pkey PRIMARY KEY (ip);
+
+
+--
 -- Name: static_egress_provisioning_grants static_egress_provisioning_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -93775,6 +93799,20 @@ CREATE INDEX spend_cap_notice_pending_idx ON public.spend_cap_notice_outbox USIN
 --
 
 CREATE INDEX stage_workflow_schedule_cursors_app_idx ON public.stage_workflow_schedule_cursors USING btree (app_id, workflow_name);
+
+
+--
+-- Name: static_egress_addresses_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX static_egress_addresses_account_idx ON public.static_egress_addresses USING btree (account_id) WHERE (account_id IS NOT NULL);
+
+
+--
+-- Name: static_egress_addresses_node_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX static_egress_addresses_node_idx ON public.static_egress_addresses USING btree (node_id);
 
 
 --
@@ -120078,6 +120116,22 @@ ALTER TABLE ONLY public.stage_workflow_schedule_cursors
 
 ALTER TABLE ONLY public.stage_workflow_schedule_cursors
     ADD CONSTRAINT stage_workflow_schedule_cursors_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: static_egress_addresses static_egress_addresses_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.static_egress_addresses
+    ADD CONSTRAINT static_egress_addresses_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: static_egress_addresses static_egress_addresses_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.static_egress_addresses
+    ADD CONSTRAINT static_egress_addresses_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id);
 
 
 --

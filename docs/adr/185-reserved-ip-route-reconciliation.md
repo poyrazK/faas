@@ -1,5 +1,6 @@
 # ADR-185 · Reserved public IP route reconciliation
 
+- **Superseded for static egress** by [ADR-20261128090000](20261128090000-static-egress-address-inventory-and-placement.md) (2026-11-28): no consumer was ever wired to these leases; static egress uses the operator inventory instead.
 - **Status:** accepted control-plane follow-up to ADR-184
 - **Date:** 2026-09-19
 - **Decision:** reconcile the complete desired set of assigned reserved-IP routes per region through a provider-neutral connector. A route carries the lease generation as its fencing token; the lease becomes `assigned` only after the connector accepts the desired set.

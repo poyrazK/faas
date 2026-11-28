@@ -49,6 +49,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/apid/mailoutbox"
 	"github.com/onebox-faas/faas/pkg/apid/managedpg"
+	"github.com/onebox-faas/faas/pkg/apid/staticegress"
 	"github.com/onebox-faas/faas/pkg/apid/mcplisting"
 	"github.com/onebox-faas/faas/pkg/apid/receivers"
 	"github.com/onebox-faas/faas/pkg/apid/sales"
@@ -5320,6 +5321,9 @@ func (s *server) handler() http.Handler {
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsNodeRetire))))
 	// ADR-1027: move or restart a native managed database.
 	managedpg.Operations{AdminAllows: s.adminAllows, Intents: s.store, Notifier: s.notif, Audit: s.audit, Log: s.log}.Register(mux, middleware.TraceID, s.authLimited, s.requireAdminMutation)
+	// ADR-20261128090000: the operator's static egress address inventory.
+	staticegress.Operations{AdminAllows: s.adminAllows, Store: staticEgressInventory(s.store), Notifier: s.notif, Audit: s.audit, Log: s.log}.
+		Register(mux, middleware.TraceID, s.authLimited, s.requireOperatorSessionRead, s.requireAdminMutation)
 
 	// ADR-132 — typed runtime configuration. GET is MFA-gated; PATCH and
 	// rollback use the strict operator-session policy

@@ -5,6 +5,12 @@ Runtime source selection and tenant-gateway routing are amended by
 SNAT matches each VM's actual lease address; reserved app addresses are not
 packet source addresses.
 
+Provisioning, placement, plan downgrade and restart adoption are amended by
+[ADR-20261128090000](20261128090000-static-egress-address-inventory-and-placement.md):
+addresses come from an operator inventory (`gregalectl static-egress-ips`),
+a pinned app runs only on its address's node, and vmmd adopts pinned guests.
+The "Known gaps" below are resolved by these two ADRs.
+
 - **Status:** proposed (PR-#997 redesign, round 4 — IP source changed
   from customer-supplied BYOIP to operator-provisioned additional IPs
   to keep return-path routing intact; per-netns SNAT path deleted in

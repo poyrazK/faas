@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
 
@@ -183,7 +185,7 @@ func TestAdoptRestartSurvivorsKillsARefusedProvenGuest(t *testing.T) {
 		killed   bool
 	}{
 		{name: "adoption failed", adoptErr: errors.New("bind source gone"), reason: adoptionRefusedAdoptFailed, killed: true},
-		{name: "outside what adoption rebuilds", block: func(b *resourceAdoption) { b.Network.StaticEgressIP = "203.0.113.7" },
+		{name: "outside what adoption rebuilds", block: func(b *resourceAdoption) { b.Network.StaticEgressIP = "203.0.113.7"; b.Instance.AccountID = "" },
 			reason: adoptionRefusedStaticEgress, killed: true},
 		{name: "kill fails", adoptErr: errors.New("bind source gone"), killErr: errors.New("pid reused"), reason: adoptionRefusedAdoptFailed},
 		{name: "not proven", fixture: func(f *adoptionFixture) { f.api.State = "NotStarted" }, reason: adoptionRefusedAPIIdentity},
@@ -304,7 +306,7 @@ func TestAdoptRestartSurvivorsRefusesOutsideSlice2Scope(t *testing.T) {
 	}{
 		{name: "admission receipt", block: func(b *resourceAdoption) { b.Instance.Admitted = true }, reason: adoptionRefusedAdmitted},
 		{name: "private network", block: func(b *resourceAdoption) { b.Network.PrivateNetworkHandleV4 = 9 }, reason: adoptionRefusedPrivateNetwork},
-		{name: "static egress ip", block: func(b *resourceAdoption) { b.Network.StaticEgressIP = "203.0.113.7" }, reason: adoptionRefusedStaticEgress},
+		{name: "static egress ip without account", block: func(b *resourceAdoption) { b.Network.StaticEgressIP = "203.0.113.7"; b.Instance.AccountID = "" }, reason: adoptionRefusedStaticEgress},
 		{name: "rehearsal containment", block: func(b *resourceAdoption) { b.Network.RehearsalRunID = "run-1" }, reason: adoptionRefusedRehearsal},
 		{name: "egress circuits", block: func(b *resourceAdoption) { b.Network.EgressCircuits = true }, reason: adoptionRefusedEgressCircuit},
 		{name: "firecracker upgraded", vmm: func(v *adoptingVMM) { v.root = "/srv/fc/jail/firecracker-v1.8.0/x/root" }, reason: adoptionRefusedFCChanged},
@@ -644,5 +646,40 @@ func TestMountNamespaceHeldIgnoresOwnReusedInode(t *testing.T) {
 	}
 	if held, err := mountNamespaceHeld("/proc", own.Inode); err != nil || held {
 		t.Fatalf("own namespace reported as a holder: %v %v", held, err)
+	}
+}
+
+// ADR-20261128090000: a pinned guest survives a vmmd restart. Adoption puts
+// back its pin, alias and reservation before registering it, so the host
+// render at the end of adoption already sends it from its static address.
+func TestAdoptRestartSurvivorsRebuildsStaticEgress(t *testing.T) {
+	prior := *netns.ActiveHostPolicyForRender()
+	netns.SwapActiveHostPolicy(netns.DefaultHostPolicy)
+	t.Cleanup(func() { netns.SwapActiveHostPolicy(prior) })
+	t.Cleanup(func() { _ = ReleaseStaticEgressIP("acct-1", "app-1") })
+	f := newAdoptionFixture(t)
+	block := f.block()
+	block.Network.StaticEgressIP = "203.0.113.7"
+	m, vmm := adoptionManager(t, f, block)
+	runner := &fakeRunner{}
+	m.run = runner
+	m.SetHostRenderer(&fakeHostRenderer{})
+	rep, err := m.adoptClassified(t.Context(), vmm, f.classifier())
+	if err != nil || rep.Adopted != 1 {
+		t.Fatalf("pinned guest adoption = %+v, %v; want adopted", rep, err)
+	}
+	pin := netip.MustParseAddr("203.0.113.7")
+	if got := m.perAppStaticIP["app-1"]; got == nil || *got != pin {
+		t.Fatalf("adopted pin = %v, want %s", got, pin)
+	}
+	if res, ok := StaticEgressReservationFor("app-1"); !ok || res.CustomerIP != pin {
+		t.Fatalf("adopted reservation = %+v, %v", res, ok)
+	}
+	if !runner.ran("ip addr replace 203.0.113.7/32 dev br-tenants") {
+		t.Fatalf("alias not restored; commands: %v", runner.commands)
+	}
+	rules := netns.ActiveHostPolicyForRender().StaticEgressRules
+	if len(rules) != 1 || rules[0].CustomerIP != pin || rules[0].PerVMHostIP != f.lease.HostIP {
+		t.Fatalf("adoption render rules = %+v; want the survivor's lease %s sent from %s", rules, f.lease.HostIP, pin)
 	}
 }

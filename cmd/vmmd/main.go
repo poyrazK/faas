@@ -1234,26 +1234,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	if store != nil {
 		mgr.WithStaticEgressPolicySource(func(policyCtx context.Context, accountID, appID string) (*netip.Addr, error) {
-			app, err := store.AppByID(policyCtx, appID)
-			if errors.Is(err, state.ErrNotFound) {
-				return nil, nil
-			}
-			if err != nil {
-				return nil, err
-			}
-			if app.AccountID != accountID {
-				return nil, errors.New("static egress app account mismatch")
-			}
-			if app.StaticEgressIP != nil {
-				provisioned, err := store.ProvisionedStaticEgressIPExists(policyCtx, accountID, *app.StaticEgressIP)
-				if err != nil {
-					return nil, err
-				}
-				if !provisioned {
-					return app.StaticEgressIP, fcvm.ErrStaticEgressUnprovisioned
-				}
-			}
-			return app.StaticEgressIP, nil
+			return staticEgressIntent(policyCtx, store, accountID, appID)
 		})
 
 		if rehearsalContainmentEnabled(os.Getenv) {
@@ -2576,7 +2557,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	//
 	// `st` is the same state.Store the rest of the daemon
 	// consumes (the apid uses it for the gate read).
-	go watchStaticEgressIPBundleReload(ctx, mgr, store, cfg.StaticEgressIPBundlePath, log, staticHupCh, nodeID)
+	// ADR-20261128090000: the bundle and this node's operator inventory rows
+	// feed one grant set, so each replaces only its own part of the aliases.
+	staticGrants := newStaticEgressGrantSet(mgr)
+	go watchStaticEgressIPBundleReload(ctx, staticGrants, store, cfg.StaticEgressIPBundlePath, log, staticHupCh, nodeID)
+	if inventory, ok := store.(staticEgressInventorySource); ok && store != nil {
+		var inventoryWake <-chan struct{}
+		if pool != nil {
+			if notes, listenErr := db.SubscribeWithResync(ctx, pool, []string{db.NotifyStaticEgressAddresses}, log); listenErr != nil {
+				log.Warn("vmmd: static egress inventory LISTEN failed; polling only", "err", listenErr)
+			} else {
+				inventoryWake = coalesceWakes(notes)
+			}
+		}
+		go watchStaticEgressInventory(ctx, staticGrants, inventory, nodeID, inventoryWake, log)
+	}
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
@@ -2586,7 +2581,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				return
 			case <-ticker.C:
 				if cfg.StaticEgressIPBundlePath == "" {
-					mgr.SetStaticEgressIPAliases(nil) //nolint:contextcheck // The context-free bundle API bounds its kernel repair.
+					staticGrants.SetStaticEgressIPAliases(nil) //nolint:contextcheck // The context-free bundle API bounds its kernel repair.
 				}
 				repairCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
 				if err := mgr.ReconcilePrivateNetworkServices(repairCtx); err != nil {
@@ -2610,7 +2605,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 						slog.Warn("vmmd: reconcile static egress intent", "err", err)
 					}
 					if cfg.StaticEgressIPBundlePath == "" {
-						mgr.SetStaticEgressIPAliases(nil) //nolint:contextcheck // Context-free bundle API bounds each kernel repair.
+						staticGrants.SetStaticEgressIPAliases(nil) //nolint:contextcheck // Context-free bundle API bounds each kernel repair.
 						_ = writeProvisionedStaticEgressIPs(repairCtx, store, nil, log, nodeID)
 					}
 					cancel()

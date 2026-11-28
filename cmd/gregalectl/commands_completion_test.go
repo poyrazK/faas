@@ -44,22 +44,23 @@ func TestCompletion_ManifestDrift(t *testing.T) {
 		"dispatchRelease":          "release",
 		"dispatchDoctor":           "doctor",
 		"dispatchSecrets":          "secrets",
-		"dispatchArtifact":         "artifact",       // release-pinned shared artifact publication
-		"dispatchComputeNodes":     "compute-nodes",  // PR-911 image rollout (PR #929; ADR-110 + ADR-111)
-		"dispatchDeploy":           "deploy",         // PR-B (multi-host scale-out gap #2)
-		"dispatchInstances":        "instances",      // P2 of operator-obs mega-PR (Commit 5b)
-		"dispatchSupportAccess":    "support-access", // ADR-20261116163508 customer-granted support access
-		"dispatchAccounts":         "accounts",       // authenticated tenant support + lifecycle controls
-		"dispatchBilling":          "billing",        // operator billing catalog + reconciliation diagnostics
-		"dispatchConfig":           "config",         // zero-downtime runtime configuration controls
-		"dispatchFlags":            "flags",          // ADR-1700 platform flags
-		"dispatchAudit":            "audit",          // exact operator trace correlation
-		"dispatchBuilds":           "builds",         // P2c of operator-obs mega-PR (Commit 5c)
-		"dispatchJobs":             "jobs",           // cross-account job-run incident controls
-		"dispatchDeployments":      "deployments",    // cross-account deployment incident controls
-		"dispatchObs":              "obs",            // Obs-Meta + Trace-IDs Mega-PR / C8 — operator-side meta-obs health snapshot
-		"dispatchDebug":            "debug",          // ADR-127 PR-D — operator-side OTel spans writer smoke harness
-		"dispatchGithub":           "github",         // durable webhook + Check Run recovery
+		"dispatchArtifact":         "artifact",          // release-pinned shared artifact publication
+		"dispatchComputeNodes":     "compute-nodes",     // PR-911 image rollout (PR #929; ADR-110 + ADR-111)
+		"dispatchDeploy":           "deploy",            // PR-B (multi-host scale-out gap #2)
+		"dispatchInstances":        "instances",         // P2 of operator-obs mega-PR (Commit 5b)
+		"dispatchSupportAccess":    "support-access",    // ADR-20261116163508 customer-granted support access
+		"dispatchAccounts":         "accounts",          // authenticated tenant support + lifecycle controls
+		"dispatchBilling":          "billing",           // operator billing catalog + reconciliation diagnostics
+		"dispatchConfig":           "config",            // zero-downtime runtime configuration controls
+		"dispatchFlags":            "flags",             // ADR-1700 platform flags
+		"dispatchStaticEgress":     "static-egress-ips", // ADR-20261128090000 static egress address inventory
+		"dispatchAudit":            "audit",             // exact operator trace correlation
+		"dispatchBuilds":           "builds",            // P2c of operator-obs mega-PR (Commit 5c)
+		"dispatchJobs":             "jobs",              // cross-account job-run incident controls
+		"dispatchDeployments":      "deployments",       // cross-account deployment incident controls
+		"dispatchObs":              "obs",               // Obs-Meta + Trace-IDs Mega-PR / C8 — operator-side meta-obs health snapshot
+		"dispatchDebug":            "debug",             // ADR-127 PR-D — operator-side OTel spans writer smoke harness
+		"dispatchGithub":           "github",            // durable webhook + Check Run recovery
 
 		"dispatchDatabaseNodes": "database-nodes", // ADR-1027 native database moves, restarts and switchovers
 	}

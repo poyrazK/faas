@@ -6,6 +6,7 @@ package sqlc
 
 import (
 	"context"
+	"net/netip"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -1433,6 +1434,7 @@ type Querier interface {
 	DeleteRoutePriorities(ctx context.Context, db DBTX, arg DeleteRoutePrioritiesParams) error
 	DeleteSavedInsight(ctx context.Context, db DBTX, arg DeleteSavedInsightParams) (int64, error)
 	DeleteStageWorkflowScheduleCursor(ctx context.Context, db DBTX, arg DeleteStageWorkflowScheduleCursorParams) error
+	DeleteStaticEgressAddress(ctx context.Context, db DBTX, ip netip.Addr) (int64, error)
 	DeleteStaticEgressProvisioningSource(ctx context.Context, db DBTX, sourceID string) error
 	DeleteStoredWorkflow(ctx context.Context, db DBTX, arg DeleteStoredWorkflowParams) error
 	DeleteStoredWorkflowLiveSuites(ctx context.Context, db DBTX, arg DeleteStoredWorkflowLiveSuitesParams) error
@@ -2881,6 +2883,7 @@ type Querier interface {
 	GetSourceBuildRootfsByID(ctx context.Context, db DBTX, id pgtype.UUID) (SourceBuildRootf, error)
 	GetSourceBuildRootfsPointer(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (pgtype.UUID, error)
 	GetStageWorkflowScheduleCursor(ctx context.Context, db DBTX, arg GetStageWorkflowScheduleCursorParams) (StageWorkflowScheduleCursor, error)
+	GetStaticEgressAddress(ctx context.Context, db DBTX, ip netip.Addr) (GetStaticEgressAddressRow, error)
 	GetStoredWorkflowFailurePolicy(ctx context.Context, db DBTX, arg GetStoredWorkflowFailurePolicyParams) ([]byte, error)
 	GetStoredWorkflowForLiveVerification(ctx context.Context, db DBTX, arg GetStoredWorkflowForLiveVerificationParams) (StoredWorkflow, error)
 	GetStoredWorkflowHealthSummary(ctx context.Context, db DBTX, arg GetStoredWorkflowHealthSummaryParams) (GetStoredWorkflowHealthSummaryRow, error)
@@ -3517,6 +3520,7 @@ type Querier interface {
 	InsertSharedOrgOwner(ctx context.Context, db DBTX, arg InsertSharedOrgOwnerParams) error
 	InsertSnapshotRuntimeConfigReceipt(ctx context.Context, db DBTX, arg InsertSnapshotRuntimeConfigReceiptParams) error
 	InsertSourceBuildRootfs(ctx context.Context, db DBTX, arg InsertSourceBuildRootfsParams) (SourceBuildRootf, error)
+	InsertStaticEgressAddress(ctx context.Context, db DBTX, arg InsertStaticEgressAddressParams) error
 	InsertStaticEgressProvisioningGrant(ctx context.Context, db DBTX, arg InsertStaticEgressProvisioningGrantParams) error
 	InsertStoredWorkflowLiveBaselinePromotion(ctx context.Context, db DBTX, arg InsertStoredWorkflowLiveBaselinePromotionParams) error
 	InsertStoredWorkflowLiveBaselineRetirement(ctx context.Context, db DBTX, arg InsertStoredWorkflowLiveBaselineRetirementParams) error
@@ -4184,6 +4188,7 @@ type Querier interface {
 	// Index: request_telemetry_app_received_idx on (app_id, received_at
 	// DESC) makes this DISTINCT scan cheap.
 	ListAppsWithRecentTelemetry(ctx context.Context, db DBTX, dollar_1 pgtype.Interval) ([]pgtype.UUID, error)
+	ListAssignedStaticEgressAddressesForNode(ctx context.Context, db DBTX, nodeID pgtype.UUID) ([]ListAssignedStaticEgressAddressesForNodeRow, error)
 	ListAuditLogAnchors(ctx context.Context, db DBTX, arg ListAuditLogAnchorsParams) ([]AuditLogAnchor, error)
 	ListBillingPlanActivations(ctx context.Context, db DBTX, arg ListBillingPlanActivationsParams) ([]ListBillingPlanActivationsRow, error)
 	ListBindingVerificationRunSummaries(ctx context.Context, db DBTX, arg ListBindingVerificationRunSummariesParams) ([]ListBindingVerificationRunSummariesRow, error)
@@ -4788,6 +4793,8 @@ type Querier interface {
 	// A stage's enabled schedule workflows run on the stage's live deployment
 	// (ADR-20261104120000). One row per (app, stage), keyset by both.
 	ListStageWorkflowScheduleCandidates(ctx context.Context, db DBTX, arg ListStageWorkflowScheduleCandidatesParams) ([]ListStageWorkflowScheduleCandidatesRow, error)
+	ListStaticEgressAddresses(ctx context.Context, db DBTX) ([]ListStaticEgressAddressesRow, error)
+	ListStaticEgressAddressesForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]netip.Addr, error)
 	ListStoredWorkflowFailurePauses(ctx context.Context, db DBTX, appID pgtype.UUID) ([]string, error)
 	ListStoredWorkflowFailurePolicyCandidates(ctx context.Context, db DBTX, arg ListStoredWorkflowFailurePolicyCandidatesParams) ([]ListStoredWorkflowFailurePolicyCandidatesRow, error)
 	ListStoredWorkflowHealthFailedSteps(ctx context.Context, db DBTX, arg ListStoredWorkflowHealthFailedStepsParams) ([]ListStoredWorkflowHealthFailedStepsRow, error)
@@ -4875,6 +4882,7 @@ type Querier interface {
 	ListWorkflowScheduleCandidates(ctx context.Context, db DBTX, arg ListWorkflowScheduleCandidatesParams) ([]ListWorkflowScheduleCandidatesRow, error)
 	ListWorkflowScheduleCursors(ctx context.Context, db DBTX, appID pgtype.UUID) ([]WorkflowScheduleCursor, error)
 	ListWorkflowScheduleOccurrences(ctx context.Context, db DBTX, arg ListWorkflowScheduleOccurrencesParams) ([]WorkflowScheduleOccurrence, error)
+	LiveAppPinningStaticEgressIP(ctx context.Context, db DBTX, ip netip.Addr) (LiveAppPinningStaticEgressIPRow, error)
 	LiveEnvironmentWorkloadDeploymentsForServing(ctx context.Context, db DBTX, arg LiveEnvironmentWorkloadDeploymentsForServingParams) ([]LiveEnvironmentWorkloadDeploymentsForServingRow, error)
 	// Collapse deployment overlap before limiting distinct app owners. Two release
 	// identities from one app must not hide a different owner of the same source.
@@ -7901,6 +7909,9 @@ type Querier interface {
 	// Marks the standby VM stopped; it stays synchronized only if keep_synced
 	// (a clean stop after its primary's).
 	ReleaseDatabaseStandby(ctx context.Context, db DBTX, arg ReleaseDatabaseStandbyParams) (int64, error)
+	// A deleted app keeps its row through the restore grace; it must not keep an
+	// address that the unique pin index would then deny to every other app.
+	ReleaseDeletedAppStaticEgressPins(ctx context.Context, db DBTX, ip netip.Addr) (int64, error)
 	ReleaseDetachedPrivateNetworkServiceAddress(ctx context.Context, db DBTX, arg ReleaseDetachedPrivateNetworkServiceAddressParams) error
 	ReleaseEdgeRuleAccountMutationLock(ctx context.Context, db DBTX, accountID string) (bool, error)
 	ReleaseEdgeRuleMutationLock(ctx context.Context, db DBTX, appID string) (bool, error)
@@ -8992,6 +9003,7 @@ type Querier interface {
 	StartOperatorRestartDestroy(ctx context.Context, db DBTX, arg StartOperatorRestartDestroyParams) (OperatorRestartExecution, error)
 	StartProfileCapture(ctx context.Context, db DBTX, arg StartProfileCaptureParams) (int64, error)
 	StartScenarioRecorder(ctx context.Context, db DBTX, arg StartScenarioRecorderParams) error
+	StaticEgressAddressNodeIDs(ctx context.Context, db DBTX, arg StaticEgressAddressNodeIDsParams) ([]string, error)
 	StopEnvironmentQualificationInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (Instance, error)
 	StopFlagExperiment(ctx context.Context, db DBTX, arg StopFlagExperimentParams) (FlagExperiment, error)
 	StopManagedPostgresDrainInstance(ctx context.Context, db DBTX, arg StopManagedPostgresDrainInstanceParams) (int64, error)
@@ -9315,6 +9327,7 @@ type Querier interface {
 	//      developer, as event publishing requires), so a creator who left
 	//      the company cannot write its evidence.
 	UpdateSpansSummary(ctx context.Context, db DBTX, arg UpdateSpansSummaryParams) (int64, error)
+	UpdateStaticEgressAddress(ctx context.Context, db DBTX, arg UpdateStaticEgressAddressParams) (int64, error)
 	UpdateStoredWorkflowLiveSuite(ctx context.Context, db DBTX, arg UpdateStoredWorkflowLiveSuiteParams) (StoredWorkflowLiveSuite, error)
 	UpdateTenantWorkflowScheduleLastAdmittedAt(ctx context.Context, db DBTX, arg UpdateTenantWorkflowScheduleLastAdmittedAtParams) (int64, error)
 	// Keep cancelled terminal while allowing an eligible target to revive an alias.
