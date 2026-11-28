@@ -3262,6 +3262,9 @@ var WarnShellLineCommand = warnShellLineCommand
 // MCPListingKeep exposes mcpListingKeep.
 var MCPListingKeep = mcpListingKeep
 
+// MCPListingContractCheckable exposes mcpListingContractCheckable.
+var MCPListingContractCheckable = mcpListingContractCheckable
+
 // SetDoctorBootTimings shortens `doctor --boot` waits for the test.
 func SetDoctorBootTimings(cleanup func(func()), startup, stayUp, poll time.Duration) {
 	oldStartup, oldStay, oldPoll := doctorBootStartupTimeout, doctorBootStayUp, doctorBootPoll
@@ -3320,3 +3323,5 @@ func SetDoctorBootAppClass(cleanup func(func()), class string) {
 func RunDeployBootCheck(ctx context.Context, image string) int {
 	return runDeployBootCheck(ctx, deployBootFlags{image: image, app: "demo"})
 }
+
+var CmdAppTasks = cmdAppTasks

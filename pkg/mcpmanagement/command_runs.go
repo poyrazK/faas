@@ -45,6 +45,12 @@ type commandRunArgs struct {
 	WaitSeconds int    `json:"wait_seconds,omitempty" jsonschema:"Wait up to this many seconds (0 to 45) for the command to finish; default 0"`
 }
 
+type listCommandRunsArgs struct {
+	App    string `json:"app" jsonschema:"App slug"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"1 to 50 runs, newest first; default 10"`
+	Offset int    `json:"offset,omitempty" jsonschema:"Runs to skip, from next_offset of the previous page; default 0"`
+}
+
 type cancelCommandRunArgs struct {
 	App    string `json:"app" jsonschema:"App slug"`
 	TaskID string `json:"task_id" jsonschema:"task id from the apply receipt"`
@@ -52,6 +58,7 @@ type cancelCommandRunArgs struct {
 
 func registerCommandRuns(s *mcp.Server, m *management) {
 	register(s, m, "gregale_plan_run_command", "Review running one non-interactive command (argv or a shell line) in a fresh single-use task VM from the app's live deployment, with its variables and secrets: migrations, one-off scripts, checks from inside. Never touches serving instances. Bounded time and output. Changes nothing; apply with gregale_apply_operation, then read the result with gregale_get_command_run. On a production app an agent connection asks a person first.", m.planRunCommand)
+	register(s, m, "gregale_list_command_runs", "List the app's recent command runs, newest first: one-off commands, release commands and command crons, with status and exit code but no output. Read one run's output with gregale_get_command_run.", m.listCommandRuns)
 	register(s, m, "gregale_get_command_run", "Read one command run: status, exit code and the stdout/stderr tails, optionally waiting up to 45 s for it to finish. Lines that look like credentials are redacted.", m.getCommandRun)
 	if m.opts.AllowWrites {
 		registerTool(s, m, "gregale_cancel_command_run", "Ask a running command to stop. Work it already did is not undone. Idempotent.", false, m.cancelCommandRun)
@@ -148,6 +155,49 @@ func (m *management) getCommandRun(ctx context.Context, a commandRunArgs) (any, 
 		case <-time.After(runCommandPollInterval):
 		}
 	}
+}
+
+func (m *management) listCommandRuns(ctx context.Context, a listCommandRunsArgs) (any, error) {
+	limit := a.Limit
+	if limit == 0 {
+		limit = 10
+	}
+	if limit < 1 || limit > 50 {
+		return nil, invalid("invalid_argument", "limit must be from 1 to 50")
+	}
+	if a.Offset < 0 {
+		return nil, invalid("invalid_argument", "offset must be zero or more")
+	}
+	app, _, err := m.appEnvironment(ctx, a.App, "", "", false)
+	if err != nil {
+		return nil, err
+	}
+	page, err := m.client.ListAppTasks(ctx, a.App, limit, a.Offset)
+	if err != nil {
+		return nil, err
+	}
+	runs := make([]map[string]any, 0, len(page.Tasks))
+	for _, t := range page.Tasks {
+		if t.AppID != app.ID {
+			continue
+		}
+		run := map[string]any{"task_id": t.ID, "kind": t.Kind, "command": t.Command, "shell": t.CommandShell, "status": t.Status, "terminal": t.Status.Terminal(), "deployment_id": t.DeploymentID, "created_at": t.CreatedAt}
+		if t.ExitCode != nil {
+			run["exit_code"] = *t.ExitCode
+		}
+		if t.Failure != nil {
+			run["failure"] = t.Failure
+		}
+		if t.FinishedAt != nil {
+			run["finished_at"] = *t.FinishedAt
+		}
+		runs = append(runs, run)
+	}
+	out := map[string]any{"app": a.App, "runs": runs}
+	if len(page.Tasks) == limit && page.NextOffset > 0 {
+		out["next_offset"] = page.NextOffset
+	}
+	return out, nil
 }
 
 func (m *management) cancelCommandRun(ctx context.Context, a cancelCommandRunArgs) (any, error) {

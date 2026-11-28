@@ -17,8 +17,9 @@ import (
 // EnsureBranch returns the empty preview database owner's pull request
 // branch gets on plan. It answers managedpostgres.ErrPreviewsOff when the
 // plan gives no preview databases, so the branch goes without one as an app
-// preview would, and ErrPending while the database is not ready yet (still
-// provisioning, or a reset's purge still under way).
+// preview would, and ErrPending with the database while it is not ready yet
+// (still provisioning, or a reset's purge still under way), so the caller
+// knows when it was made.
 func (m Manager) EnsureBranch(ctx context.Context, plan api.Plan, accountID string, owner managedpostgres.PreviewOwner) (managedpostgres.Database, error) {
 	limit := api.ManagedPostgresPreviewDatabasesMax(plan)
 	if limit <= 0 {
@@ -31,33 +32,34 @@ func (m Manager) EnsureBranch(ctx context.Context, plan api.Plan, accountID stri
 		return managedpostgres.Database{}, err
 	}
 	if database.State != managedpostgres.StateReady {
-		return managedpostgres.Database{}, ErrPending
+		return database, ErrPending
 	}
 	return database, nil
 }
 
 // BindBranch binds an app to a pull request branch's preview database in the
 // branch's scope with the production binding's key and access. It answers
-// ErrPending while the binding is provisioning or held by its reconciler.
-func (m Manager) BindBranch(ctx context.Context, request managedpostgres.CreateBindingRequest) error {
+// ErrPending with the binding while it is provisioning or held by its
+// reconciler.
+func (m Manager) BindBranch(ctx context.Context, request managedpostgres.CreateBindingRequest) (managedpostgres.Binding, error) {
 	request.PreviewSetup = true
 	binding, _, err := m.Bindings.CreateWithResult(ctx, request)
 	if stillBinding(err, binding, request.DatabaseID, request.AppID) {
-		return ErrPending
+		return binding, ErrPending
 	}
 	if err != nil {
-		return err
+		return managedpostgres.Binding{}, err
 	}
 	if binding.DatabaseID != request.DatabaseID {
-		return fmt.Errorf("previewdb: scope %s binds another database: %w", request.Scope, managedpostgres.ErrConflict)
+		return managedpostgres.Binding{}, fmt.Errorf("previewdb: scope %s binds another database: %w", request.Scope, managedpostgres.ErrConflict)
 	}
 	if binding.State == managedpostgres.BindingStateProvisioning {
-		return ErrPending
+		return binding, ErrPending
 	}
 	if binding.State != managedpostgres.BindingStateReady {
-		return fmt.Errorf("previewdb: binding is %s: %w", binding.State, managedpostgres.ErrUnavailable)
+		return managedpostgres.Binding{}, fmt.Errorf("previewdb: binding is %s: %w", binding.State, managedpostgres.ErrUnavailable)
 	}
-	return nil
+	return binding, nil
 }
 
 // ReleaseBranch removes the bindings a pull request branch holds, in scope,

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{.Title}} — Gregale</title>
+<style nonce="{{.Nonce}}">body{font:16px system-ui;max-width:1000px;margin:2rem auto;padding:0 1rem}section{margin:2rem 0}table{border-collapse:collapse;width:100%}th,td{padding:.5rem;text-align:left;border-bottom:1px solid #ccc;vertical-align:top}code{overflow-wrap:anywhere}pre{white-space:pre-wrap;background:#f4f4f4;padding:.75rem;overflow-x:auto}nav a{margin-right:1rem}@media (prefers-color-scheme:dark){body{background:#111;color:#eee}pre{background:#222}a{color:#8ab4f8}}</style></head>
+<body><header><a href="/dashboard/apps/{{.Data.Slug}}">{{.Data.Slug}}</a></header>
+<main>{{template "email-verification-banner" .}}<h1>Tasks</h1>
+<p>One-off commands (<code>gregale app exec</code>), release commands and command crons. Each ran in a fresh VM built from the deployment it names; the VM was destroyed when the command exited.</p>
+{{if .Data.Message}}<p role="status">{{.Data.Message}}</p>{{end}}
+{{if not .Data.Enabled}}<p>App tasks are not enabled on this host.</p>{{else}}
+{{with .Data.Selected}}<section aria-labelledby="task-title"><h2 id="task-title">Task <code>{{.ID}}</code></h2>
+<table>
+<tr><th>Status</th><td>{{.Status}}{{if not .Terminal}} (still running; reload for updates){{end}}</td></tr>
+<tr><th>Kind</th><td>{{.Kind}}{{if .Interactive}} · interactive{{end}}</td></tr>
+<tr><th>Command</th><td><code>{{.Command}}</code></td></tr>
+<tr><th>Deployment</th><td><code>{{.DeploymentID}}</code></td></tr>
+<tr><th>Exit code</th><td>{{.ExitCode}}</td></tr>
+{{if .Failure}}<tr><th>Failure</th><td>{{.Failure}}</td></tr>{{end}}
+<tr><th>Created</th><td>{{.CreatedAt}}</td></tr>
+<tr><th>Duration</th><td>{{.Duration}}</td></tr>
+</table>
+{{if .StdoutTail}}<h3>stdout</h3><pre>{{.StdoutTail}}</pre>{{end}}
+{{if .StderrTail}}<h3>stderr</h3><pre>{{.StderrTail}}</pre>{{end}}
+{{if .OutputTruncated}}<p>Output was truncated at {{.MaxOutputBytes}} bytes (stdout and stderr combined); only the tail is kept.</p>{{end}}
+{{if not .Terminal}}<p>Cancel it with <code>gregale app tasks cancel {{$.Data.Slug}} {{.ID}}</code>.</p>{{end}}
+<p><a href="/dashboard/apps/{{$.Data.Slug}}/tasks">← All tasks</a></p></section>
+{{else}}<section aria-labelledby="history-title"><h2 id="history-title">History</h2>
+{{if .Data.Tasks}}<table><tr><th>Task</th><th>Status</th><th>Kind</th><th>Exit</th><th>Created</th><th>Duration</th><th>Command</th></tr>
+{{range .Data.Tasks}}<tr><td><a href="?task={{.ID}}"><code>{{.ID}}</code></a></td><td>{{.Status}}</td><td>{{.Kind}}</td><td>{{.ExitCode}}</td><td>{{.CreatedAt}}</td><td>{{.Duration}}</td><td><code>{{.Command}}</code></td></tr>{{end}}</table>
+<nav>{{if .Data.HasPrev}}<a href="?offset={{.Data.PrevOffset}}">← Newer</a>{{end}}{{if .Data.HasNext}}<a href="?offset={{.Data.NextOffset}}">Older →</a>{{end}}</nav>
+{{else}}<p>No tasks yet. Run one with <code>gregale app exec {{.Data.Slug}} -- &lt;command&gt;</code>.</p>{{end}}
+</section>{{end}}{{end}}
+</main></body></html>

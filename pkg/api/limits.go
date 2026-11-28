@@ -2122,9 +2122,38 @@ const (
 	MCPListingToolTitleMax           = 128
 	MCPListingToolDescriptionMax     = 1024
 	MCPListingEndpointMax            = 2048
-	MCPListingRequestMaxBytes        = 512 << 10
+	MCPListingRequestMaxBytes        = 1536 << 10
 	MCPListingRegistryDescriptionMax = 100
 	MCPListingToolsMaxBytes          = 256000
+	// Tool contract gate (ADR-20261127191645): the catalog contract a
+	// listing is published with is at most MCPListingContractMaxBytes of
+	// canonical JSON, below the 2 MiB CHECK on mcp_listings.contract and
+	// mcp_contract_checks.candidate. An override admits one candidate for
+	// MCPContractOverrideDefaultTTL unless asked for less or more, between
+	// MCPContractOverrideMinTTL and MCPContractOverrideMaxTTL; an app holds
+	// at most MCPContractOverrideOpenCap open overrides (one bound to a
+	// deployment that ended no longer counts). The owner view lists the
+	// newest MCPContractChecksMax checks; the public changelog the newest
+	// MCPContractChangelogMax accepted changes. A check stores at most
+	// MCPContractChangesMax changes in at most MCPContractChangesMaxBytes
+	// (the column allows 262,144 bytes of jsonb text). An override request
+	// body is at most MCPContractOverrideRequestMaxBytes. The gate spends at
+	// most MCPContractGateBudget opening one candidate's session, probe
+	// secret and catalog, and a refused deploy's failure detail names at
+	// most MCPContractBreakingSummaryMax breaking changes.
+	MCPContractChangesMax              = 200
+	MCPContractGateBudget              = 45 * time.Second
+	MCPContractBreakingSummaryMax      = 8
+	MCPContractOverrideMinTTL          = time.Minute
+	MCPContractChangesMaxBytes         = 120_000
+	MCPContractOverrideRequestMaxBytes = 8 << 10
+	MCPListingContractMaxBytes         = 1_000_000
+	MCPContractOverrideDefaultTTL      = time.Hour
+	MCPContractOverrideMaxTTL          = 24 * time.Hour
+	MCPContractOverrideOpenCap         = 5
+	MCPContractReasonMax               = 512
+	MCPContractChecksMax               = 20
+	MCPContractChangelogMax            = 20
 )
 
 // Consumer and platform tenant controls (ADR-1314, ADR-1315, ADR-1322,
@@ -5182,10 +5211,11 @@ func PlanMeetsMinimumPlan(customer, minimumPlan Plan) bool {
 // FullRootfsAllowedPlans (M-3 / ADR-141 §Decision 2) is the closed
 // set of plans whose customers may auto-dispatch to the
 // full-rootfs build path on the typed `oci.ErrLayersNotAboveBase`
-// signal. PlanFree is intentionally absent — Free customers
-// must explicitly opt in via `deployment.FullRootfsOverride=&true`.
+// signal. Every plan is in it since the ADR-147 amendment of
+// 2026-11-28: a full-rootfs layer is held to the plan's existing
+// app-layer cap, so Free gains no disk beyond its 256 MB.
 // Order matters for PlanMeetsFullRootfs's rank comparison.
-var FullRootfsAllowedPlans = []Plan{PlanHobby, PlanPro, PlanScale}
+var FullRootfsAllowedPlans = []Plan{PlanFree, PlanHobby, PlanPro, PlanScale}
 
 // PlanMeetsFullRootfs returns true iff the customer's plan is in
 // FullRootfsAllowedPlans. Mirrors PlanMeetsMinimumPlan's closed-set
@@ -5195,10 +5225,8 @@ var FullRootfsAllowedPlans = []Plan{PlanHobby, PlanPro, PlanScale}
 //
 // imaged.buildImageLayer consults this on the typed
 // `ErrLayersNotAboveBase` dispatch (commit 6) to decide whether
-// to auto-dispatch. Free-plan customers must pass
-// `FullRootfsOverride=&true` to opt in; the dispatch table
-// honours override-first so an explicit override wins over the
-// auto gate.
+// to auto-dispatch. The dispatch table honours override-first so
+// an explicit override wins over the auto gate.
 func PlanMeetsFullRootfs(p Plan) bool {
 	for _, allowed := range FullRootfsAllowedPlans {
 		if p == allowed {
@@ -5219,15 +5247,16 @@ const (
 // cap on the number of /etc/passwd entries BuildFullRootfs merges
 // into /etc/faas/app_passwd. Hobby 16 / Pro 64 / Scale 256 — the
 // scale cap matches the on-disk binary table ceiling
-// (defaultPasswdTableMaxEntries in pkg/rootfs). PlanFree is 0
-// because Free does not auto-dispatch to full-rootfs.
+// (defaultPasswdTableMaxEntries in pkg/rootfs). Free matches Hobby
+// (ADR-147 amendment 2026-11-28): at 0, a Free image's named USER
+// such as distroless' "nonroot" could not be resolved at boot.
 //
 // Excess entries are silently dropped at table-write time; the
 // metric counter imaged_passwd_entries_total{outcome="over_cap"}
 // fires so the dashboard tripwires on misbuilt images without
 // polluting the success series. Lookup is O(1) per call.
 var UserUIDOverrideMax = map[Plan]int{
-	PlanFree:  0,
+	PlanFree:  16,
 	PlanHobby: 16,
 	PlanPro:   64,
 	PlanScale: 256,
@@ -5235,27 +5264,28 @@ var UserUIDOverrideMax = map[Plan]int{
 
 // MaxFullRootfsLayerBytes (M-3 / ADR-141 §Decision 5) is the
 // per-plan ceiling on the unpacked full-rootfs staging tree size.
-// Hobby 256 MB / Pro 1 GB / Scale 4 GB. PlanFree absent because
-// Free cannot auto-dispatch; an explicit Free + override deploy
-// is gated at admission time on PlanMeetsFullRootfs.
+// Free 256 MB / Hobby 256 MB / Pro 1 GB / Scale 4 GB. Free's entry
+// equals its AppLayerMaxMB, so full-rootfs gives Free no more disk
+// than a two-drive layer (ADR-147 amendment 2026-11-28).
 //
 // pkg/rootfs.CheckCapForStaging consults this in addition to the
 // two-drive AppLayerMaxMB ceiling so a Hobby customer cannot ship
 // a 4 GB full-rootfs image that would push them onto the
 // Scale-plan billing rate.
 var MaxFullRootfsLayerBytes = map[Plan]int64{
+	PlanFree:  256 << 20, // 256 MB
 	PlanHobby: 256 << 20, // 256 MB
 	PlanPro:   1 << 30,   // 1 GB
 	PlanScale: 4 << 30,   // 4 GB
 }
 
 // FullRootfsAllowAutoDefault (M-3 / ADR-141 §Decision 2) is the
-// per-plan default for state.Deployment.FullRootfsAllowAuto. Free
-// customers default to false (no auto-dispatch); paid plans default
-// to true. The customer can override per-deployment via
-// FullRootfsOverride (commit 6's tri-state).
+// per-plan default for state.Deployment.FullRootfsAllowAuto. Every
+// plan defaults to true since the ADR-147 amendment of 2026-11-28.
+// The customer can override per-deployment via FullRootfsOverride
+// (commit 6's tri-state).
 var FullRootfsAllowAutoDefault = map[Plan]bool{
-	PlanFree:  false,
+	PlanFree:  true,
 	PlanHobby: true,
 	PlanPro:   true,
 	PlanScale: true,
@@ -18482,6 +18512,40 @@ const (
 	// look up an admin key's scopes by ID in an hour, so IDs cannot be
 	// enumerated.
 	AuthAdminKeyLookupsPerAddress = 60
+	// AuthTrustedNetworkDays is how long a network (an IPv4 address or IPv6
+	// /64) a user signed in from stays trusted: from it, the user's password
+	// sign-ins pass even while their account-wide failure budget is spent,
+	// so a stranger guessing from elsewhere cannot lock them out.
+	AuthTrustedNetworkDays = 30
+	// AuthTrustedNetworkMaxAccounts: a network more accounts than this
+	// signed in from in AuthTrustedNetworkDays (an app's own server, a shared
+	// egress) is trusted for none of them.
+	AuthTrustedNetworkMaxAccounts = 20
+	// AuthTrustedBudgetMultiplier caps the exceptions to a spent budget: a
+	// solved CAPTCHA passes a spent account-wide password budget, and a
+	// trusted network a spent message budget for one recipient, only up to
+	// this many times the budget.
+	AuthTrustedBudgetMultiplier = 4
+	// AuthNewDeviceDays is how long an Auth app remembers the networks and
+	// device kinds a user signed in from; a sign-in from both a network and a
+	// device kind unseen that long emails the user (new-device alerts).
+	// AuthSignInSeenRefreshSeconds is how often one sign-in record is
+	// refreshed, so frequent token refreshes do not each write.
+	AuthNewDeviceDays            = 90
+	AuthSignInSeenRefreshSeconds = 3600
+	// AuthMessagesPerRecipientDefault bounds the sign-in codes, magic links,
+	// password resets and confirmations an Auth app sends in
+	// AuthMessageWindowSeconds to one email address or phone number, unless
+	// the owner sets AUTH_MESSAGES_PER_RECIPIENT, up to
+	// AuthMessagesPerRecipientMax. AUTH_MESSAGES_PER_NETWORK, off by default
+	// because an app sending from its own server asks from one network for
+	// all its users, bounds those one network asks for, up to
+	// AuthMessagesPerNetworkMax. Each message costs the owner money and may
+	// land in a stranger's inbox.
+	AuthMessagesPerRecipientDefault = 5
+	AuthMessagesPerRecipientMax     = 50
+	AuthMessagesPerNetworkMax       = 1000
+	AuthMessageWindowSeconds        = 3600
 	// AuthAnonymousRetentionMaxDays bounds how long idle anonymous users may
 	// be kept before the Auth app deletes them, when the owner sets a limit.
 	AuthAnonymousRetentionMaxDays = 3650

@@ -3,6 +3,7 @@ package imaged
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -39,4 +40,21 @@ func (h *Handler) validateEnvironmentBranchActivation(ctx context.Context, dep s
 		return errors.New("imaged: environment branch activation waits for the branch's data")
 	}
 	return nil
+}
+
+// holdForEnvironmentBranchData reports whether dep waits for the data of the
+// environment branch it was built into. Stores without branches hold nothing.
+func (h *Handler) holdForEnvironmentBranchData(ctx context.Context, dep state.Deployment) (bool, error) {
+	reader, ok := h.store.(state.EnvironmentBranchDeploymentReader)
+	if !ok {
+		return false, nil
+	}
+	ready, err := reader.EnvironmentBranchDataReady(ctx, dep.ID)
+	if err != nil {
+		return true, fmt.Errorf("imaged: read environment branch data: %w", err)
+	}
+	if !ready {
+		h.log.Debug("imaged: deployment waits for its environment branch's data", "deployment_id", dep.ID, "app_id", dep.AppID)
+	}
+	return !ready, nil
 }

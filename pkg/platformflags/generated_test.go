@@ -18,9 +18,10 @@ func TestEveryCapabilityHasExactlyOneFlag(t *testing.T) {
 		}
 	}
 	for _, capability := range products.Capabilities {
-		if capability.AlwaysOn {
+		if capability.AlwaysOn || capability.InheritsFlag {
+			// An inheriting sub-feature is released by its parent's flag.
 			if keys := owners[capability.ID]; len(keys) != 0 {
-				t.Errorf("always-on capability %q has flags %v, want none", capability.ID, keys)
+				t.Errorf("flagless capability %q has flags %v, want none", capability.ID, keys)
 			}
 			continue
 		}

@@ -27,6 +27,16 @@ func mcpPolicyReject(w http.ResponseWriter, status int, p *api.MCPResourcePolicy
 	return true
 }
 
+// mcpRefuseWithoutChallenge answers 403 without a WWW-Authenticate
+// challenge: the refusal (a closed account, a disallowed origin) is not
+// about the token's scopes, so a client must not sign in again or ask for
+// more scopes to retry it (RFC 6750 §3.1).
+func mcpRefuseWithoutChallenge(w http.ResponseWriter, reason string) bool {
+	w.Header().Set("Cache-Control", "no-store")
+	api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "mcp_access_denied", "MCP access denied", reason))
+	return true
+}
+
 func mcpPolicyMetadata(w http.ResponseWriter, r *http.Request, rule *EdgeRuleJWTResolved) bool {
 	p := rule.MCP
 	if r.URL.Path != p.MetadataPath() {
@@ -60,7 +70,7 @@ func (h *Handler) applyMCPResourcePolicy(w http.ResponseWriter, r *http.Request,
 		return false
 	}
 	if origins := r.Header.Values("Origin"); len(origins) > 1 || (len(origins) == 1 && !slices.Contains(p.AllowedOrigins, origins[0])) {
-		return mcpPolicyReject(w, http.StatusForbidden, p, "Origin is not allowed")
+		return mcpRefuseWithoutChallenge(w, "Origin is not allowed")
 	}
 	if origin := r.Header.Get("Origin"); origin != "" {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
