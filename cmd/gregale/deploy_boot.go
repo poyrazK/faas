@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/oci"
 )
 
@@ -15,17 +16,35 @@ import (
 // one: a crash, a wrong listener, an out-of-memory kill or a failing health
 // check costs an upload and a deployment otherwise.
 
-// deployBootFlagProblem refuses --boot and --boot-env-file without a local
-// image. A registry image is checked with `doctor --image REF --boot`.
-func deployBootFlagProblem(localImageName string, explicit map[string]bool) error {
-	if !explicit["boot"] && !explicit["boot-env-file"] {
+// deployBootFlagProblem refuses --boot without a local image to upload, and
+// --boot-env-file without --boot. A registry image is checked with
+// `doctor --image REF --boot`.
+func deployBootFlagProblem(localImageName string, boot, createOnly bool, explicit map[string]bool) error {
+	if explicit["boot-env-file"] && !boot {
+		return errors.New("--boot-env-file requires --boot")
+	}
+	if !boot {
 		return nil
 	}
 	if localImageName == "" {
 		return errors.New("--boot requires --local-image; check a registry image with `gregale doctor --image REF --boot`")
 	}
-	if explicit["boot-env-file"] && !explicit["boot"] {
-		return errors.New("--boot-env-file requires --boot")
+	if createOnly {
+		return errors.New("--boot checks an image before it is uploaded, and --create-only uploads nothing")
+	}
+	return nil
+}
+
+// deployBootModeProblem refuses --boot for apps the boot check cannot judge:
+// it requires HTTP on $PORT, which workers, jobs and gRPC-health services
+// never answer. mode is the resolved execution mode (flag or gregale.yaml).
+func deployBootModeProblem(mode string, healthcheck *api.DeploymentHealthcheck) error {
+	switch strings.TrimSpace(mode) {
+	case api.ExecutionModeWorker, api.ExecutionModeJob:
+		return fmt.Errorf("--boot checks that the image serves HTTP on $PORT, which a %s does not; deploy without --boot", strings.TrimSpace(mode))
+	}
+	if healthcheck != nil && healthcheck.GRPC != nil {
+		return errors.New("--boot probes HTTP, and this deploy checks readiness with gRPC health; deploy without --boot")
 	}
 	return nil
 }
@@ -41,6 +60,16 @@ func (localOnlyInspector) InspectImage(context.Context, string, *oci.BasicAuth) 
 // deployBootFlags is the boot input a deploy supplies.
 type deployBootFlags struct {
 	image, app, healthPath, envFile string
+	// ramMB is the RAM of the deploy's --size, 0 to use the app's.
+	ramMB int
+}
+
+// deployBootRAMMB is the RAM a --size profile gives the app, 0 when none.
+func deployBootRAMMB(profile string) int {
+	if spec, ok := api.ResourceProfileSpecFor(strings.TrimSpace(profile)); ok {
+		return spec.MemoryMB
+	}
+	return 0
 }
 
 // runDeployBootCheck boots the image and returns a nonzero exit code when a
@@ -50,8 +79,11 @@ func runDeployBootCheck(ctx context.Context, in deployBootFlags) int {
 		PrintProgress(osStderr, "booting %s with local Docker before deploying", in.image)
 	}
 	report := runDoctorImageChecksWithLocal(ctx, in.image, nil, localOnlyInspector{}, readLocalDockerImage)
-	flags := &doctorImageFlags{image: in.image, boot: true, app: in.app, healthPath: in.healthPath, envFile: in.envFile}
-	addDoctorBootChecks(ctx, &report, flags)
+	flags := &doctorImageFlags{image: in.image, boot: true, app: in.app, healthPath: in.healthPath, envFile: in.envFile, ramMB: in.ramMB, deploy: true}
+	if addDoctorBootChecks(ctx, &report, flags) {
+		// Ctrl-C was meant to stop the deploy, not to skip the check.
+		return printErr("Deploy interrupted", errors.New("the local boot check was interrupted; nothing was uploaded"))
+	}
 	boot := doctorReport{Image: report.Image, Checks: []doctorCheck{}}
 	for _, c := range report.Checks {
 		if strings.HasPrefix(c.Name, "boot-") {

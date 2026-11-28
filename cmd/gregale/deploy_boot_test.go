@@ -1,31 +1,45 @@
 package main_test
 
 import (
+	"bytes"
 	"context"
-	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/cmd/gregale"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/ociarchive/ociarchivetest"
 )
 
 // bootDeployDocker is a fake Docker that boots the image and saves a real
-// archive fixture, for `deploy --local-image --boot`.
+// archive fixture, for `deploy --local-image --boot`. The app does not exist
+// yet, as on a first deploy.
 func bootDeployDocker(t *testing.T) fakeBootDocker {
 	t.Helper()
 	docker := newFakeBootDocker(t)
 	main.SetDoctorBootMemorySources(t.Cleanup, signedOut, func(context.Context, string) (int, string, error) {
-		return 0, "", errors.New("app not found")
+		return 0, "", &api.APIError{Problem: *api.NewProblem(http.StatusNotFound, "app_not_found", "Not found", "no such app")}
 	})
 	docker.write(t, "image", strings.Replace(localInspectJSON("amd64"), "3000/tcp", "8080/tcp", 1))
 	if err := os.WriteFile(filepath.Join(docker.dir, "saved"), ociarchivetest.DockerSave(t, "acme/web:dev", "amd64", 8080), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return docker
+}
+
+// deployCapturingStderr runs deploy and returns its exit code and stderr.
+func deployCapturingStderr(t *testing.T, args ...string) (int, string) {
+	t.Helper()
+	var stderr bytes.Buffer
+	old := *main.OsStderr
+	*main.OsStderr = &stderr
+	defer func() { *main.OsStderr = old }()
+	return main.CmdDeployTarball(args), stderr.String()
 }
 
 func dockerCallIndexOf(calls []string, prefix string) int {
@@ -43,8 +57,12 @@ func TestDeployLocalImageBootPasses(t *testing.T) {
 	docker := bootDeployDocker(t)
 	serveBoot(t, docker, func(http.ResponseWriter, *http.Request) {})
 	envFile := filepath.Join(t.TempDir(), "boot.env")
-	if code := main.CmdDeployTarball([]string{"--name", "demo", "--app", "--no-wait", "--local-image", "acme/web:dev", "--boot", "--boot-env-file", envFile}); code != 0 {
-		t.Fatalf("code=%d", code)
+	code, stderr := deployCapturingStderr(t, "--name", "demo", "--app", "--no-wait", "--local-image", "acme/web:dev", "--boot", "--boot-env-file", envFile)
+	if code != 0 {
+		t.Fatalf("code=%d: %s", code, stderr)
+	}
+	if strings.Contains(stderr, "Could not read app") {
+		t.Errorf("a first deploy warned that its new app could not be read: %s", stderr)
 	}
 	stub.checkUploaded(t, "acme/web:dev")
 	calls := docker.calls(t)
@@ -57,12 +75,28 @@ func TestDeployLocalImageBootPasses(t *testing.T) {
 	}
 }
 
+func TestDeployLocalImageBootUsesSize(t *testing.T) {
+	localImageRepo(t)
+	newLocalImageStub(t)
+	docker := bootDeployDocker(t)
+	serveBoot(t, docker, func(http.ResponseWriter, *http.Request) {})
+	if code, stderr := deployCapturingStderr(t, "--name", "demo", "--app", "--no-wait", "--local-image", "acme/web:dev", "--boot", "--size", "large"); code != 0 {
+		t.Fatalf("code=%d: %s", code, stderr)
+	}
+	spec, _ := api.ResourceProfileSpecFor("large")
+	calls := docker.calls(t)
+	if run := dockerCallIndexOf(calls, "run "); run < 0 || !strings.Contains(calls[run], " --memory "+strconv.Itoa(spec.MemoryMB)+"m ") {
+		t.Fatalf("docker calls %q: want the boot capped at --size large's %d MB", calls, spec.MemoryMB)
+	}
+}
+
 func TestDeployLocalImageBootFailureStopsBeforeSave(t *testing.T) {
 	localImageRepo(t)
 	stub := newLocalImageStub(t)
 	docker := bootDeployDocker(t)
 	docker.write(t, "state", "false 1 false")
-	if code := main.CmdDeployTarball([]string{"--name", "demo", "--app", "--no-wait", "--local-image", "acme/web:dev", "--boot"}); code == 0 {
+	code, stderr := deployCapturingStderr(t, "--name", "demo", "--app", "--no-wait", "--local-image", "acme/web:dev", "--boot")
+	if code == 0 {
 		t.Fatal("deploy succeeded although the image crashed")
 	}
 	if dockerCallIndexOf(docker.calls(t), "image save ") >= 0 || stub.opts != nil {
@@ -71,18 +105,73 @@ func TestDeployLocalImageBootFailureStopsBeforeSave(t *testing.T) {
 	if !docker.removed(t) {
 		t.Error("boot container not removed")
 	}
+	// The fix names deploy's flag, not doctor's --env-file.
+	if !strings.Contains(stderr, "--boot-env-file") || strings.Contains(stderr, "with --env-file") {
+		t.Errorf("fix should name --boot-env-file: %s", stderr)
+	}
+}
+
+func TestDeployLocalImageBootRefusesNonHTTPApps(t *testing.T) {
+	for name, extra := range map[string][]string{
+		"worker": {"--execution-mode", "worker"},
+		"job":    {"--execution-mode", "job"},
+		"grpc":   {"--healthcheck-grpc"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			localImageRepo(t)
+			stub := newLocalImageStub(t)
+			docker := bootDeployDocker(t)
+			args := append([]string{"--name", "demo", "--app", "--no-wait", "--local-image", "acme/web:dev", "--boot"}, extra...)
+			code, stderr := deployCapturingStderr(t, args...)
+			if code == 0 || !strings.Contains(stderr, "deploy without --boot") {
+				t.Fatalf("code=%d stderr=%s: want a refusal naming --boot", code, stderr)
+			}
+			if b, err := os.ReadFile(filepath.Join(docker.dir, "log")); err == nil && strings.Contains(string(b), "run ") {
+				t.Fatalf("booted anyway: %s", b)
+			}
+			if stub.opts != nil {
+				t.Fatal("uploaded")
+			}
+		})
+	}
+}
+
+func TestDeployBootCheckInterruptedFails(t *testing.T) {
+	docker := bootDeployDocker(t)
+	main.SetDoctorBootTimings(t.Cleanup, 5*time.Second, 5*time.Second, 10*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// The probe's answer cancels, so the stay-up wait sees the interrupt.
+	serveBoot(t, docker, func(http.ResponseWriter, *http.Request) { cancel() })
+	var stderr bytes.Buffer
+	old := *main.OsStderr
+	*main.OsStderr = &stderr
+	defer func() { *main.OsStderr = old }()
+	if code := main.RunDeployBootCheck(ctx, "acme/web:dev"); code == 0 {
+		t.Fatalf("an interrupted boot check let the deploy go on: %s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "interrupted") {
+		t.Errorf("stderr %q", stderr.String())
+	}
 }
 
 func TestDeployBootFlagValidation(t *testing.T) {
 	localImageRepo(t)
 	stub := newLocalImageStub(t)
-	for _, args := range [][]string{
-		{"--name", "demo", "--app", "--no-wait", "--boot"},
-		{"--name", "demo", "--app", "--no-wait", "--image-archive", "image.tar", "--boot"},
-		{"--name", "demo", "--app", "--no-wait", "--local-image", "acme/web:dev", "--boot-env-file", "boot.env"},
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--boot"}, "--boot requires --local-image"},
+		{[]string{"--image-archive", "image.tar", "--boot"}, "--boot requires --local-image"},
+		{[]string{"--local-image", "acme/web:dev", "--boot-env-file", "boot.env"}, "--boot-env-file requires --boot"},
+		{[]string{"--local-image", "acme/web:dev", "--boot=false", "--boot-env-file", "boot.env"}, "--boot-env-file requires --boot"},
+		{[]string{"--boot-env-file", "boot.env"}, "--boot-env-file requires --boot"},
+		{[]string{"--local-image", "acme/web:dev", "--boot", "--create-only"}, "--create-only"},
 	} {
-		if code := main.CmdDeployTarball(args); code == 0 {
-			t.Errorf("%q: deploy accepted", args)
+		code, stderr := deployCapturingStderr(t, append([]string{"--name", "demo", "--app", "--no-wait"}, tc.args...)...)
+		if code == 0 || !strings.Contains(stderr, tc.want) {
+			t.Errorf("%q: code=%d stderr=%q, want %q", tc.args, code, stderr, tc.want)
 		}
 	}
 	if stub.opts != nil {
