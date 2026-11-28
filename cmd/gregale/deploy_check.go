@@ -290,6 +290,7 @@ func deploymentCheckCommand() cliSub {
 		{Name: "env-file", Short: "without --project: with --boot, pass KEY=VALUE lines from this file to the container", Value: "FILE"},
 		{Name: "ram", Short: "without --project: with --boot, the container's memory limit in MB (default: --app's RAM, else your plan's default for a new app)", Value: "MB"},
 		{Name: "healthcheck-path", Short: "without --project: with --boot, probe this readiness path instead of / and require 2xx", Value: "PATH"},
+		{Name: "execution-mode", Short: "without --project: with --boot, the app's lifecycle mode (request|service|worker|job); a worker must keep running and a job exit 0, with no HTTP check", Value: "MODE"},
 		{Name: "strict", Short: "without --project: exit 1 on warnings", Bool: true},
 		{Name: "app", Short: "without --project: app whose env and secret names count as declared (defaults to linked context)", Value: "SLUG"},
 		{Name: "project-slug", Short: "with --project: project slug (defaults to linked context or selected directory)", Value: "SLUG"},

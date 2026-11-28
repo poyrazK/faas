@@ -35,13 +35,13 @@ func deployBootFlagProblem(localImageName string, boot, createOnly bool, explici
 	return nil
 }
 
-// deployBootModeProblem refuses --boot for apps the boot check cannot judge:
-// it requires HTTP on $PORT, which workers, jobs and gRPC-health services
-// never answer. mode is the resolved execution mode (flag or gregale.yaml).
+// deployBootModeProblem refuses --boot for a deploy the boot check cannot
+// judge: a gRPC-health service, which the local probe cannot ask, and an
+// HTTP health path on a worker or job, which serves none (as doctor does).
+// Workers and jobs are otherwise checked without HTTP (doctor_boot_mode.go).
 func deployBootModeProblem(mode string, healthcheck *api.DeploymentHealthcheck) error {
-	switch strings.TrimSpace(mode) {
-	case api.ExecutionModeWorker, api.ExecutionModeJob:
-		return fmt.Errorf("--boot checks that the image serves HTTP on $PORT, which a %s does not; deploy without --boot", strings.TrimSpace(mode))
+	if healthcheck != nil && healthcheck.Path != "" && doctorBootNoListener(mode) {
+		return fmt.Errorf("--healthcheck-path probes HTTP, which a %s does not serve", strings.TrimSpace(mode))
 	}
 	if healthcheck != nil && healthcheck.GRPC != nil {
 		return errors.New("--boot probes HTTP, and this deploy checks readiness with gRPC health; deploy without --boot")
@@ -60,6 +60,8 @@ func (localOnlyInspector) InspectImage(context.Context, string, *oci.BasicAuth) 
 // deployBootFlags is the boot input a deploy supplies.
 type deployBootFlags struct {
 	image, app, healthPath, envFile string
+	// mode is the deploy's resolved execution mode (flag or gregale.yaml).
+	mode string
 	// ramMB is the RAM of the deploy's --size, 0 to use the app's.
 	ramMB int
 }
@@ -79,7 +81,7 @@ func runDeployBootCheck(ctx context.Context, in deployBootFlags) int {
 		PrintProgress(osStderr, "booting %s with local Docker before deploying", in.image)
 	}
 	report := runDoctorImageChecksWithLocal(ctx, in.image, nil, localOnlyInspector{}, readLocalDockerImage)
-	flags := &doctorImageFlags{image: in.image, boot: true, app: in.app, healthPath: in.healthPath, envFile: in.envFile, ramMB: in.ramMB, deploy: true}
+	flags := &doctorImageFlags{image: in.image, boot: true, app: in.app, healthPath: in.healthPath, envFile: in.envFile, ramMB: in.ramMB, deploy: true, executionMode: in.mode}
 	if addDoctorBootChecks(ctx, &report, flags) {
 		// Ctrl-C was meant to stop the deploy, not to skip the check.
 		return printErr("Deploy interrupted", errors.New("the local boot check was interrupted; nothing was uploaded"))
