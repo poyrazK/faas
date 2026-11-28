@@ -54,6 +54,20 @@ func TestMCPOAuthConsumerIsMeteredAndCapped(t *testing.T) {
 		}
 	}
 
+	// The label the handler kept before edge rewrites (a declared route,
+	// the original path) wins over the rewritten endpoint path.
+	{
+		r := httptest.NewRequest("POST", "https://app.example/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+		r.Header.Set("Authorization", "Bearer jwt")
+		r = withUnattributedRoute(r, "POST /v1/mcp")
+		if h := handler(&fakeConsumerPlanStore{}); h.applyMCPResourcePolicy(httptest.NewRecorder(), r, production, rule) {
+			t.Fatal("refused")
+		}
+		if got := planRouteFrom(r); got != "POST /v1/mcp" {
+			t.Errorf("rewritten request plan route = %q, want the original POST /v1/mcp", got)
+		}
+	}
+
 	// The plan's tool limit refuses the call once it is used up.
 	capped := &fakeConsumerPlanStore{
 		policy:   ConsumerPlanPolicy{RouteLimits: map[string]api.APIConsumerPlanRouteLimit{api.MCPBillingToolsPrefix + "/greet": {MaxRequestsPerMonth: 3}}},

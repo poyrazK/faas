@@ -43,6 +43,10 @@ func syncExternalOAuthGatewayPolicy(ctx context.Context, c *Client, path, slug s
 	if cfg.Auth.Mode != mcphosting.AuthExternalOAuth {
 		return nil
 	}
+	// The deploy's verification deadline may be nearly spent by promotion;
+	// the policy write gets its own short budget.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+	defer cancel()
 	if audit != nil && audit.AuthPlacement == "guest-only" {
 		fmt.Fprintf(os.Stderr, "Gateway leaves token checks to the server (--access-audit guest-only); its OAuth callers cannot become customers\n")
 		return &mcpGatewayTokenChecks{Status: "skipped", Reason: "--access-audit guest-only"}
@@ -52,7 +56,7 @@ func syncExternalOAuthGatewayPolicy(ctx context.Context, c *Client, path, slug s
 		algorithms = audit.Algorithms
 	}
 	warn := func(err error) *mcpGatewayTokenChecks {
-		fix := fmt.Sprintf("gregale mcp policy --path %s --name %s", path, slug)
+		fix := "gregale mcp policy --path " + quoteCLIArg(path) + " --name " + quoteCLIArg(slug)
 		fmt.Fprintf(os.Stderr, "warning: Gregale does not check this server's tokens (%v); callers are served but cannot become customers. "+
 			"Fix it, then run `%s`\n", err, fix)
 		return &mcpGatewayTokenChecks{Status: "failed", Reason: err.Error(), FixCommands: []string{fix}}

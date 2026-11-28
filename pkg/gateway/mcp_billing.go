@@ -88,7 +88,7 @@ func (h *Handler) applyMCPBilling(r *http.Request, app App, p *api.MCPResourcePo
 		// protocol overhead the same path label a consumer key's carries,
 		// so per-minute route limits and statements see both alike.
 		if current, _ := r.Context().Value(billingRouteKey{}).(string); current == "" && authenticatedFrom(r.Context()).ConsumerID != "" {
-			path := observedRouteLabel(r.Method, inferredObservedPath(r.URL.Path))
+			path := unattributedRouteFrom(r)
 			*r = *withPlanRoute(withBillingRoute(r, h.billingRouteSetFor(app.ID).admit(path)), path)
 		}
 		return
