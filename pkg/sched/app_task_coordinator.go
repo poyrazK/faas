@@ -198,7 +198,7 @@ func (c *AppTaskCoordinator) Run(ctx context.Context) error {
 	}
 
 	var workers sync.WaitGroup
-	workers.Add(c.config.MaxConcurrent + 1)
+	workers.Add(c.config.MaxConcurrent + 2)
 	for i := 0; i < c.config.MaxConcurrent; i++ {
 		go func() {
 			defer workers.Done()
@@ -208,6 +208,10 @@ func (c *AppTaskCoordinator) Run(ctx context.Context) error {
 	go func() {
 		defer workers.Done()
 		c.runSweeper(ctx)
+	}()
+	go func() {
+		defer workers.Done()
+		c.runPruner(ctx)
 	}()
 	<-ctx.Done()
 	workers.Wait()

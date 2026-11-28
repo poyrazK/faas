@@ -83844,6 +83844,13 @@ CREATE UNIQUE INDEX app_tasks_one_release_per_deployment_uniq ON public.app_task
 
 
 --
+-- Name: app_tasks_prunable_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_tasks_prunable_idx ON public.app_tasks USING btree (finished_at) WHERE ((kind = ANY (ARRAY['manual'::text, 'cron'::text])) AND (binding_verification IS NULL) AND (finished_at IS NOT NULL));
+
+
+--
 -- Name: app_tasks_retry_due_idx; Type: INDEX; Schema: public; Owner: -
 --
 
