@@ -1452,6 +1452,11 @@ message SandboxRunStart {
   // volume_source_sandbox_id is a fork's source, whose backup
   // volume_backup_id is.
   string volume_source_sandbox_id = 25;
+  // reattach takes over a persistent session's VM that kept running when
+  // its stream ended (ADR-20261122132055 §7): schedd routes to node_id,
+  // books the VM there again and vmmd hands its stream to this one. The
+  // machine fields above must match the session's.
+  SandboxRunReattach reattach = 26;
 }
 
 // SandboxRunTask is a sandbox task, as vmmd's RunSandboxTask.
@@ -1546,7 +1551,22 @@ message SandboxRunEvent {
     // forked and fork_refused relay vmmd's answers to fork.
     SandboxRunForked forked = 16;
     SandboxRunForkRefused fork_refused = 17;
+    // evacuate asks agentd to move the session off its node
+    // (ADR-20261122132055 §7): the node is draining, or its vmmd is
+    // stopping. A persistent session pauses and resumes elsewhere or after
+    // the restart; another ends. An older agentd ignores it.
+    SandboxRunEvacuate evacuate = 18;
   }
+}
+
+message SandboxRunReattach {
+  string node_id = 1;
+  string instance = 2;
+}
+
+message SandboxRunEvacuate {
+  // reason is node_draining or vmmd_stopping.
+  string reason = 1;
 }
 
 message SandboxRunForked {
@@ -1736,6 +1756,9 @@ message AgentRunPlaced {
 message AgentRunBooted {
   string method = 1;
   int64 boot_ms = 2;
+  // reattached: a sandbox session's running VM took the new stream
+  // (ADR-20261122132055 §7); nothing booted.
+  bool reattached = 5;
   // actions relays vmmd's RunSandboxBooted.actions for a sandbox session
   // (ADR-20261117065818 §2); an agent run leaves it unset.
   bool actions = 3;

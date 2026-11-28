@@ -495,6 +495,26 @@ const (
 	UnverifiedAccountExpiryBatch = 100
 )
 
+// DeletedOrgPurgeAfter is how long a deleted shared organization keeps its
+// slug before apid's hourly purge releases it (ADR-061 amendment 1); one
+// sweep purges at most DeletedOrgPurgeBatch.
+const (
+	DeletedOrgPurgeAfter = 30 * 24 * time.Hour
+	DeletedOrgPurgeBatch = 100
+)
+
+// schedd's sweep of snapshots whose object is missing from the canonical
+// store (prod hunt r72): a snapshot must be SnapshotOriginMissingGrace old
+// when a node's fan-out found it missing before schedd marks it stale (a
+// capture's upload lands well inside it); the sweep runs every
+// SnapshotOriginMissingInterval and retires at most SnapshotOriginMissingBatch
+// per pass.
+const (
+	SnapshotOriginMissingGrace    = time.Hour
+	SnapshotOriginMissingInterval = 5 * time.Minute
+	SnapshotOriginMissingBatch    = 50
+)
+
 // Customer-granted support access (ADR-20261116163508). A grant lasts
 // SupportGrantDefaultTTL unless its owner or admin picks another duration,
 // at most SupportGrantMaxTTL, and names at most SupportGrantMaxApps apps. A
@@ -12254,6 +12274,10 @@ var (
 	SandboxPersistentRunMaxSec    = [4]int{0, 86_400, 259_200, 604_800}
 	SandboxPausedRetentionDays    = [4]int{0, 7, 30, 90}
 	SandboxResumeWaitSec          = 30
+	// SandboxReattachGraceSec is how long vmmd keeps a persistent session's VM
+	// running after its stream ended without a close or a pause, for agentd
+	// to take it over again (§7: schedd and agentd restarts).
+	SandboxReattachGraceSec = 120
 	// SandboxForkMax bounds the forks one request makes (§3).
 	SandboxForkMax = [4]int{0, 1, 10, 100}
 	// SandboxVolumeMaxGB bounds a persistent session's workspace volume, and

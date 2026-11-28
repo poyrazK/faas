@@ -124,8 +124,9 @@ func cmdOrgsMembers(args []string) int {
 	case subRm:
 		return cmdOrgsMembersRm(args[1:])
 	default:
-		printCommandValidation(os.Stderr, "gregale org members: unknown subcommand %q\n", args[0])
-		return 1
+		// `org members audit-1001-org` named no verb (prod hunt r73); the
+		// shared renderer lists them in the help tree's words.
+		return printUnknownSubcommand(os.Stderr, "orgs members", nestedCliCommand("orgs", "members"), args[0])
 	}
 }
 
@@ -192,18 +193,23 @@ var orgRoleForPatchVocab = api.AllowedOrgDirectPatchRoles
 
 func cmdOrgsLs(args []string) int {
 	fs := newFlagSet("orgs ls", flag.ContinueOnError)
+	all := fs.Bool("all", false, "include deleted organizations")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale orgs ls", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale orgs ls [--all]", "orgs")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.ListOrgs(context.Background())
+	list := client.ListOrgs
+	if *all {
+		list = client.ListOrgsIncludingDeleted
+	}
+	resp, err := list(context.Background())
 	if err != nil {
 		return printErr("Could not list orgs", err)
 	}
@@ -219,7 +225,7 @@ func cmdOrgsLs(args []string) int {
 		if o.Personal {
 			flag = " (personal)"
 		}
-		fmt.Printf("%-32s %-12s %-10s %s%s\n", o.Slug, o.Plan, o.Status, o.Name, flag)
+		_, _ = fmt.Fprintf(osStdout, "%-32s %-12s %-10s %s%s\n", o.Slug, o.Plan, o.Status, o.Name, flag)
 	}
 	return 0
 }

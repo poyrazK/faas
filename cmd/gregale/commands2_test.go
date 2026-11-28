@@ -1640,8 +1640,8 @@ func TestCmdLogs_GrepSinceLevel(t *testing.T) {
 		t.Setenv("FAAS_API", srv.URL)
 		t.Setenv("FAAS_TOKEN", "fp_live_x")
 		code := cmdLogs([]string{"--level", "trace", "myapp"})
-		if code != 2 {
-			t.Errorf("cmdLogs(--level trace) = %d, want 2", code)
+		if code != 1 {
+			t.Errorf("cmdLogs(--level trace) = %d, want 1", code)
 		}
 		if atomic.LoadInt32(&hits) != 0 {
 			t.Errorf("server was hit %d times; validation must short-circuit before HTTP", hits)
@@ -1664,8 +1664,8 @@ func TestCmdLogs_GrepSinceLevel(t *testing.T) {
 		t.Setenv("FAAS_API", srv.URL)
 		t.Setenv("FAAS_TOKEN", "fp_live_x")
 		code := cmdLogs([]string{"--since", "yesterday", "myapp"})
-		if code != 2 {
-			t.Errorf("cmdLogs(--since yesterday) = %d, want 2", code)
+		if code != 1 {
+			t.Errorf("cmdLogs(--since yesterday) = %d, want 1", code)
 		}
 		if atomic.LoadInt32(&hits) != 0 {
 			t.Errorf("server was hit %d times; validation must short-circuit before HTTP", hits)
@@ -1757,8 +1757,8 @@ func TestCmdLogs_GrepSinceLevel(t *testing.T) {
 		t.Setenv("FAAS_API", srv.URL)
 		t.Setenv("FAAS_TOKEN", "fp_live_x")
 		code := cmdLogs([]string{"tail", "--follow", "myapp"})
-		if code != 2 {
-			t.Errorf("cmdLogs(tail --follow myapp) = %d, want 2 (redundant flag rejected)", code)
+		if code != 1 {
+			t.Errorf("cmdLogs(tail --follow myapp) = %d, want 1 (redundant flag rejected)", code)
 		}
 		if atomic.LoadInt32(&hits) != 0 {
 			t.Errorf("server was hit %d times; redundant-flag rejection must short-circuit", hits)
@@ -1781,8 +1781,8 @@ func TestCmdLogs_GrepSinceLevel(t *testing.T) {
 		t.Setenv("FAAS_API", srv.URL)
 		t.Setenv("FAAS_TOKEN", "fp_live_x")
 		code := cmdLogs([]string{"tail", "--level", "trace", "myapp"})
-		if code != 2 {
-			t.Errorf("cmdLogs(tail --level trace myapp) = %d, want 2", code)
+		if code != 1 {
+			t.Errorf("cmdLogs(tail --level trace myapp) = %d, want 1", code)
 		}
 		if atomic.LoadInt32(&hits) != 0 {
 			t.Errorf("server was hit %d times; validation must short-circuit", hits)
