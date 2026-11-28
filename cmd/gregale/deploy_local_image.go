@@ -212,8 +212,27 @@ func localImageUploadOptions(img *localImageDeploy, req api.CreateDeploymentRequ
 	}
 }
 
-// submitLocalImage uploads the converted archive and commits it.
+// submitLocalImage uploads the converted archive and commits it. A redeploy
+// first tries a thin archive without the layers the app's previous image has
+// (deploy_local_image_reuse.go), and uploads in full if apid cannot fill it.
 func submitLocalImage(ctx context.Context, client *Client, slug string, img *localImageDeploy, opts api.UploadDeployOptions, observe func(deployUploadIdentity) error) (api.DeploymentResponse, error) {
+	if thin := img.thinArchive(ctx, client, slug); thin != "" {
+		defer func() { _ = os.Remove(thin) }()
+		thinOpts := opts
+		thinOpts.ReuseImageBase = true
+		dep, err := uploadLocalImageArchive(ctx, client, slug, img, thin, thinOpts, observe)
+		if !isImageBaseChanged(err) {
+			return dep, err
+		}
+		if !jsonOutput {
+			PrintProgress(osStderr, "the app's previous image changed meanwhile; uploading the full image")
+		}
+	}
+	return uploadLocalImageArchive(ctx, client, slug, img, img.archivePath, opts, observe)
+}
+
+// uploadLocalImageArchive uploads one archive file and commits it.
+func uploadLocalImageArchive(ctx context.Context, client *Client, slug string, img *localImageDeploy, path string, opts api.UploadDeployOptions, observe func(deployUploadIdentity) error) (api.DeploymentResponse, error) {
 	var progress resumableUploadProgress
 	if !jsonOutput {
 		last := -1
@@ -226,7 +245,7 @@ func submitLocalImage(ctx context.Context, client *Client, slug string, img *loc
 			PrintProgress(osStderr, "uploading image %s: %d%% (%d/%d MiB)", img.displayName, percent, uploaded/(1024*1024), total/(1024*1024))
 		}
 	}
-	dep, _, supported, err := deployResumableTarball(client, ctx, slug, img.archivePath, progress, observe, opts)
+	dep, _, supported, err := deployResumableTarball(client, ctx, slug, path, progress, observe, opts)
 	if err == nil && !supported {
 		err = errors.New("this Gregale API does not accept resumable uploads, which local image deploys need; push the image to a registry and deploy it with --image REF@sha256:<digest>")
 	}

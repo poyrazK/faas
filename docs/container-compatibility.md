@@ -30,7 +30,11 @@ Scale); larger images fail with `source_too_large`. Nothing is built: the image
 deploys exactly as saved. Set `GREGALE_DOCKER=podman` to save with a
 Docker-compatible client other than `docker`. Apps that require signed images
 and function apps only accept registry images. Pushing to a registry is still
-faster for large images and is the better choice in CI. Local image deploys are
+faster for large images and is the better choice in CI. A redeploy of the
+same app uploads only the layers its previous local image did not have, so
+changing the top layer of a large image sends just that layer; the CLI prints
+how many layers it reused, and falls back to a full upload if the previous
+image changed meanwhile. Local image deploys are
 being released gradually; an account without them gets "Local image deploys
 unavailable" and can deploy through a registry instead.
 

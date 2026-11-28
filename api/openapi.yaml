@@ -32475,6 +32475,30 @@ paths:
         '422': { $ref: '#/components/responses/DeployFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/image-base:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: getAppImageBase
+      summary: The layers of the app's latest uploaded local image.
+      description: |
+        Requires deploy:write or admin. Lists the manifest digest and layers of
+        the last OCI image archive committed for this app, so a redeploy can
+        upload only the layers it lacks with reuse_image_base. Only the
+        latest image is kept. Unavailable while local image deploys are off
+        for the account.
+      x-faas-key-scope: [admin, deploy:write]
+      responses:
+        '200':
+          description: The app's image base.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageBase'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/DeploymentForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /v1/apps/{slug}/image-published:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -114399,6 +114423,19 @@ components:
         deploy_options:
           { $ref: '#/components/schemas/UploadDeployOptions' }
 
+    ImageBase:
+      type: object
+      required: [manifest_digest, layers]
+      properties:
+        manifest_digest: { type: string }
+        layers:
+          type: array
+          items:
+            type: object
+            required: [digest, size]
+            properties:
+              digest: { type: string }
+              size: { type: integer, format: int64 }
     UploadDeployOptions:
       type: object
       additionalProperties: false
@@ -114419,6 +114456,9 @@ components:
           type: string
           maxLength: 256
           description: "Informational name of the uploaded image, such as its local tag. Only valid with source_format oci_image_archive."
+        reuse_image_base:
+          type: boolean
+          description: "The upload leaves out layers the app's image base holds (GET /v1/apps/{slug}/image-base); commit rebuilds the full archive from them, or answers 409 image_base_changed when the base no longer has one. Only valid with source_format oci_image_archive."
         scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$', description: "Named environment scope applied when the upload is committed; omitted uses default." }
         source_url:
           { type: string, maxLength: 1024, description: "Informational repository provenance URL; never fetched by the API." }
