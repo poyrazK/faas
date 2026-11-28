@@ -1,12 +1,17 @@
 from typing import Literal
 
-OrgAgentPolicyRequestAllowedScopesItem = Literal["deploy:write", "postgres:manage", "secrets:request", "storage:manage"]
+OrgAgentPolicyRequestAllowedScopesItem = Literal[
+    "data:read", "deploy:write", "env:write", "postgres:manage", "secrets:request", "storage:manage", "usage:read"
+]
 
 ORG_AGENT_POLICY_REQUEST_ALLOWED_SCOPES_ITEM_VALUES: set[OrgAgentPolicyRequestAllowedScopesItem] = {
+    "data:read",
     "deploy:write",
+    "env:write",
     "postgres:manage",
     "secrets:request",
     "storage:manage",
+    "usage:read",
 }
 
 

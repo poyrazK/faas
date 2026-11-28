@@ -132993,7 +132993,7 @@ components:
         allowed_scopes:
           type: array
           description: Capabilities agents may get beyond inspection; empty for read-only.
-          items: { type: string, enum: [deploy:write, secrets:request, storage:manage, postgres:manage] }
+          items: { type: string, enum: [deploy:write, secrets:request, storage:manage, postgres:manage, env:write, usage:read, data:read] }
         approval_categories:
           type: array
           description: Kinds of action every agent acting in the organization must have a person approve; omit to keep the current ones.

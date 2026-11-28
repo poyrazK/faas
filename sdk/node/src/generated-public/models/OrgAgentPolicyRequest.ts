@@ -13,7 +13,7 @@ export type OrgAgentPolicyRequest = {
   /**
    * Capabilities agents may get beyond inspection; empty for read-only.
    */
-  allowed_scopes: Array<'deploy:write' | 'secrets:request' | 'storage:manage' | 'postgres:manage'>;
+  allowed_scopes: Array<'deploy:write' | 'secrets:request' | 'storage:manage' | 'postgres:manage' | 'env:write' | 'usage:read' | 'data:read'>;
   /**
    * Kinds of action every agent acting in the organization must have a person approve; omit to keep the current ones.
    */

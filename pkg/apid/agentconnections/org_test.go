@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -33,6 +34,38 @@ func TestPolicyCapsSignInScopes(t *testing.T) {
 	}
 	if agentconnections.ValidPolicyScopes([]string{api.ScopeDeployWrite, api.ScopeDeployWrite}) || agentconnections.ValidPolicyScopes([]string{api.ScopeAdmin}) || !agentconnections.ValidPolicyScopes([]string{}) {
 		t.Fatal("ValidPolicyScopes must accept only grantable scopes, once each")
+	}
+}
+
+// The contract's OrgAgentPolicyRequest.allowed_scopes enum is the set PutPolicy
+// accepts (ValidPolicyScopes): a client generated from it must be able to send
+// back the default policy it read.
+func TestOpenAPIPolicyScopesMatchGrantableScopes(t *testing.T) {
+	spec, err := os.ReadFile("../openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, schema, ok := strings.Cut(string(spec), "\n    OrgAgentPolicyRequest:\n")
+	if !ok {
+		t.Fatal("OrgAgentPolicyRequest is missing from pkg/apid/openapi.yaml")
+	}
+	_, scopes, ok := strings.Cut(schema, "        allowed_scopes:\n")
+	if !ok {
+		t.Fatal("OrgAgentPolicyRequest.allowed_scopes is missing")
+	}
+	_, enum, ok := strings.Cut(scopes, "enum: [")
+	if !ok {
+		t.Fatal("OrgAgentPolicyRequest.allowed_scopes has no enum")
+	}
+	enum, _, _ = strings.Cut(enum, "]")
+	got, want := strings.Split(enum, ", "), slices.Clone(api.MCPGrantableScopes)
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("OrgAgentPolicyRequest.allowed_scopes enum = %v, want api.MCPGrantableScopes %v", got, want)
+	}
+	if !agentconnections.ValidPolicyScopes(state.DefaultOrgAgentPolicy("org").AllowedScopes) {
+		t.Fatal("the default policy must be a valid policy to set")
 	}
 }
 
