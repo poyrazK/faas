@@ -25674,7 +25674,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: A paid plan is offered and Stripe is not connected.
+          description: A paid plan is offered and Stripe is not connected, or oauth_consumers is on and the gateway does not check the MCP server's OAuth tokens (no MCP jwt edge rule).
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }

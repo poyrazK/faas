@@ -228,6 +228,13 @@ Each step is one PR on the sandbox branches until the owner asks for PRs. Every 
 - **Lease loss with a volume.** A running persistent session with a volume whose lease lapsed waits out the same grace before it goes back to paused for a cold resume (§4): within it, a replica may still reattach.
 - **Not yet:** a node drain does not wait for its sessions (drain completion counts app instances only); adoption of session VMs across a vmmd restart (a stopping vmmd evacuates instead); an ephemeral session still ends with its stream.
 
+### Step 8 as built
+
+- **Declared nodes.** Until `compute_nodes` carries the agents role, an agent-pool node declares large shapes by being listed in schedd's `FAAS_SCHEDD_SANDBOX_LARGE_NODES` (IDs or names, a subset of `FAAS_SCHEDD_AGENT_RUN_NODES`).
+- **Large.** A session above `SandboxLargeShapeRAMMB` (4,096 MB, the largest ephemeral shape) or `SandboxLargeShapeVCPU` (2) is placed only on those nodes: a new session, a resume, a fork and a drain's move alike. With none declared it is refused for capacity and queues, failing after `SandboxQueueMaxSec` as any session no node can place. A reattach goes to the node it runs on.
+- **Unchanged:** invariant 2 per node, measured admission, and the plan limits (`SandboxPersistentRAMMBMax`, `SandboxPersistentVCPUMax`).
+- **Not yet:** packing large sessions before small ones (small sessions may still land on a large node); a per-node maximum shape; the manifest and Ansible key for the list.
+
 ### Amendment: prompt requests and fork starts
 
 agentd learned of a pause, close or fork request at its next lease renewal (a third of the lease TTL, 10 s by default). A fork stayed unclaimable until the sweep (`SweepInterval`, 10 s) found its capture in the shared store. So a fork of a running session could wait about 20 s on polling around 1–3 s of VM work.

@@ -482,3 +482,46 @@ func fetchAuthSettings(ctx context.Context, app api.AppResponse) (authPublicSett
 	}
 	return settings, nil
 }
+
+// authAdminKeyLookup is what the running app said about one admin key.
+type authAdminKeyLookup int
+
+const (
+	authAdminKeyFound   authAdminKeyLookup = iota
+	authAdminKeyMissing                    // not loaded: the app has not restarted since it was made
+	authAdminKeyLimited                    // the app's per-address lookup budget is spent
+	authAdminKeyFailed                     // the app could not be reached or answered something else
+)
+
+// fetchAuthAdminKey reads one admin key's scopes and expiry from the running
+// app (/settings/v1/admin-keys/<ID>), within ctx's deadline. The app reports
+// a key only to a caller that names its ID.
+func fetchAuthAdminKey(ctx context.Context, app api.AppResponse, id string) (authAdminKeySetting, authAdminKeyLookup) {
+	external, err := authExternalOrigin(app)
+	if err != nil || !authAdminKeyID.MatchString(id) {
+		return authAdminKeySetting{}, authAdminKeyFailed
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, external+"/settings/v1/admin-keys/"+id, nil)
+	if err != nil {
+		return authAdminKeySetting{}, authAdminKeyFailed
+	}
+	response, err := authAdminHTTPClient.Do(request)
+	if err != nil {
+		return authAdminKeySetting{}, authAdminKeyFailed
+	}
+	defer func() { _ = response.Body.Close() }()
+	switch response.StatusCode {
+	case http.StatusOK:
+	case http.StatusNotFound:
+		return authAdminKeySetting{}, authAdminKeyMissing
+	case http.StatusTooManyRequests:
+		return authAdminKeySetting{}, authAdminKeyLimited
+	default:
+		return authAdminKeySetting{}, authAdminKeyFailed
+	}
+	var key authAdminKeySetting
+	if err := json.NewDecoder(io.LimitReader(response.Body, 4<<10)).Decode(&key); err != nil || key.ID != id {
+		return authAdminKeySetting{}, authAdminKeyFailed
+	}
+	return key, authAdminKeyFound
+}

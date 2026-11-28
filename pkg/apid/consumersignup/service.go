@@ -223,6 +223,9 @@ func (s *Service) settingsFromRequest(ctx context.Context, acct state.Account, a
 	if problem := s.freePlanProblem(ctx, app, set); problem != nil {
 		return set, problem
 	}
+	if problem := s.oauthGatewayProblem(ctx, app, set); problem != nil {
+		return set, problem
+	}
 	if offersOnlyFreePlan(set) {
 		// Every offered plan is the card-less free plan: no sign-up ever
 		// reaches Stripe Checkout, so a seller can start selling an MCP server
