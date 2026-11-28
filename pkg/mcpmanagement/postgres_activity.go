@@ -24,7 +24,7 @@ func registerPostgresActivity(s *mcp.Server, m *management) {
 	if !m.hasCapability(api.ScopeManagedPostgresRead) {
 		return
 	}
-	register(s, m, "gregale_get_postgres_activity", "Explain why a database bound to the app was awake: its compute starts with a likely cause each (wake-with-app, cron, request, app start, running app, external client), awake time per cause, and hints with the CLI command that acts on each. Causes are best guesses from timing; starts are kept 30 days. Reads records only; never wakes the database.", m.getPostgresActivity)
+	register(s, m, "gregale_get_postgres_activity", "Explain why a database bound to the app was awake: its compute starts with a likely cause each (wake-with-app, cron, request, app start, running app, external client), awake time per cause, and hints, each with the CLI command that looks into it and fix_commands: ready-to-run CLI commands that change the setting (run them with the user's agreement). Causes are best guesses from timing; starts are kept 30 days. Reads records only; never wakes the database.", m.getPostgresActivity)
 }
 
 func (m *management) getPostgresActivity(ctx context.Context, a postgresActivityArgs) (any, error) {

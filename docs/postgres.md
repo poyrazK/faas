@@ -555,6 +555,10 @@ gregale postgres activity orders-db --since 7d
 
 `activity` lists the database's compute starts with a likely cause for each,
 the time it stayed awake per cause, and what to do about the largest ones.
+When a setting is the fix, the hint prints it ready to run (`fix:`), for
+example `gregale postgres suspend-timeout set orders-db 1m` or
+`gregale postgres app-wake set orders-db off`; `--json` and the API return
+them as `fix_commands`.
 The cause is the first of these that matches the start's timing:
 
 | Cause | Meaning |

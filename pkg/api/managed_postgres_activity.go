@@ -49,13 +49,15 @@ type ManagedPostgresActivityComputeStart struct {
 }
 
 // ManagedPostgresActivityHint suggests what to do about a cause; Command,
-// when set, is the CLI command that acts on it.
+// when set, is the CLI command that looks into it, and FixCommands are the
+// ready-to-run commands that change the setting the hint names.
 type ManagedPostgresActivityHint struct {
-	Code    string `json:"code"`
-	Cause   string `json:"cause"`
-	AppSlug string `json:"app_slug,omitempty"`
-	Message string `json:"message"`
-	Command string `json:"command,omitempty"`
+	Code        string   `json:"code"`
+	Cause       string   `json:"cause"`
+	AppSlug     string   `json:"app_slug,omitempty"`
+	Message     string   `json:"message"`
+	Command     string   `json:"command,omitempty"`
+	FixCommands []string `json:"fix_commands,omitempty"`
 }
 
 // ManagedPostgresDatabaseUsage is one database's share of the month's

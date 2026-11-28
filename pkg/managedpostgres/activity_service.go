@@ -30,13 +30,16 @@ type DatabaseActivity struct {
 }
 
 // ActivityHint is one suggestion for a cause that keeps a database awake.
-// Command, when set, is the CLI command that acts on it.
+// Command, when set, is the CLI command that looks into it; FixCommands are
+// the ready-to-run commands that change the setting the hint names, in
+// order, with every value filled in.
 type ActivityHint struct {
-	Code    string
-	Cause   string
-	AppSlug string
-	Message string
-	Command string
+	Code        string
+	Cause       string
+	AppSlug     string
+	Message     string
+	Command     string
+	FixCommands []string
 }
 
 // Activity reads why one of the account's databases was awake since a time,
@@ -81,18 +84,48 @@ func (s *Service) Activity(ctx context.Context, accountID, databaseID string, si
 			out.SuspendTimeoutSeconds = timeouts[database.ID].Seconds
 		}
 	}
-	out.Hints = ActivityHints(database, out.Causes, out.SuspendTimeoutSeconds)
+	hc := ActivityHintContext{Ref: s.databaseRef(ctx, accountID, database), SuspendTimeoutSeconds: out.SuspendTimeoutSeconds}
+	if on, err := s.WakeWithApp(ctx, []Database{database}); err == nil {
+		hc.WakeWithApp = on[database.ID]
+	}
+	out.Hints = ActivityHints(database, out.Causes, hc)
 	return out, nil
+}
+
+// databaseRef is how a command names the database: its name when no other
+// database of the account shares it, else its ID, which the CLI accepts too.
+func (s *Service) databaseRef(ctx context.Context, accountID string, database Database) string {
+	databases, err := s.List(ctx, accountID)
+	if err != nil || database.Name == "" {
+		return database.ID
+	}
+	for _, other := range databases {
+		if other.ID != database.ID && other.Name == database.Name {
+			return database.ID
+		}
+	}
+	return database.Name
 }
 
 // activityHintMinShare is the share of awake time below which a cause gets
 // no hint: a hint for every cause is noise.
 const activityHintMinShare = 0.2
 
+// ActivityHintContext is what the hints need beyond the causes.
+type ActivityHintContext struct {
+	// Ref names the database in commands; empty means its name.
+	Ref string
+	// SuspendTimeoutSeconds is the timeout in force, 0 when unknown.
+	SuspendTimeoutSeconds int64
+	// WakeWithApp reports whether wake-with-app is on now.
+	WakeWithApp bool
+}
+
 // ActivityHints suggests what to do about the causes that hold at least a
 // fifth of the awake time, largest first. Requests get none: serving them is
-// what the database is for.
-func ActivityHints(database Database, causes []ComputeStartCause, suspendTimeoutSeconds int64) []ActivityHint {
+// what the database is for. A fix command is offered only while it would
+// change something, and each once.
+func ActivityHints(database Database, causes []ComputeStartCause, hc ActivityHintContext) []ActivityHint {
 	var total int64
 	for _, cause := range causes {
 		total += cause.AwakeSeconds
@@ -100,7 +133,11 @@ func ActivityHints(database Database, causes []ComputeStartCause, suspendTimeout
 	if total == 0 || !database.Spec.ScaleToZero {
 		return nil
 	}
-	name := database.Name
+	ref := hc.Ref
+	if ref == "" {
+		ref = database.Name
+	}
+	shorten := hc.SuspendTimeoutSeconds > int64(api.ManagedPostgresSuspendTimeoutMinSeconds)
 	var hints []ActivityHint
 	for _, cause := range causes {
 		if float64(cause.AwakeSeconds) < activityHintMinShare*float64(total) {
@@ -118,7 +155,11 @@ func ActivityHints(database Database, causes []ComputeStartCause, suspendTimeout
 		case CauseAppWake:
 			hint.Code = "app_wake_starts_database"
 			hint.Message = fmt.Sprintf("The database starts with its apps (wake-with-app) %d times. Turn it off if the first query can wait for the start.", cause.Starts)
-			hint.Command = "gregale postgres app-wake set " + name + " off"
+			if hc.WakeWithApp {
+				fix := "gregale postgres app-wake set " + ref + " off"
+				// Command keeps the fix for clients that predate FixCommands.
+				hint.Command, hint.FixCommands = fix, []string{fix}
+			}
 		case CauseAppStart:
 			hint.Code = "app_start_wakes_database"
 			hint.Message = fmt.Sprintf("%s connects when it starts, not only when a request needs the database. Connect lazily on first use.", orDash(cause.AppSlug))
@@ -128,13 +169,17 @@ func ActivityHints(database Database, causes []ComputeStartCause, suspendTimeout
 		case CauseExternal:
 			hint.Code = "external_client"
 			hint.Message = "Something outside Gregale connected: a local client, a BI tool, a monitor or a copied connection string. Rotate the credentials if you do not know it."
-			hint.Command = "gregale postgres bindings list " + name
+			hint.Command = "gregale postgres bindings list " + ref
 		default:
 			continue
 		}
-		if suspendTimeoutSeconds > int64(api.ManagedPostgresSuspendTimeoutMinSeconds) && (cause.Cause == CauseCron || cause.Cause == CauseExternal) {
-			hint.Message += fmt.Sprintf(" The suspend timeout is %d s: `gregale postgres suspend-timeout set %s 1m` shortens each stay.",
-				suspendTimeoutSeconds, name)
+		if shorten && (cause.Cause == CauseCron || cause.Cause == CauseExternal) {
+			fix := "gregale postgres suspend-timeout set " + ref + " 1m"
+			// The message keeps the command for clients that predate
+			// FixCommands.
+			hint.Message += fmt.Sprintf(" The suspend timeout is %d s: `%s` shortens each stay.", hc.SuspendTimeoutSeconds, fix)
+			hint.FixCommands = append(hint.FixCommands, fix)
+			shorten = false // one database-wide setting: offered once
 		}
 		hints = append(hints, hint)
 	}

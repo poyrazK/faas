@@ -11,8 +11,12 @@ export type ManagedPostgresActivityHint = {
   app_slug?: string;
   message: string;
   /**
-   * The CLI command that acts on the hint, when there is one.
+   * The CLI command that looks into the cause, when there is one.
    */
   command?: string;
+  /**
+   * Ready-to-run CLI commands that change the setting the hint names, in order, with every value filled in. Absent when the fix is a code change.
+   */
+  fix_commands?: Array<string>;
 };
 

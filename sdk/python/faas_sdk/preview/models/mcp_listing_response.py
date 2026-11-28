@@ -35,6 +35,10 @@ class MCPListingResponse:
     registry_name: str | Unset = UNSET
     server_json_url: str | Unset = UNSET
     """The registry server.json, when registry_name is set."""
+    contract_sha256: str | Unset = UNSET
+    """The published tool contract's digest; absent when the listing is not gated."""
+    probe_secret: str | Unset = UNSET
+    """The app secret the gate sends as a bearer token."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -63,6 +67,10 @@ class MCPListingResponse:
 
         server_json_url = self.server_json_url
 
+        contract_sha256 = self.contract_sha256
+
+        probe_secret = self.probe_secret
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -82,6 +90,10 @@ class MCPListingResponse:
             field_dict["registry_name"] = registry_name
         if server_json_url is not UNSET:
             field_dict["server_json_url"] = server_json_url
+        if contract_sha256 is not UNSET:
+            field_dict["contract_sha256"] = contract_sha256
+        if probe_secret is not UNSET:
+            field_dict["probe_secret"] = probe_secret
 
         return field_dict
 
@@ -117,6 +129,10 @@ class MCPListingResponse:
 
         server_json_url = d.pop("server_json_url", UNSET)
 
+        contract_sha256 = d.pop("contract_sha256", UNSET)
+
+        probe_secret = d.pop("probe_secret", UNSET)
+
         mcp_listing_response = cls(
             app=app,
             title=title,
@@ -129,6 +145,8 @@ class MCPListingResponse:
             page_url=page_url,
             registry_name=registry_name,
             server_json_url=server_json_url,
+            contract_sha256=contract_sha256,
+            probe_secret=probe_secret,
         )
 
         mcp_listing_response.additional_properties = d

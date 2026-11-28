@@ -18,18 +18,29 @@ func TestRenderPostgresActivity(t *testing.T) {
 			{Cause: "external", Starts: 1, AwakeSeconds: 300}},
 		ComputeStarts: []api.ManagedPostgresActivityComputeStart{{StartedAt: until.Add(-5 * time.Minute), Cause: "external"},
 			{StartedAt: until.Add(-time.Hour), SuspendedAt: &suspended, Cause: "cron", AppSlug: "api", Detail: "/cron/sync"}},
-		Hints:   []api.ManagedPostgresActivityHint{{Code: "cron_wakes_database", Cause: "cron", Message: "Cron /cron/sync on api started the database 1 times.", Command: "gregale cron list --app api"}},
+		Hints: []api.ManagedPostgresActivityHint{{Code: "cron_wakes_database", Cause: "cron", Message: "Cron /cron/sync on api started the database 1 times.", Command: "gregale cron list --app api",
+			FixCommands: []string{"gregale postgres suspend-timeout set orders-db 1m"}}},
 		DocsURL: api.ManagedPostgresActivityDocsURL})
 	for _, want := range []string{
 		"orders-db: awake 15m00s of the last 1d00h, 2 starts (suspend timeout 120s)",
 		"cron", "/cron/sync", "10m00s",
 		"awake", // the open start
-		"$ gregale cron list --app api",
+		"look: $ gregale cron list --app api",
+		"fix:  $ gregale postgres suspend-timeout set orders-db 1m",
 		api.ManagedPostgresActivityDocsURL,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
+	}
+	// A command that is also the fix prints once, as the fix.
+	off := "gregale postgres app-wake set orders-db off"
+	wake := main.RenderPostgresActivity(api.ManagedPostgresActivity{DatabaseName: "orders-db", Since: until.Add(-time.Hour), Until: until,
+		Starts: 1, AwakeSeconds: 60, Causes: []api.ManagedPostgresActivityCause{{Cause: "app_wake", Starts: 1, AwakeSeconds: 60}},
+		ComputeStarts: []api.ManagedPostgresActivityComputeStart{{StartedAt: until.Add(-time.Minute), Cause: "app_wake"}},
+		Hints:         []api.ManagedPostgresActivityHint{{Code: "app_wake_starts_database", Cause: "app_wake", Message: "Turn it off.", Command: off, FixCommands: []string{off}}}})
+	if strings.Count(wake, off) != 1 || !strings.Contains(wake, "fix:  $ "+off) {
+		t.Errorf("wake output:\n%s", wake)
 	}
 	empty := main.RenderPostgresActivity(api.ManagedPostgresActivity{DatabaseName: "orders-db", Since: until.Add(-time.Hour), Until: until})
 	if !strings.Contains(empty, "No recorded starts") {
