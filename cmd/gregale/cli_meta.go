@@ -2947,6 +2947,7 @@ var cliCommands = []cliCommand{
 			{Name: "boot", Short: "with --image, also run the image with local Docker (linux/amd64, PORT set) and check it starts, answers GET / on 0.0.0.0:$PORT and stays up 10 s; the container is removed"},
 			{Name: "env-file", Value: "FILE", Short: "with --boot, pass KEY=VALUE lines from this file to the container (docker env-file format)"},
 			{Name: "ram", Value: "MB", Short: "with --boot, the container's memory limit (default: --app's RAM, else your plan's default for a new app; no swap)"},
+			{Name: "healthcheck-path", Value: "PATH", Short: "with --boot, probe this readiness path instead of / and require 2xx, as Gregale does"},
 			{Name: "strict", Short: "exit 1 on warn (default: exit 0 on warn)"},
 			{Name: "json", Short: "machine output (default: human prose)"},
 		},

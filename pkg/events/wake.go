@@ -877,7 +877,7 @@ type BootCompleted struct {
 	ConcurrencyAtAdmit    int    // ADR-123 — same reading; 0 is cold start
 	PostRPC               PostRPCTimings
 	// DeploymentID is the deployment the instance runs. A boot_failures
-	// rollback judges a release on its own boots (ADR-604 amendment
+	// rollback judges a release on its own boots (ADR-605 amendment 2,
 	// 2026-11-28). Omitted when empty.
 	DeploymentID string
 }
@@ -977,7 +977,7 @@ type BootFailed struct {
 	// candidate deployment, not of the live app. The boot_failures alert
 	// metric leaves these out. Written to the payload only when true.
 	Mirror bool
-	// DeploymentID is the deployment the instance runs (ADR-604 amendment
+	// DeploymentID is the deployment the instance runs (ADR-605 amendment 2,
 	// 2026-11-28). Omitted when empty.
 	DeploymentID string
 }
