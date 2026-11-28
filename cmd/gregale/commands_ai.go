@@ -60,6 +60,8 @@ func cmdAI(args []string) int {
 		return cmdAIGuardrails(args[1:])
 	case "keys":
 		return cmdAIKeys(args[1:])
+	case "integrations":
+		return cmdAIIntegrations(args[1:])
 	case "alerts":
 		return cmdAIAlerts(args[1:])
 	case "logs":
