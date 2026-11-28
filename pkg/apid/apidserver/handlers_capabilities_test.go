@@ -339,3 +339,34 @@ func TestGetCapabilitiesConditionalParkingBackend(t *testing.T) {
 		})
 	}
 }
+
+// Interactive sessions (exec -it, cp, port-forward, postgres connect) need
+// FAAS_INTERACTIVE_APP_TASKS on top of the app-task API; app-tasks alone used
+// to advertise them while every session answered 501.
+func TestInteractiveAppSessionsCapabilityFollowsItsGate(t *testing.T) {
+	read := func(s *server) (appTasks, sessions api.CapabilityStatus) {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		s.getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanPro})
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", recorder.Code)
+		}
+		var response api.CapabilitiesResponse
+		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		return capabilityByKey(t, response, "app-tasks"), capabilityByKey(t, response, "interactive-app-sessions")
+	}
+	if tasks, sessions := read(&server{}); tasks.Enabled || sessions.Enabled {
+		t.Fatalf("app task API off: app-tasks=%v sessions=%v, want both off", tasks.Enabled, sessions.Enabled)
+	}
+	tasks, sessions := read((&server{}).WithAppTaskAPIEnabled(true))
+	if sessions.Enabled {
+		t.Fatal("interactive sessions advertised while FAAS_INTERACTIVE_APP_TASKS is off")
+	}
+	tasksOnly := tasks.Enabled
+	tasks, sessions = read((&server{}).WithAppTaskAPIEnabled(true).WithInteractiveAppTasksEnabled(true))
+	if sessions.Enabled != tasks.Enabled || tasks.Enabled != tasksOnly {
+		t.Fatalf("both gates on: app-tasks=%v sessions=%v (app-tasks alone %v); want sessions to follow app-tasks", tasks.Enabled, sessions.Enabled, tasksOnly)
+	}
+}

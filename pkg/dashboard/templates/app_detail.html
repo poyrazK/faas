@@ -320,6 +320,7 @@
       {{if $.On "edge-rules"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/edge-rules">Manage edge rules →</a></p>{{end}}
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/pre-auth">Inspect pre-auth protection →</a></p>
       {{if $.On "data-api"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/data-api">Open Data API →</a></p>{{end}}
+      {{if $.On "app-tasks"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/tasks">View task history →</a></p>{{end}}
       {{if .Data.ApplicationAuth}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/auth">Manage application Auth users →</a></p>{{end}}
       {{if $.On "env-vars"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/env">Manage environment &amp; secrets →</a></p>{{end}}
       {{if $.On "realtime"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/realtime">Inspect realtime events →</a></p>{{end}}

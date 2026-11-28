@@ -3295,3 +3295,4 @@ func SetDoctorBootMemorySources(cleanup func(func()), plan func(context.Context)
 	doctorImagePlanLimits, doctorBootAppInfo = plan, appInfo
 	cleanup(func() { doctorImagePlanLimits, doctorBootAppInfo = oldPlan, oldApp })
 }
+var CmdAppTasks = cmdAppTasks

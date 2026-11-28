@@ -4,3 +4,7 @@
 # already offered it to every account while apid answered not_implemented.
 # Dispatch comes from release_commands.yml (schedd's FAAS_APP_TASK_DISPATCH).
 faas_app_task_api: true
+# Interactive sessions (exec -it, cp, port-forward, postgres connect) stay off
+# until the attach path is qualified on a test node; until then apid lists
+# interactive-app-sessions as unavailable instead of answering 501 silently.
+faas_interactive_app_tasks: false

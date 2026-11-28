@@ -325,6 +325,10 @@ Gregale stores who started the session, the command and the exit code, never
 the terminal output.
 
 Interactive sessions are in preview and may not be enabled for your account.
+They are listed separately from app tasks as `interactive-app-sessions`, so
+`gregale feature list` shows whether `-it`, `app cp`, `app port-forward` and
+`postgres connect` are available; plain `app exec -- <command>` only needs
+`app-tasks`.
 A deployment whose guest predates interactive sessions reports
 `interactive_unsupported`;
 redeploy it and retry. Attaching to an already-running serving instance is not
@@ -348,3 +352,21 @@ into a VM is not offered because the VM is discarded when the session ends.
 app's network, with its egress policy, private networks and service names, so
 you can reach internal services and managed databases from your laptop. All
 local connections share one session; stop it with Ctrl-C.
+
+### Task history
+
+Every `app exec`, release command and command cron leaves a task record with
+its status, exit code and the tail of its output. Read them back, for example
+after `app exec --detach`:
+
+```sh
+gregale app tasks my-api                         # newest first
+gregale app tasks my-api --offset 20             # older page
+gregale app tasks show my-api <task-id>          # status, exit code, output tail
+gregale app tasks cancel my-api <task-id>        # stop a queued or running task
+```
+
+The app's dashboard page links to the same history under **View task
+history**. Only the tail of the output is kept, up to the task's
+`--max-output-bytes`; interactive sessions record the command and exit code,
+never the terminal output.

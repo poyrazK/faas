@@ -1,3 +1,7 @@
 [Service]
 # The public app-task API (faas_app_task_api, ADR-230). The unit sets 0.
 Environment=FAAS_APP_TASK_API_ENABLED={{ '1' if (faas_app_task_api | bool) else '0' }}
+# Interactive sessions (ADR-1037: `app exec -it`, `app cp`, `app port-forward`,
+# `postgres connect`) on top of the app-task API (faas_interactive_app_tasks).
+# Off, apid answers them 501 and lists interactive-app-sessions as unavailable.
+Environment=FAAS_INTERACTIVE_APP_TASKS={{ '1' if (faas_app_task_api | bool) and (faas_interactive_app_tasks | bool) else '0' }}
