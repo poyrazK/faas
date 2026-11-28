@@ -59,7 +59,10 @@ import type { CreateConsumerCreditPurchaseRequest } from '../models/CreateConsum
 import type { CreateConsumerKeyRequest } from '../models/CreateConsumerKeyRequest.js';
 import type { CreateConsumerSignupRequest } from '../models/CreateConsumerSignupRequest.js';
 import type { CreateConsumerSignupResponse } from '../models/CreateConsumerSignupResponse.js';
+import type { CreateMCPContractOverrideRequest } from '../models/CreateMCPContractOverrideRequest.js';
 import type { CreateStatementInvoiceRequest } from '../models/CreateStatementInvoiceRequest.js';
+import type { MCPContractOverride } from '../models/MCPContractOverride.js';
+import type { MCPContractResponse } from '../models/MCPContractResponse.js';
 import type { MCPListingResponse } from '../models/MCPListingResponse.js';
 import type { MCPSellerStatsResponse } from '../models/MCPSellerStatsResponse.js';
 import type { PublicMCPListingResponse } from '../models/PublicMCPListingResponse.js';
@@ -2309,7 +2312,7 @@ export class ConsumersService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
-        409: `A paid plan is offered and Stripe is not connected.`,
+        409: `A paid plan is offered and Stripe is not connected, or oauth_consumers is on and the gateway does not check the MCP server's OAuth tokens (no MCP jwt edge rule).`,
         422: `A provider other than Stripe, an unknown plan, an invalid scope or URL, or a value out of range.`,
       },
     });
@@ -2473,7 +2476,7 @@ export class ConsumersService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
-        413: `The request body is above 512 KiB (\`request_too_large\`).`,
+        413: `The request body is above 1.5 MiB (\`request_too_large\`).`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
       },
     });
@@ -2500,6 +2503,75 @@ export class ConsumersService {
       errors: {
         401: `code: unauthorized`,
         404: `The app does not exist or has no published listing.`,
+      },
+    });
+  }
+  /**
+   * Read the tool contract a listed MCP server's production deploys are held to.
+   * A listing published with a contract gates production deploys: a
+   * candidate whose MCP tools break it is not promoted unless an override
+   * admits it. The baseline is the listing's contract, or the newest
+   * accepted candidate's since the listing was published. Lists the
+   * newest checks and the open overrides.
+   *
+   * @returns MCPContractResponse The contract, its checks and open overrides.
+   * @throws ApiError
+   */
+  public static getMcpContract({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<MCPContractResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/mcp-contract',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Let the next breaking production deploy of a listed MCP server ship.
+   * Records why paying customers' tools may break. The override admits
+   * one breaking or unverified candidate before it expires (one hour by
+   * default, at most 24 hours); an app holds at most five open
+   * overrides. The webhook event mcp.contract.changed and the listing's
+   * changelog tell customers about the change once it is live.
+   *
+   * @returns MCPContractOverride The override.
+   * @throws ApiError
+   */
+  public static createMcpContractOverride({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateMCPContractOverrideRequest,
+  }): CancelablePromise<MCPContractOverride> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/mcp-contract/overrides',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `The app already holds five open overrides (\`conflict\`).`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
       },
     });
   }

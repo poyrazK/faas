@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.consumer_signup_plan import ConsumerSignupPlan
+    from ..models.mcp_contract_changelog_entry import MCPContractChangelogEntry
     from ..models.mcp_listing_install import MCPListingInstall
     from ..models.mcp_listing_tool import MCPListingTool
 
@@ -39,6 +40,8 @@ class PublicMCPListingResponse:
     """The sign-up page, while sign-up is open."""
     customers: int | Unset = UNSET
     """Open customers, when the seller shows usage."""
+    changelog: list[MCPContractChangelogEntry] | Unset = UNSET
+    """Tool contract changes shipped since the listing was published, newest first."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -74,6 +77,13 @@ class PublicMCPListingResponse:
 
         customers = self.customers
 
+        changelog: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.changelog, Unset):
+            changelog = []
+            for changelog_item_data in self.changelog:
+                changelog_item = changelog_item_data.to_dict()
+                changelog.append(changelog_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -96,12 +106,15 @@ class PublicMCPListingResponse:
             field_dict["signup_url"] = signup_url
         if customers is not UNSET:
             field_dict["customers"] = customers
+        if changelog is not UNSET:
+            field_dict["changelog"] = changelog
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.consumer_signup_plan import ConsumerSignupPlan
+        from ..models.mcp_contract_changelog_entry import MCPContractChangelogEntry
         from ..models.mcp_listing_install import MCPListingInstall
         from ..models.mcp_listing_tool import MCPListingTool
 
@@ -142,6 +155,15 @@ class PublicMCPListingResponse:
 
         customers = d.pop("customers", UNSET)
 
+        _changelog = d.pop("changelog", UNSET)
+        changelog: list[MCPContractChangelogEntry] | Unset = UNSET
+        if _changelog is not UNSET:
+            changelog = []
+            for changelog_item_data in _changelog:
+                changelog_item = MCPContractChangelogEntry.from_dict(changelog_item_data)
+
+                changelog.append(changelog_item)
+
         public_mcp_listing_response = cls(
             app=app,
             title=title,
@@ -156,6 +178,7 @@ class PublicMCPListingResponse:
             trial_days=trial_days,
             signup_url=signup_url,
             customers=customers,
+            changelog=changelog,
         )
 
         public_mcp_listing_response.additional_properties = d
