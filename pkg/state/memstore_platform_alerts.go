@@ -154,17 +154,18 @@ func (m *MemStore) PauseCronIfFailing(_ context.Context, cronID string, runs int
 		}
 	}
 	sort.Slice(recent, func(i, j int) bool { return recent[i].CreatedAt.After(recent[j].CreatedAt) })
-	if len(recent) < runs {
-		return false, nil
-	}
-	recent = recent[:runs]
-	for _, inv := range recent {
+	// The streak: every finished run newer than the newest success.
+	for i, inv := range recent {
 		if inv.State == InvocationCompleted {
-			return false, nil
+			recent = recent[:i]
+			break
 		}
 	}
+	if len(recent) == 0 {
+		return false, nil
+	}
 	oldest := recent[len(recent)-1].DueAt
-	if time.Since(oldest) < span {
+	if !cronFailureStreakPauses(len(recent), &oldest, runs, span) {
 		return false, nil
 	}
 	c, ok := m.crons[cronID]
@@ -177,7 +178,7 @@ func (m *MemStore) PauseCronIfFailing(_ context.Context, cronID string, runs int
 	}
 	c.SuspendedReason = CronSuspendedFailing
 	m.crons[cronID] = c
-	detail, _ := json.Marshal(cronFailingDetail{Path: c.Path, FailedRuns: runs, Since: oldest.UTC(), LastError: recent[0].LastError})
+	detail, _ := json.Marshal(cronFailingDetail{Path: c.Path, FailedRuns: len(recent), Since: oldest.UTC(), LastError: recent[0].LastError})
 	m.queuePlatformAlertNoticeLocked(PlatformAlertNotice{AccountID: app.AccountID, AppID: c.AppID,
 		Kind: PlatformAlertCronFailingPaused, SubjectID: cronID, Detail: detail}, cooldown, time.Now())
 	return true, nil

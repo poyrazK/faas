@@ -134,6 +134,7 @@
     {"path": "postgres", "source": "docs/postgres.md"},
     {"path": "redis", "source": "docs/redis.md", "unpublished": "preview capability; published when it reaches beta"},
     {"path": "postgres-custom-roles", "source": "docs/postgres-custom-roles.md"},
+    {"path": "postgres-changes", "source": "docs/postgres-changes.md", "unpublished": "preview capability; published when it reaches beta"},
     {"path": "verification-contracts", "source": "docs/verification-contracts.md", "unpublished": "preview capability; published when it reaches beta"},
     {"path": "preview-databases", "source": "docs/preview-databases.md", "unpublished": "preview capability; published when it reaches beta"},
     {"path": "preview-environments", "source": "docs/preview-environments.md", "required_text": ["pr-{N}-{slug}"]},

@@ -2572,9 +2572,10 @@ const (
 	CronCatchUpScanMax     = 1 << 21
 )
 
-// Platform alerts (ADR-20261115194000). An HTTP cron whose newest
-// CronFailurePauseRuns finished runs all failed, the oldest of them at least
-// CronFailurePauseSpan ago, is paused (suspended_reason 'failing') and its
+// Platform alerts (ADR-20261115194000). An HTTP cron whose unbroken failure
+// streak (finished runs since its last success) has at least
+// CronFailurePauseRuns runs, the oldest of them at least CronFailurePauseSpan
+// ago, is paused (suspended_reason 'failing') and its
 // account emailed: a cron failing every 15 minutes ran 96 billed failures a
 // day for weeks unnoticed. An app whose error rate (5xx over 2xx+5xx) stayed
 // at or above AppOutageErrorRatePct over AppOutageWindow, on at least

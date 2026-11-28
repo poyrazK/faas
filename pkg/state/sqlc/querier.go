@@ -5624,6 +5624,9 @@ type Querier interface {
 	NextDeploymentRouteGenerationTx(ctx context.Context, db DBTX) (int64, error)
 	NextDueLegacyWorkflowRun(ctx context.Context, db DBTX, staleMs int64) (NextDueLegacyWorkflowRunRow, error)
 	NextEnvironmentQueueDeliveryInvocation(ctx context.Context, db DBTX, arg NextEnvironmentQueueDeliveryInvocationParams) (Invocation, error)
+	// A deleted app's runs, and runs of an account that is suspended or on an
+	// abuse hold, wait like its workflow schedules do; restoring the app or
+	// lifting the hold resumes them (async assessment 2026-11-28).
 	NextFairDueWorkflowRun(ctx context.Context, db DBTX, arg NextFairDueWorkflowRunParams) (NextFairDueWorkflowRunRow, error)
 	NextStoredWorkflowVersion(ctx context.Context, db DBTX) (int64, error)
 	// ----------------------------------------------------------------------

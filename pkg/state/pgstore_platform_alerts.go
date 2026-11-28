@@ -111,8 +111,12 @@ func (s *PgStore) PauseCronIfFailing(ctx context.Context, cronID string, runs in
 	var total, failed int
 	var oldest *time.Time
 	var lastError string
+	// The streak is every finished run since the newest success. Reading only
+	// the newest `runs` runs and requiring the oldest of them to be `span` old
+	// could never pause a cron firing more often than span/runs (a */15 cron's
+	// newest 10 runs span 2.5 h), the very case the pause exists for.
 	err = tx.QueryRow(ctx, `
-		with recent as (
+		with counted as (
 			select state, created_at, due_at, coalesce(last_error, '') as last_error
 			  from invocations
 			 where cron_id = $1::uuid and source = 'cron'
@@ -124,15 +128,17 @@ func (s *PgStore) PauseCronIfFailing(ctx context.Context, cronID string, runs in
 			   -- Runs before the last pause do not count again after a resume.
 			   and created_at > coalesce((select max(n.created_at) from platform_alert_notices n
 			                               where n.kind = 'cron_failing_paused' and n.subject_id = $1::text), '-infinity')
-			 order by created_at desc
-			 limit $2)
-		select count(*), count(*) filter (where state <> 'completed'), min(due_at),
-		       coalesce((select last_error from recent where state <> 'completed' order by created_at desc limit 1), '')
-		  from recent`, cronID, runs).Scan(&total, &failed, &oldest, &lastError)
+		), streak as (
+			select * from counted
+			 where created_at > coalesce((select max(created_at) from counted where state = 'completed'), '-infinity')
+		)
+		select count(*), count(*), min(due_at),
+		       coalesce((select last_error from streak order by created_at desc limit 1), '')
+		  from streak`, cronID).Scan(&total, &failed, &oldest, &lastError)
 	if err != nil {
 		return false, fmt.Errorf("state: read recent cron runs: %w", err)
 	}
-	if total < runs || failed < runs || oldest == nil || time.Since(*oldest) < span {
+	if !cronFailureStreakPauses(total, oldest, runs, span) {
 		return false, nil
 	}
 	var accountID, appID, path string

@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
 	commitwork "github.com/onebox-faas/faas/pkg/commit"
+	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -58,23 +59,31 @@ func (s *server) putPostgresChanges(w http.ResponseWriter, r *http.Request, acct
 	if !decodeJSONLimit(w, r, &req, postgresChangesBodyLimit) {
 		return
 	}
-	if err := req.Validate(); err != nil {
-		api.WriteProblem(w, api.ErrValidation(err.Error()))
+	if problem := s.applyPostgresChanges(r.Context(), store, acct, app, req); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
-	ctx := r.Context()
+	s.writePostgresChanges(w, r, acct, app, http.StatusOK)
+}
+
+// applyPostgresChanges saves an app's postgres_changes block and, for a
+// managed database, installs capture. The PUT route and source deploys
+// (GitHub pushes, source refs) share it, so a pushed gregale.yaml applies the
+// block like `gregale deploy` does (async assessment 2026-11-28).
+func (s *server) applyPostgresChanges(ctx context.Context, store state.CommitChangesStore, acct state.Account, app state.App, req api.PutPostgresChangesRequest) *api.Problem {
+	if err := req.Validate(); err != nil {
+		return api.ErrValidation(err.Error())
+	}
 	var database managedpostgres.Database
 	if req.Database != "" {
 		var problem *api.Problem
 		if ctx, database, problem = s.postgresChangesDatabase(ctx, acct, req.Database); problem != nil {
-			api.WriteProblem(w, problem)
-			return
+			return problem
 		}
 	}
 	feeds, err := json.Marshal(req.Feeds)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("encode feeds"))
-		return
+		return api.ErrCapacity("encode feeds")
 	}
 	src, err := store.UpsertCommitChangesSource(ctx, acct.ID, app.ID, postgresChangesSourceName(app), state.CommitChangesConfig{
 		QueueName: req.QueueName, Feeds: feeds, ManagedDatabaseID: database.ID,
@@ -82,26 +91,40 @@ func (s *server) putPostgresChanges(w http.ResponseWriter, r *http.Request, acct
 	})
 	switch {
 	case errors.Is(err, state.ErrConflict):
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "postgres_changes_conflict", "Postgres changes conflict",
-			"this app already has a different Commit source; remove it first"))
-		return
+		return api.NewProblem(http.StatusConflict, "postgres_changes_conflict", "Postgres changes conflict",
+			"this app already has a different Commit source; remove it first")
 	case err != nil:
-		api.WriteProblem(w, api.ErrCapacity("save postgres changes"))
-		return
+		return api.ErrCapacity("save postgres changes")
 	}
 	if !src.Enabled {
 		if _, err := store.SetCommitSourceEnabled(ctx, acct.ID, src.ID, true); err != nil {
-			api.WriteProblem(w, api.ErrCapacity("resume postgres changes"))
-			return
+			return api.ErrCapacity("resume postgres changes")
 		}
 	}
 	if database.ID != "" {
-		if problem := s.installManagedPostgresChanges(ctx, store, acct, database, src.ID, req.Feeds); problem != nil {
-			api.WriteProblem(w, problem)
-			return
-		}
+		return s.installManagedPostgresChanges(ctx, store, acct, database, src.ID, req.Feeds)
 	}
-	s.writePostgresChanges(w, r, acct, app, http.StatusOK)
+	return nil
+}
+
+// applySourcePostgresChanges applies a pushed gregale.yaml's postgres_changes
+// block. As with `gregale deploy`, an account the feature is not released to,
+// or a plan without queues, skips the block. A database you run still needs
+// `gregale postgres-changes install` once, because its owner URL never leaves
+// your machine.
+func (s *server) applySourcePostgresChanges(ctx context.Context, acct state.Account, app state.App, spec *gregalemanifest.PostgresChangesSpec) *api.Problem {
+	if spec == nil || !s.platformFlagEnabled(platformflags.PostgresChanges, acct) || api.MustLimitsFor(acct.Plan).MaxQueueDepth == 0 {
+		return nil
+	}
+	store, ok := s.store.(state.CommitChangesStore)
+	if !ok {
+		return api.ErrCapacity("postgres changes store unavailable")
+	}
+	req, err := spec.Request()
+	if err != nil {
+		return api.ErrValidation("postgres_changes: " + err.Error())
+	}
+	return s.applyPostgresChanges(ctx, store, acct, app, req)
 }
 
 // postgresChangesDatabase resolves a managed database the account owns, by

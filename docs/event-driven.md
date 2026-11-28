@@ -416,11 +416,12 @@ post-response tail is separate from durable `wait_for_condition` checks.
 
 ### Async invocations, jobs and crons
 
-Each async invocation attempt, including any wake it triggers, must answer
-within 30 seconds (`api.GatewaySynthDispatchTimeout`). A longer attempt is
-recorded as a timeout ("the invocation attempt exceeded the 30s dispatch
-limit") and retried under the invocation's retry policy, so work that needs
-longer belongs in a job.
+Each async, queue or cron invocation attempt may run for the app's request
+timeout (`request_timeout_s`), clamped to its plan's ceiling (Free 30 s,
+Hobby 1 min, Pro 5 min, Scale 15 min) and never less than 30 s. An app
+without its own timeout gets 30 s. A longer attempt is recorded as a timeout
+and retried under the invocation's retry policy, so work that needs longer
+than the plan ceiling belongs in a job.
 
 ```bash
 gregale invocation run --async --payload @payload.json APP_ID

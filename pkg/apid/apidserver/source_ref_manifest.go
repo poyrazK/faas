@@ -445,6 +445,13 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 	if problem := s.applySourceRefQueueBindings(ctx, acct, app, m.QueueBindings, deploymentScope, &staged); problem != nil {
 		return staged, problem
 	}
+	// Changes sources feed the app-wide queue binding only, so an
+	// environment deploy leaves them to production's manifest.
+	if state.IsProductionScope(deploymentScope) {
+		if problem := s.applySourcePostgresChanges(ctx, acct, app, m.PostgresChanges); problem != nil {
+			return staged, problem
+		}
+	}
 	if len(m.WorkPolicies) > 0 {
 		policyStore, ok := s.store.(state.AppWorkPolicyStore)
 		if !ok {

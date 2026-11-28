@@ -69187,6 +69187,9 @@ LEFT JOIN workflow_dispatch_cursors scope_cursor ON scope_cursor.app_id=candidat
 WHERE
  ((candidate.status IN ('pending','awaiting_event') AND candidate.scheduled_for<=now())
  OR (candidate.status='running' AND coalesce(candidate.lease_until,candidate.updated_at+($1::bigint*interval '1 millisecond'))<=now()))
+AND EXISTS (SELECT 1 FROM apps a JOIN app_resource_accounts ac ON ac.app_id=a.id
+  WHERE a.id=candidate.app_id AND a.status<>'deleted'
+  AND ac.status NOT IN ('suspended','deleted_pending') AND ac.abuse_hold_at IS NULL)
 AND (
  candidate.operation_id IS NOT NULL OR
  (SELECT count(*) FROM workflow_runs active WHERE active.app_id=candidate.app_id
@@ -69224,6 +69227,9 @@ type NextFairDueWorkflowRunRow struct {
 	WorkflowName     string
 }
 
+// A deleted app's runs, and runs of an account that is suspended or on an
+// abuse hold, wait like its workflow schedules do; restoring the app or
+// lifting the hold resumes them (async assessment 2026-11-28).
 func (q *Queries) NextFairDueWorkflowRun(ctx context.Context, db DBTX, arg NextFairDueWorkflowRunParams) (NextFairDueWorkflowRunRow, error) {
 	row := db.QueryRow(ctx, nextFairDueWorkflowRun, arg.StaleMs, arg.AppLimit, arg.TenantLimit)
 	var i NextFairDueWorkflowRunRow
@@ -119305,6 +119311,9 @@ SELECT EXISTS(
  WHERE candidate.status IN ('pending','running','awaiting_event')
  AND ((candidate.status IN ('pending','awaiting_event') AND candidate.scheduled_for<=now())
   OR (candidate.status='running' AND coalesce(candidate.lease_until,candidate.updated_at+($1::bigint*interval '1 millisecond'))<=now()))
+ AND EXISTS (SELECT 1 FROM apps a JOIN app_resource_accounts ac ON ac.app_id=a.id
+  WHERE a.id=candidate.app_id AND a.status<>'deleted'
+  AND ac.status NOT IN ('suspended','deleted_pending') AND ac.abuse_hold_at IS NULL)
 )::boolean AS due
 `
 

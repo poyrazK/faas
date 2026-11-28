@@ -212,6 +212,7 @@ func (s *PgStore) claimCommitRelaySources(ctx context.Context, limit int, lease 
 	query := `WITH due AS (
  SELECT id,relay_next_poll_at FROM commit_sources WHERE enabled AND sealed_connection IS NOT NULL
  AND relay_next_poll_at <= statement_timestamp()
+ AND EXISTS (SELECT 1 FROM apps a WHERE a.id = commit_sources.app_id AND a.status <> 'deleted')
  AND (last_checked_at IS NULL OR last_checked_at <= statement_timestamp() - poll_interval_ms * interval '1 millisecond')
  AND (NOT $3::boolean OR (relay_status = 'healthy'
  AND last_checked_at IS DISTINCT FROM relay_reserved_deferred_check_at
