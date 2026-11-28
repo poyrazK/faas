@@ -321,9 +321,9 @@ func trafficRevocationCause(ctx context.Context) error {
 func writeTrafficRevocationError(w http.ResponseWriter, r *http.Request, err error) {
 	recordTrafficRefusal(r.Context(), trafficSecurityDecision(err))
 	if errors.Is(err, trafficrevocation.ErrUnavailable) {
+		attrs := []any{"path", logsanitize.Field(r.URL.Path), "request_id", requestIDFrom(r), "synthetic", isSyntheticInvocation(r.Context()), "err", err}
 		unavailableRefusalLog.Do(func() {
-			slog.Default().Warn("traffic security: request refused as unavailable",
-				"path", logsanitize.Field(r.URL.Path), "request_id", requestIDFrom(r), "synthetic", isSyntheticInvocation(r.Context()), "err", err)
+			slog.Default().Warn("traffic security: request refused as unavailable", attrs...)
 		})
 	}
 	// The lifetime is canceled; error delivery gets a separate short allowance.
