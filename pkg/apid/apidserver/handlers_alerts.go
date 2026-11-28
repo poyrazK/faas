@@ -237,8 +237,8 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := validateAlertFailureFilter(r.Context(), s.store, state.AlertRule{AccountID: acct.ID, AppID: app.ID, Metric: state.AlertMetric(req.Metric),
-		FailureSource: state.AlertFailureSource(req.FailureSource), JobName: req.JobName, CronID: req.CronID}); prob != nil {
+	if prob := validateAlertFailureFilter(r.Context(), s.store, state.AlertRule{AccountID: acct.ID, AppID: app.ID, EnvironmentID: environmentID,
+		Metric: state.AlertMetric(req.Metric), FailureSource: state.AlertFailureSource(req.FailureSource), JobName: req.JobName, CronID: req.CronID}, true); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -523,7 +523,7 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := validateAlertFailureFilter(r.Context(), s.store, merged); prob != nil {
+	if prob := validateAlertFailureFilter(r.Context(), s.store, merged, alertFailureFilterChanged(req)); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}

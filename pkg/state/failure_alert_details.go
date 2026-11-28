@@ -224,7 +224,7 @@ func (m *MemStore) ListAccountFailedJobRuns(_ context.Context, accountID, jobNam
 			continue
 		}
 		job := m.jobs[r.JobID]
-		if jobName != "" && job.Name != jobName {
+		if jobName != "" && (job.Name != jobName || job.Status == "deleted") {
 			continue
 		}
 		out = append(out, FailedJobRun{ID: r.ID, JobName: job.Name, Status: r.AggregateStatus, Tasks: r.Tasks, TasksFailed: r.TasksFailed,
@@ -268,6 +268,7 @@ func (m *MemStore) ListFailedInvocations(_ context.Context, accountID, appID, en
 			continue
 		}
 		if source != "" && source != AlertFailureAny && string(inv.Source) != string(source) ||
+			(source == "" || source == AlertFailureAny) && !alertableInvocationSource(inv.Source) ||
 			cronID != "" && (inv.CronID == nil || *inv.CronID != cronID) {
 			continue
 		}
@@ -291,4 +292,15 @@ func (m *MemStore) ListFailedInvocations(_ context.Context, accountID, appID, en
 		return out[i].ID < out[j].ID
 	})
 	return out[:min(len(out), int(failureDetailLimit(limit)))], nil
+}
+
+// alertableInvocationSource is the source set a failed_invocations "any"
+// rule sums (pkg/alerts summariseFailed); ListFailedInvocations lists only
+// these without a source.
+func alertableInvocationSource(source InvocationSource) bool {
+	switch source {
+	case InvocationAsyncInvoke, InvocationQueue, InvocationDelayedTask, InvocationCron, InvocationInboundWebhook:
+		return true
+	}
+	return false
 }

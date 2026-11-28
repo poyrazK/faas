@@ -19,7 +19,7 @@ SELECT count(*)::bigint AS total
    AND r.finished_at >= $2::timestamptz
    AND r.finished_at <= $3::timestamptz
    AND ($4::text IS NULL OR r.job_id IN (
-        SELECT j.id FROM jobs j WHERE j.account_id = $1::uuid AND j.name = $4::text))
+        SELECT j.id FROM jobs j WHERE j.account_id = $1::uuid AND j.name = $4::text AND j.status <> 'deleted'))
 `
 
 type CountAccountFailedJobRunsParams struct {
@@ -119,7 +119,7 @@ SELECT r.id, j.name AS job_name, r.aggregate_status, r.tasks, r.tasks_failed, r.
    AND r.aggregate_status IN ('failed', 'dead_letter')
    AND r.finished_at >= $2::timestamptz
    AND r.finished_at <= $3::timestamptz
-   AND ($4::text IS NULL OR j.name = $4::text)
+   AND ($4::text IS NULL OR (j.name = $4::text AND j.status <> 'deleted'))
  ORDER BY r.finished_at DESC, r.id
  LIMIT $5::integer
 `
@@ -145,7 +145,8 @@ type ListAccountFailedJobRunsRow struct {
 
 // The newest failed runs a firing job_failures rule counted, for the
 // notification (ADR-045 amendment 1): job name, run, failed task count and
-// the first failed task's error.
+// the first failed task's error. A job filter matches only the live job of
+// that name; the name is unique only among live jobs.
 func (q *Queries) ListAccountFailedJobRuns(ctx context.Context, db DBTX, arg ListAccountFailedJobRunsParams) ([]ListAccountFailedJobRunsRow, error) {
 	rows, err := db.Query(ctx, listAccountFailedJobRuns,
 		arg.AccountID,
@@ -250,7 +251,8 @@ SELECT id, source, path, cron_id, attempts, coalesce(last_error, '')::text AS la
  WHERE account_id = $1::uuid AND app_id = $2::uuid
    AND state IN ('failed', 'dead_letter')
    AND environment_id IS NOT DISTINCT FROM $3::uuid
-   AND ($4::text IS NULL OR source = $4::text)
+   AND ($4::text IS NULL AND source IN ('async_invoke', 'queue', 'delayed_task', 'cron', 'inbound_webhook')
+        OR source = $4::text)
    AND ($5::uuid IS NULL OR cron_id = $5::uuid)
    AND coalesce(completed_at, created_at) >= $6::timestamptz
  ORDER BY coalesce(completed_at, created_at) DESC, id
@@ -278,7 +280,8 @@ type ListFailedInvocationsRow struct {
 }
 
 // The newest failed invocations a firing failed_invocations rule counted, for
-// the notification (ADR-045 amendment 1). Production only, like the count.
+// the notification (ADR-045 amendment 1), in production or the rule's stage
+// like the count. Without a source it lists the sources the any count sums.
 func (q *Queries) ListFailedInvocations(ctx context.Context, db DBTX, arg ListFailedInvocationsParams) ([]ListFailedInvocationsRow, error) {
 	rows, err := db.Query(ctx, listFailedInvocations,
 		arg.AccountID,

@@ -472,7 +472,13 @@ gregale alert create --app shop --name "Billing cron failing" \
 ```
 
 `gregale alert update <id> --job other-job` changes the filter and
-`--job=` (or `--cron=`) removes it.
+`--job=` (or `--cron=`) removes it. The cron must fire in the rule's
+environment: a stage's cron needs a rule created with `--env`.
+
+A changed schedule or path in `gregale.yaml` replaces the cron with a new id.
+When the job or cron a rule names no longer exists, the rule shows
+`degraded` in `gregale alert list` instead of counting zero; point it at the
+new one with `--cron <id>` or `--job <name>`.
 
 When one of these rules fires, the notification lists the newest failures
 it counted, up to 5:
@@ -483,7 +489,7 @@ it counted, up to 5:
 - `failed_invocations`: the source and path, the cron, the number of
   attempts and the last error.
 
-Errors are cut to one line of 200 characters. They reach every channel the
+Errors are cut to one line of 200 bytes. They reach every channel the
 rule delivers to, so keep secrets out of your error messages.
 
 `job_failures` supports the webhook action only. `boot_failures` also takes

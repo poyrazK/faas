@@ -4036,7 +4036,8 @@ type Querier interface {
 	ListAccountDeletedApps(ctx context.Context, db DBTX, arg ListAccountDeletedAppsParams) ([]ListAccountDeletedAppsRow, error)
 	// The newest failed runs a firing job_failures rule counted, for the
 	// notification (ADR-045 amendment 1): job name, run, failed task count and
-	// the first failed task's error.
+	// the first failed task's error. A job filter matches only the live job of
+	// that name; the name is unique only among live jobs.
 	ListAccountFailedJobRuns(ctx context.Context, db DBTX, arg ListAccountFailedJobRunsParams) ([]ListAccountFailedJobRunsRow, error)
 	ListAccountOAuthLinks(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListAccountOAuthLinksRow, error)
 	// Dashboard + GET /v1/apps/{slug}/debug/regressions read pattern.
@@ -4470,7 +4471,8 @@ type Querier interface {
 	// starts at signup or at enforced_from, whichever is later.
 	ListExpiredUnverifiedAccounts(ctx context.Context, db DBTX, arg ListExpiredUnverifiedAccountsParams) ([]pgtype.UUID, error)
 	// The newest failed invocations a firing failed_invocations rule counted, for
-	// the notification (ADR-045 amendment 1). Production only, like the count.
+	// the notification (ADR-045 amendment 1), in production or the rule's stage
+	// like the count. Without a source it lists the sources the any count sums.
 	ListFailedInvocations(ctx context.Context, db DBTX, arg ListFailedInvocationsParams) ([]ListFailedInvocationsRow, error)
 	ListFairTenantWorkflowScheduleCandidates(ctx context.Context, db DBTX, arg ListFairTenantWorkflowScheduleCandidatesParams) ([]ListFairTenantWorkflowScheduleCandidatesRow, error)
 	ListFeatureFlagAutoRolloutCandidates(ctx context.Context, db DBTX, arg ListFeatureFlagAutoRolloutCandidatesParams) ([]ListFeatureFlagAutoRolloutCandidatesRow, error)

@@ -111,6 +111,15 @@ func TestPgAlertFailureFiltersAndDetails(t *testing.T) {
 	if all, err := store.ListFailedInvocations(ctx, account.ID, app.ID, "", state.AlertFailureAny, "", now.Add(-time.Hour), 1); err != nil || len(all) != 1 {
 		t.Fatalf("limited details = %+v, %v", all, err)
 	}
+	// An any rule's details list only the sources its count sums.
+	if _, err := pool.Exec(ctx, `insert into invocations (account_id, app_id, source, path, state, due_at, created_at, completed_at, deployment_scope)
+		values ($1::uuid, $2::uuid, 'replay', '/replayed', 'failed', $3, $3, $3, '')`, account.ID, app.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	all, err := store.ListFailedInvocations(ctx, account.ID, app.ID, "", state.AlertFailureAny, "", now.Add(-time.Hour), 10)
+	if err != nil || len(all) != 3 {
+		t.Fatalf("any details = %+v, %v; want the 3 cron failures and no replay", all, err)
+	}
 
 	// Boot failures: newest first, with deployment and node.
 	for i, ago := range []time.Duration{2 * time.Minute, time.Minute} {
@@ -155,5 +164,15 @@ func TestPgAlertFailureFiltersAndDetails(t *testing.T) {
 	runs, err := store.ListAccountFailedJobRuns(ctx, account.ID, "nightly", now.Add(-time.Hour), now, 5)
 	if err != nil || len(runs) != 1 || runs[0].JobName != "nightly" || runs[0].Tasks != 2 || runs[0].TasksFailed != 1 || runs[0].FirstError != "exit 3: missing DATABASE_URL" {
 		t.Fatalf("nightly failure details = %+v, %v", runs, err)
+	}
+	// A deleted job's runs are not the filter's, even under the same name.
+	if _, err := pool.Exec(ctx, `update jobs set status = 'deleted' where id = $1::uuid`, nightly.ID); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := store.CountAccountFailedJobRuns(ctx, account.ID, "nightly", now.Add(-time.Hour), now); err != nil || n != 0 {
+		t.Fatalf("deleted nightly failures = %d, %v; want 0", n, err)
+	}
+	if runs, err := store.ListAccountFailedJobRuns(ctx, account.ID, "nightly", now.Add(-time.Hour), now, 5); err != nil || len(runs) != 0 {
+		t.Fatalf("deleted nightly details = %+v, %v", runs, err)
 	}
 }

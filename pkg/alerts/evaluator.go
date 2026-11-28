@@ -1496,6 +1496,9 @@ func (e *Evaluator) observeFailureCount(ctx context.Context, rule state.AlertRul
 		}
 		n, err = counter.CountAppBootFailures(ctx, rule.AppID, since, now)
 	case state.AlertMetricJobFailures:
+		if !e.failureFilterTargetLive(ctx, rule) {
+			return 0, false, skipDegraded
+		}
 		n, err = counter.CountAccountFailedJobRuns(ctx, rule.AccountID, rule.JobName, since, now)
 	default:
 		return 0, false, skipDegraded

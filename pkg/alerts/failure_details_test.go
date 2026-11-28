@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"filippo.io/age"
-	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -65,10 +64,14 @@ func (s *cronFailureStore) ListFailedInvocations(_ context.Context, _, appID, _ 
 // only that cron, and its notification names the failed invocations.
 func TestEvaluatorCronFilteredFailures(t *testing.T) {
 	now := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
-	cron := uuid.NewString()
+	var cron string
 	mem := state.NewMemStore()
 	rule, ident := seedFailureRule(t, mem, state.AlertMetricFailedInvocs, func(r *state.AlertRule) {
-		r.FailureSource, r.CronID = state.AlertFailureCron, cron
+		c, err := mem.CreateCron(context.Background(), r.AppID, "0 * * * *", "/tasks/bill", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.FailureSource, r.CronID, cron = state.AlertFailureCron, c.ID, c.ID
 	})
 	if rule.CronID != cron {
 		t.Fatalf("stored cron filter %q, want %q", rule.CronID, cron)
@@ -118,7 +121,12 @@ func (s *jobFailureStore) ListAccountFailedJobRuns(_ context.Context, _, jobName
 func TestEvaluatorJobFailureFilterAndNotes(t *testing.T) {
 	now := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
 	mem := state.NewMemStore()
-	_, ident := seedFailureRule(t, mem, state.AlertMetricJobFailures, func(r *state.AlertRule) { r.JobName = "nightly-export" })
+	_, ident := seedFailureRule(t, mem, state.AlertMetricJobFailures, func(r *state.AlertRule) {
+		if _, err := mem.JobCreate(context.Background(), r.AccountID, "nightly-export", "batch", "registry.example/job:1", []string{"run"}, 256, 60, 1, 0, nil); err != nil {
+			t.Fatal(err)
+		}
+		r.JobName = "nightly-export"
+	})
 	long := strings.Repeat("x", 400)
 	store := &jobFailureStore{MemStore: mem}
 	for i := range 7 {
@@ -167,5 +175,42 @@ func TestEvaluatorBootFailureNotes(t *testing.T) {
 		"Boot failed 2026-11-28 11:57 UTC, deployment dep-1 (cold_boot) on node bhs-2"}
 	if len(notes) < 2 || notes[0] != want[0] || notes[1] != want[1] {
 		t.Fatalf("notes %q, want %q first", notes, want)
+	}
+}
+
+// A filtered rule whose job or cron is gone degrades instead of counting
+// zero forever: a deploy that changes a cron's schedule replaces it.
+func TestEvaluatorFailureFilterTargetGone(t *testing.T) {
+	now := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name   string
+		metric state.AlertMetric
+		gone   func(t *testing.T, mem *state.MemStore, r *state.AlertRule)
+	}{
+		{"deleted cron", state.AlertMetricFailedInvocs, func(t *testing.T, mem *state.MemStore, r *state.AlertRule) {
+			c, err := mem.CreateCron(context.Background(), r.AppID, "0 * * * *", "/bill", true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.FailureSource, r.CronID = state.AlertFailureCron, c.ID
+		}},
+		{"deleted job", state.AlertMetricJobFailures, func(_ *testing.T, _ *state.MemStore, r *state.AlertRule) { r.JobName = "removed" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mem := state.NewMemStore()
+			rule, ident := seedFailureRule(t, mem, tc.metric, func(r *state.AlertRule) { tc.gone(t, mem, r) })
+			if rule.CronID != "" {
+				if err := mem.DeleteCron(context.Background(), rule.CronID, rule.AppID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if stats, _ := runFailureCountEvaluator(t, mem, ident, now); stats.Fired != 0 {
+				t.Fatalf("stats %+v, want no fire", stats)
+			}
+			got, err := mem.AlertRuleByID(context.Background(), rule.ID)
+			if err != nil || got.State != state.AlertStateDegraded {
+				t.Fatalf("state %q, %v; want degraded", got.State, err)
+			}
+		})
 	}
 }

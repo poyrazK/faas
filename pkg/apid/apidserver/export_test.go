@@ -2802,6 +2802,6 @@ func PlanWorkloadReleaseCommand(scanDir string, workloads []reposcan.Workload, w
 func ValidateAlertFailureFilter(ctx context.Context, store interface {
 	JobGetByName(ctx context.Context, accountID, name string) (state.Job, error)
 	CronByID(ctx context.Context, id string) (state.Cron, error)
-}, rule state.AlertRule) *api.Problem {
-	return validateAlertFailureFilter(ctx, store, rule)
+}, rule state.AlertRule, lookup bool) *api.Problem {
+	return validateAlertFailureFilter(ctx, store, rule, lookup)
 }

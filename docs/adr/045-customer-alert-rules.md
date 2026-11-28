@@ -156,17 +156,25 @@ PR 4 as the operator-visible artifact.
   counts only the failed runs of the account's job with that name. A
   `failed_invocations` rule with `failure_source = cron` can name one cron of
   its app (`cron_id`). Jobs are named because the name is unique in the
-  account and is how the CLI addresses a job; crons have no name, and their id
-  survives deploys because deployment crons are upserted by id. Neither is a
-  foreign key: a rule on a deleted job or cron counts zero rather than
-  disappearing. apid checks that the job exists and the cron belongs to the
-  app; `alert_rules_job_name_chk` and `alert_rules_cron_id_chk` keep the shape.
+  account (among live jobs; the filter ignores deleted jobs' runs) and is how
+  the CLI addresses a job. Crons have no name and the CLI addresses them by
+  id, which a deploy keeps until the cron's schedule or path changes: the
+  manifest then replaces the cron with a new id. Neither filter is a foreign
+  key, so deleting the target does not delete the rule; the evaluator degrades
+  a rule whose job or cron is gone, so it shows as needing a new target
+  instead of counting zero. On create, and on an update that changes the
+  filter or metric, apid checks that the job is live and that the cron
+  belongs to the app and fires in the rule's environment (production, or the
+  rule's stage). An update that leaves the filter alone is not re-checked, so
+  such a rule can still be renamed, disabled or re-pointed.
+  `alert_rules_job_name_chk` and `alert_rules_cron_id_chk` keep the shape.
   A cron-filtered rule needs the store's `FailureAlertDetailer`; on
   a store without it the rule degrades instead of counting every cron.
 - **Details.** A firing `boot_failures`, `job_failures` or `failed_invocations`
   notification to a channel lists up to 5 of the newest failures it counted:
   boot time, deployment and node; job, run, failed tasks and the first failed
-  task's error; invocation source, path, cron, attempts and last error. Error
+  task's error; invocation source, path, cron, attempts and last error. An
+  `any` rule's details come only from the sources its count sums. Error
   text is collapsed to one line and cut to 200 bytes, and each note to 500
   bytes like route notes. The details go to the customer's own channels only,
   the same as the log lines alerts already carry. A read failure sends the

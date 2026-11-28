@@ -7,6 +7,7 @@ package alerts
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -23,7 +24,7 @@ const failureErrorMaxBytes = 200
 // degrades the rule instead of counting every cron.
 func (e *Evaluator) observeCronFailures(ctx context.Context, rule state.AlertRule) (float64, bool, string) {
 	store, ok := e.store.(state.FailureAlertDetailer)
-	if !ok || rule.AppID == "" {
+	if !ok || rule.AppID == "" || !e.failureFilterTargetLive(ctx, rule) {
 		return 0, false, skipDegraded
 	}
 	since := e.windowStart(rule.WindowSpec, e.now())
@@ -33,6 +34,41 @@ func (e *Evaluator) observeCronFailures(ctx context.Context, rule state.AlertRul
 		return 0, false, skipDegraded
 	}
 	return float64(n), compareFloat(float64(n), rule.Comparison, rule.Threshold), ""
+}
+
+// failureFilterTargetLive reports whether the job or cron a filtered rule
+// names still exists. A deploy that changes a manifest cron's schedule or
+// path replaces the cron with a new id, and a job can be deleted; the rule
+// would then count zero forever. Degrading it instead shows the customer the
+// rule needs a new target. A store that cannot answer, or a read error,
+// leaves the rule running.
+func (e *Evaluator) failureFilterTargetLive(ctx context.Context, rule state.AlertRule) bool {
+	switch {
+	case rule.CronID != "":
+		crons, ok := e.store.(interface {
+			CronByID(context.Context, string) (state.Cron, error)
+		})
+		if !ok {
+			return true
+		}
+		cron, err := crons.CronByID(ctx, rule.CronID)
+		if errors.Is(err, state.ErrNotFound) || err == nil && cron.AppID != rule.AppID {
+			e.log.Info("alerts: filtered rule's cron is gone", "rule", rule.ID, "cron", rule.CronID)
+			return false
+		}
+	case rule.JobName != "":
+		jobs, ok := e.store.(interface {
+			JobGetByName(context.Context, string, string) (state.Job, error)
+		})
+		if !ok {
+			return true
+		}
+		if _, err := jobs.JobGetByName(ctx, rule.AccountID, rule.JobName); errors.Is(err, state.ErrNotFound) {
+			e.log.Info("alerts: filtered rule's job is gone", "rule", rule.ID, "job", rule.JobName)
+			return false
+		}
+	}
+	return true
 }
 
 // failureNotes describes the newest failures a firing failure rule counted.

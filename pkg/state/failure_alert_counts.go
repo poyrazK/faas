@@ -96,7 +96,7 @@ func (m *MemStore) CountAccountFailedJobRuns(_ context.Context, accountID, jobNa
 		if r.AccountID != accountID || r.FinishedAt == nil || r.FinishedAt.Before(since) || r.FinishedAt.After(until) {
 			continue
 		}
-		if jobName != "" && m.jobs[r.JobID].Name != jobName {
+		if job := m.jobs[r.JobID]; jobName != "" && (job.Name != jobName || job.Status == "deleted") {
 			continue
 		}
 		if r.AggregateStatus == "failed" || r.AggregateStatus == "dead_letter" {
