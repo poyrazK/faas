@@ -93,6 +93,19 @@ func TestMCPDeployAllowBreakingNeedsReason(t *testing.T) {
 	}
 }
 
+// A server that checks credentials itself cannot get a contract the deploy
+// gate could never check.
+func TestMCPListingContractCheckable(t *testing.T) {
+	if err := main.MCPListingContractCheckable("external-oauth", ""); err == nil || !strings.Contains(err.Error(), "--probe-secret") {
+		t.Fatalf("external-oauth without probe secret = %v", err)
+	}
+	for _, tc := range [][2]string{{"external-oauth", "MCP_TOKEN"}, {"open", ""}, {"api-key", ""}, {"oauth-proxy", ""}} {
+		if err := main.MCPListingContractCheckable(tc[0], tc[1]); err != nil {
+			t.Errorf("%v = %v", tc, err)
+		}
+	}
+}
+
 // A republish keeps the probe secret unless --probe-secret is given.
 func TestMCPListingKeepProbeSecret(t *testing.T) {
 	current := api.MCPListingResponse{Title: "Search", ProbeSecret: "MCP_PROBE_TOKEN"}

@@ -9,6 +9,8 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/billing/stripeinvoice"
@@ -128,5 +130,22 @@ func TestMCPContract(t *testing.T) {
 	decode(t, e.Do(t, http.MethodGet, "/v1/consumer-signup/search/listing", nil, map[string]string{"Authorization": ""}), http.StatusOK, &public)
 	if len(public.Changelog) != 1 || public.Changelog[0].Verdict != state.MCPContractBreaking || !slices.Equal(public.Changelog[0].Tools, []string{"search"}) {
 		t.Fatalf("public changelog = %+v", public.Changelog)
+	}
+
+	// An override can be bound to one of the app's own deployments.
+	bound, err := store.CreateDeployment(ctx, state.Deployment{AppID: appID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:bound",
+		Status: state.DeployPending})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decode(t, e.Do(t, http.MethodPost, "/v1/apps/search/mcp-contract/overrides", api.CreateMCPContractOverrideRequest{Reason: "bound",
+		DeploymentID: "not-a-uuid"}, nil), http.StatusUnprocessableEntity, nil)
+	decode(t, e.Do(t, http.MethodPost, "/v1/apps/search/mcp-contract/overrides", api.CreateMCPContractOverrideRequest{Reason: "bound",
+		DeploymentID: uuid.NewString()}, nil), http.StatusNotFound, nil)
+	var boundOverride api.MCPContractOverride
+	decode(t, e.Do(t, http.MethodPost, "/v1/apps/search/mcp-contract/overrides", api.CreateMCPContractOverrideRequest{Reason: "bound",
+		DeploymentID: bound.ID}, nil), http.StatusCreated, &boundOverride)
+	if boundOverride.DeploymentID != bound.ID {
+		t.Fatalf("bound override = %+v", boundOverride)
 	}
 }

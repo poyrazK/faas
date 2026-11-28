@@ -193,14 +193,14 @@ func checkMCPContractRefusalsAndRollback(t *testing.T, ctx context.Context, st s
 	if err := st.MarkDeploymentLive(ctx, bound.DeploymentID); err != nil {
 		t.Fatal(err)
 	}
-	later := candidate('g', state.MCPContractCompatible)
+	later := candidate('9', state.MCPContractCompatible)
 	if _, err := gate.RecordMCPContractCheck(ctx, later, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.MarkDeploymentLive(ctx, later.DeploymentID); err != nil {
 		t.Fatal(err)
 	}
-	if base, _ := gate.MCPContractBaseline(ctx, appID); base.SHA256 != contractSHA('g') {
+	if base, _ := gate.MCPContractBaseline(ctx, appID); base.SHA256 != contractSHA('9') {
 		t.Fatalf("baseline before rollback = %+v", base)
 	}
 	log, _ := gate.ListMCPContractChangelog(ctx, accountID, appID, 20)
