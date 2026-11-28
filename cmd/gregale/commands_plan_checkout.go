@@ -35,7 +35,7 @@ func renderPlanCheckoutHandoff(ae *APIError, target api.Plan) int {
 			PrintFail(os.Stderr, "Could not open browser: %v", err)
 			_, _ = fmt.Fprintf(os.Stderr, "  Open this URL manually:\n  %s\n", url)
 		}
-		_, _ = fmt.Fprintf(osStdout, "Then retry: gregale billing plan %s\n", target)
+		_, _ = fmt.Fprintf(osStdout, "Then retry: %s\n", billingPlanCommand(string(target)))
 		return 0
 	}
 	url := ae.Problem.CheckoutURL
@@ -45,6 +45,24 @@ func renderPlanCheckoutHandoff(ae *APIError, target api.Plan) int {
 		PrintFail(os.Stderr, "Could not open browser: %v", err)
 		_, _ = fmt.Fprintf(os.Stderr, "  Open this URL manually:\n  %s\n", url)
 	}
-	_, _ = fmt.Fprintf(osStdout, "Your plan switches to %s as soon as the provider confirms payment. Check with: gregale whoami\n", target)
+	_, _ = fmt.Fprintf(osStdout, "Your plan switches to %s as soon as the provider confirms payment. Check with: %s\n", target, planCheckCommand())
 	return 0
+}
+
+// billingPlanCommand is the `billing plan` command to retry or keep a plan.
+// It keeps the global --org so a pasted hint changes the same organization's
+// plan, not the personal account's (ADR-20261127200000).
+func billingPlanCommand(plan string) string {
+	if projectOrganization != "" {
+		return "gregale --org " + projectOrganization + " billing plan " + plan
+	}
+	return "gregale billing plan " + plan
+}
+
+// planCheckCommand is the command that shows whether the plan switched.
+func planCheckCommand() string {
+	if projectOrganization != "" {
+		return "gregale org info " + projectOrganization
+	}
+	return "gregale whoami"
 }
