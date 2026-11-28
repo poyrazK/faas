@@ -309,6 +309,28 @@ func (q *Queries) ListRouteSplitsForApp(ctx context.Context, db DBTX, arg ListRo
 	return items, nil
 }
 
+const markRouteApp = `-- name: MarkRouteApp :execrows
+UPDATE apps AS t
+   SET route_of_app_id = s.id
+  FROM apps AS s
+ WHERE t.id = $1 AND s.id = $2 AND t.account_id = s.account_id
+`
+
+type MarkRouteAppParams struct {
+	AppID       pgtype.UUID
+	SourceAppID pgtype.UUID
+}
+
+// ADR-20261121170000 amendment 6: the route's app serves only through its
+// source's route rule. Both apps must belong to the same account.
+func (q *Queries) MarkRouteApp(ctx context.Context, db DBTX, arg MarkRouteAppParams) (int64, error) {
+	result, err := db.Exec(ctx, markRouteApp, arg.AppID, arg.SourceAppID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const readRouteSplit = `-- name: ReadRouteSplit :one
 SELECT id, account_id, source_app_id, target_slug, target_app_id, target_deployment_id, kind, route, method, path_glob, route_ram_mb, main_ram_mb, previous_ram_mb, main_resized, edge_rule_ids, phase, warning, error, lease_until, created_at, updated_at FROM route_splits WHERE id = $1 AND account_id = $2
 `

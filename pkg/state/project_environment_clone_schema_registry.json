@@ -3529,6 +3529,7 @@
       "retry_policy",
       "root_dir",
       "route_metrics_enabled",
+      "route_of_app_id",
       "runtime",
       "sandbox_template",
       "scaling_policy",

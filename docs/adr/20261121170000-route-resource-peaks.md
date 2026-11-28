@@ -323,3 +323,27 @@ it ends on its own. A split made while the feature was on is guarded even
 after the account loses the flag. Two writes racing a split's apply are not
 serialized with it; the guard covers every change after the split row is
 recorded.
+
+## Amendment 6 (2026-11-28): the route's app serves only through the route
+
+Amendment 3 blocks the route's app with ip rules on its platform host and
+its `<slug>--*` port hosts. Edge rules match the request's exact host (plus
+the serving app's `@app` rules), so every other name the app has still
+reached it: the `deploy-<N>-<slug>` URL each live deployment gets, a
+deployment alias, a tenant-surface hostname, a custom domain added later.
+
+So the split now marks the route's app: `apps.route_of_app_id` names its
+source app, set before the app's first deployment (and on every pass that
+checks the block). gatewayd-internal refuses, 404 "Not served here", any
+request to a marked app that its source's route rule did not send, on any
+host, fork requests included. The platform's authorized deployment smoke
+and route probes still reach it, so the route's app can go live and be
+probed. The column change notifies `app_changed` so gateways drop their
+cached app.
+
+The ip-rule block stays: a gateway released before this amendment ignores
+the mark, and the deploy order is data, apid, then edge. Undo and rollback
+delete the app, so nothing clears the mark. Splits made before this
+amendment are not backfilled (none were live on prod when it shipped). Raw
+TCP/UDP ports and service-to-service calls by service name are outside the
+HTTP gateway path and are not covered.

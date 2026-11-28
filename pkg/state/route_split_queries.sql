@@ -54,3 +54,11 @@ RETURNING *;
 UPDATE route_splits
    SET lease_until = NULL
  WHERE id = @id AND account_id = @account_id AND lease_until = @lease_until;
+
+-- name: MarkRouteApp :execrows
+-- ADR-20261121170000 amendment 6: the route's app serves only through its
+-- source's route rule. Both apps must belong to the same account.
+UPDATE apps AS t
+   SET route_of_app_id = s.id
+  FROM apps AS s
+ WHERE t.id = @app_id AND s.id = @source_app_id AND t.account_id = s.account_id;

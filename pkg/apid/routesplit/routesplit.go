@@ -303,6 +303,8 @@ func (s *Service) unsupported(ctx context.Context, app state.App) *api.Problem {
 	switch {
 	case app.PreviewOfSlug != "":
 		return refuse("a preview cannot be split")
+	case app.RouteOfAppID != "":
+		return refuse("this app is the route's app of another split; split its source app instead")
 	case app.ProjectID != "":
 		return refuse("apps in a project are split in the project's source; split a standalone app, or move the route to its own service there")
 	case app.StaticEgressIP != nil:

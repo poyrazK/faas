@@ -854,6 +854,7 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		RequireAuthn:           app.RequireAuthn,
 		ConsumerAuthMode:       string(app.ConsumerAuthMode),
 		PlatformTenantRequired: app.PlatformTenantRequired,
+		RouteOfAppID:           app.RouteOfAppID,
 		// ADR-124: per-app wire-protocol selector (closed-set
 		// {http1, http2, grpc}, default 'http1'). Plumbed from
 		// apps.app_protocol through pgRouter.toApp so

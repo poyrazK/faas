@@ -1777,6 +1777,7 @@ CREATE TABLE public.apps (
     scaling_revision bigint DEFAULT 1 NOT NULL,
     sandbox_template boolean DEFAULT false NOT NULL,
     owner_home_node_id uuid,
+    route_of_app_id uuid,
     CONSTRAINT apps_app_cpu_policy_revision_positive CHECK ((app_cpu_policy_revision > 0)),
     CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
     CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
@@ -5733,6 +5734,25 @@ BEGIN
         VALUES ('app', OLD.id, OLD.id, 'deleted');
         RETURN OLD;
     END IF;
+END;
+$$;
+
+
+--
+-- Name: apps_route_of_app_notify(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.apps_route_of_app_notify() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.route_of_app_id IS DISTINCT FROM OLD.route_of_app_id THEN
+        PERFORM pg_notify(
+            'app_changed',
+            json_build_object('kind', 'updated', 'app_id', NEW.id::text)::text
+        );
+    END IF;
+    RETURN NEW;
 END;
 $$;
 
@@ -96509,6 +96529,13 @@ CREATE TRIGGER apps_record_control_plane_change_trg AFTER INSERT OR DELETE OR UP
 --
 
 CREATE TRIGGER apps_reserved_slug_allocation_guard BEFORE INSERT OR UPDATE OF slug ON public.apps FOR EACH ROW EXECUTE FUNCTION public.reject_reserved_app_slug_allocation();
+
+
+--
+-- Name: apps apps_route_of_app_notify_trg; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER apps_route_of_app_notify_trg AFTER UPDATE OF route_of_app_id ON public.apps FOR EACH ROW EXECUTE FUNCTION public.apps_route_of_app_notify();
 
 
 --

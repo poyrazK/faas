@@ -7990,6 +7990,7 @@ func (m *MemStore) restoreAppLocked(ctx context.Context, id string, limits api.L
 	a.Status = AppActive
 	a.DeletedAt = nil
 	a.DeleteGraceUntil = nil
+	a.RouteOfAppID = ""
 	if err := m.validateMemAppTrafficChangeLocked(ctx, a); err != nil {
 		return App{}, err
 	}
