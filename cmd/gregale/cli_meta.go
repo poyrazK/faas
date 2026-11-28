@@ -3195,6 +3195,8 @@ var cliCommands = []cliCommand{
 			{Name: "image", Group: "Source and build", Short: "deploy a digest-pinned container image", Value: "REF"},
 			{Name: "docker-config", Group: "Source and build", Short: "with --image, save the credential `docker login` stored for the image's registry (config.json or its directory, credential helpers included) to the app before deploying", Value: "PATH"},
 			{Name: "local-image", Group: "Source and build", Short: "deploy a linux/amd64 image from this machine's Docker without a registry (uploads `docker save` output)", Value: "NAME"},
+			{Name: "boot", Group: "Source and build", Short: "with --local-image, first run the image with local Docker (as `doctor --boot` does) and stop before saving or uploading it if it crashes, listens on the wrong address, runs out of memory or fails --healthcheck-path or its HEALTHCHECK"},
+			{Name: "boot-env-file", Group: "Source and build", Short: "with --boot, KEY=VALUE lines for the local boot only (docker env-file format); nothing in it is uploaded", Value: "FILE"},
 			{Name: "image-archive", Group: "Source and build", Short: "deploy a linux/amd64 image from a `docker save` archive without a registry", Value: "PATH"},
 			{Name: "tarball", Group: "Source and build", Short: "deploy from a source tarball", Value: "PATH"},
 			{Name: "path", Group: "Source and build", Common: true, Short: "source directory (default: current directory)", Value: "DIR"},
@@ -5744,7 +5746,9 @@ var cliCommands = []cliCommand{
 					{Name: "description", Short: "version description", Value: "TEXT"},
 				}},
 			}},
-			{Name: "ls", Aliases: []string{"list"}, Short: "List orgs"},
+			{Name: "ls", Aliases: []string{"list"}, Short: "List orgs", Flags: []cliFlag{
+				{Name: "all", Short: "include deleted organizations (their slugs are released 30 days after deletion)"},
+			}},
 			{Name: "create", Short: "Create an org", Positionals: []string{"[<slug>]"}, Flags: []cliFlag{
 				{Name: "slug", Short: "org slug, or the first argument (lowercase alphanumeric + dashes)", Value: "SLUG"},
 				{Name: "name", Short: "display name", Value: "TEXT", Req: true},

@@ -6748,6 +6748,9 @@ type Querier interface {
 	// MCP connection health and the delivery CLI read it, and so does a delivery
 	// with a rollback action, which would cascade away with it.
 	PurgeAlertDeliveriesBefore(ctx context.Context, db DBTX, arg PurgeAlertDeliveriesBeforeParams) (int64, error)
+	// ADR-061 amendment 1: release the slugs of shared organizations deleted
+	// before requested_before, at most row_limit per call. The row stays.
+	PurgeDeletedOrgSlugs(ctx context.Context, db DBTX, arg PurgeDeletedOrgSlugsParams) ([]PurgeDeletedOrgSlugsRow, error)
 	// Deletes up to max_rows resolved episodes, oldest first, whose rule was
 	// deleted before the cutoff, and their notes with them (ADR-20261030214500).
 	PurgeDeletedRuleEpisodesBefore(ctx context.Context, db DBTX, arg PurgeDeletedRuleEpisodesBeforeParams) (int64, error)
@@ -8381,6 +8384,7 @@ type Querier interface {
 	RevokeMFATrustedBrowser(ctx context.Context, db DBTX, arg RevokeMFATrustedBrowserParams) (int64, error)
 	RevokeManagedPostgresCutoverCredential(ctx context.Context, db DBTX, arg RevokeManagedPostgresCutoverCredentialParams) (int64, error)
 	RevokeManagedValkeyCacheGrant(ctx context.Context, db DBTX, arg RevokeManagedValkeyCacheGrantParams) (int64, error)
+	RevokeOpenOrgInvitations(ctx context.Context, db DBTX, orgIds []pgtype.UUID) error
 	RevokeRuntimeReleaseQualification(ctx context.Context, db DBTX, arg RevokeRuntimeReleaseQualificationParams) (RuntimeReleaseQualification, error)
 	RevokeRuntimeUpgradeExternalFenceAuthority(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	RevokeScenarioCommandNetworksForNode(ctx context.Context, db DBTX, arg RevokeScenarioCommandNetworksForNodeParams) error
@@ -8943,6 +8947,10 @@ type Querier interface {
 	SnapshotRecoveryPublicationGeneration(ctx context.Context, db DBTX, arg SnapshotRecoveryPublicationGenerationParams) (int64, error)
 	SnapshotRuntimeConfigReceipt(ctx context.Context, db DBTX, snapshotID pgtype.UUID) (SnapshotRuntimeConfigReceipt, error)
 	SnapshotStorageKeys(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]string, error)
+	// Prod hunt r72: live snapshots a node's fan-out found missing from the
+	// canonical store, where the snapshot was already older than the grace when
+	// the failure was recorded.
+	SnapshotsMissingFromOrigin(ctx context.Context, db DBTX, arg SnapshotsMissingFromOriginParams) ([]string, error)
 	SoftDeleteOrg(ctx context.Context, db DBTX, id pgtype.UUID) error
 	StageDeploymentHTTPcrons(ctx context.Context, db DBTX, arg StageDeploymentHTTPcronsParams) (int64, error)
 	StageEnvironmentHTTPcrons(ctx context.Context, db DBTX, arg StageEnvironmentHTTPcronsParams) (int64, error)

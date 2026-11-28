@@ -19,16 +19,16 @@ func cmdSLOsStatus(args []string) int {
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	fillLinkedApp(slug)
-	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alert slo status [--app <slug>] <slo-id>", "slos")
+	sloID, ok := syntheticCheckArgs(slug, fs.Args())
+	if !ok {
+		PrintUsage(os.Stderr, "usage: gregale alert slo status [<slug>|--app <slug>] <slo-id>", "slos")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	slo, err := client.GetSLO(context.Background(), *slug, fs.Arg(0))
+	slo, err := client.GetSLO(context.Background(), *slug, sloID)
 	if err != nil {
 		return printErr("Could not fetch SLO", err)
 	}

@@ -17,6 +17,8 @@
 package gateway
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -173,4 +175,59 @@ func deploymentIDForIndex(i int) string {
 	hi := hex[i/16]
 	lo := hex[i%16]
 	return "deploy-00000000-0000-0000-0000-00000000000" + string(hi) + string(lo)
+}
+
+// Prod hunt r58 follow-up: a route update admits a new release of an app this
+// gateway already serves, so the release's series exist before its first
+// request; an app it has not served is left to its first request.
+func TestDeploymentLabelSetAdmitSeen(t *testing.T) {
+	s := newDeploymentLabelSet()
+	var admitted []string
+	s.onAdmit = func(appID, deploymentID string) { admitted = append(admitted, appID+"/"+deploymentID) }
+	s.admitSeen("unseen", "d1")
+	if len(admitted) != 0 {
+		t.Fatalf("unseen app admitted: %v", admitted)
+	}
+	s.admit("app", api.PlanPro, "d1")
+	s.admitSeen("app", "d2")
+	s.admitSeen("app", "d2")
+	if len(admitted) != 2 || admitted[1] != "app/d2" {
+		t.Fatalf("admitted = %v, want app/d1 then app/d2 once", admitted)
+	}
+}
+
+// A provisional id (admitted from a recorded target, never requested) gives
+// its slot to a requested id when the app's cap is full; a requested id is
+// never evicted, and a provisional id never evicts anything.
+func TestDeploymentLabelSetRequestsEvictProvisionalIDs(t *testing.T) {
+	s := newDeploymentLabelSet()
+	var evicted []string
+	s.onEvict = func(_, deploymentID string) { evicted = append(evicted, deploymentID) }
+	limit := api.MustLimitsFor(api.PlanHobby).DebugTelemetryDeploymentsPerApp
+	s.admit("app", api.PlanHobby, "live-0")
+	for i := 1; i < limit; i++ {
+		s.admitSeen("app", fmt.Sprintf("staged-%d", i))
+	}
+	s.admitSeen("app", "staged-extra")
+	if len(evicted) != 0 {
+		t.Fatalf("provisional admit evicted %v", evicted)
+	}
+	if got := s.admit("app", api.PlanHobby, "live-1"); got != "live-1" {
+		t.Fatalf("request at full cap = %q, want its own label", got)
+	}
+	if len(evicted) != 1 || !strings.HasPrefix(evicted[0], "staged-") {
+		t.Fatalf("evicted = %v, want one staged id", evicted)
+	}
+
+	requested := newDeploymentLabelSet()
+	requested.onEvict = func(_, deploymentID string) { t.Fatalf("evicted requested id %s", deploymentID) }
+	requested.admit("app", api.PlanHobby, "d0")
+	for i := 1; i < limit; i++ {
+		id := fmt.Sprintf("d%d", i)
+		requested.admitSeen("app", id)
+		requested.admit("app", api.PlanHobby, id)
+	}
+	if got := requested.admit("app", api.PlanHobby, "late"); got != otherDeploymentLabel {
+		t.Fatalf("full set of requested ids admitted %q, want __other__", got)
+	}
 }

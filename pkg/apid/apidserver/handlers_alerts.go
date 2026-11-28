@@ -510,6 +510,10 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := alertTriggerUnreachableOnUpdate(row, merged); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if !s.checkUpdatedStageAlertRule(w, merged) {
 		return
 	}
@@ -1079,6 +1083,9 @@ func validateAlertRuleBody(req api.CreateAlertRuleRequest) *api.Problem {
 	if !api.IsFiniteFloat(req.Threshold) {
 		return api.ErrAlertRuleInvalid("threshold must be a finite number")
 	}
+	if reason := api.AlertThresholdUnreachable(req.Metric, req.Comparison, req.Threshold); reason != "" {
+		return api.ErrAlertRuleInvalid(reason)
+	}
 	if req.CooldownMinutes != nil {
 		if *req.CooldownMinutes < api.AlertRuleCooldownMinMinutes || *req.CooldownMinutes > api.AlertRuleCooldownMaxMinutes {
 			return api.ErrAlertRuleInvalid(fmt.Sprintf("cooldown_minutes must be in [%d, %d]", api.AlertRuleCooldownMinMinutes, api.AlertRuleCooldownMaxMinutes))
@@ -1208,6 +1215,19 @@ func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
 	}
 	if !strings.HasPrefix(merged.WebhookURL, "https://") && !strings.HasPrefix(merged.WebhookURL, "http://") {
 		return api.ErrAlertRuleInvalid("webhook_url must be http(s)")
+	}
+	return nil
+}
+
+// alertTriggerUnreachableOnUpdate refuses a threshold that can never fire
+// only when the update changes the trigger. A rule saved before the check
+// (e.g. error_rate_pct gt 500) can still be renamed, muted or disabled.
+func alertTriggerUnreachableOnUpdate(existing, merged state.AlertRule) *api.Problem {
+	if merged.Metric == existing.Metric && merged.Comparison == existing.Comparison && merged.Threshold == existing.Threshold {
+		return nil
+	}
+	if reason := api.AlertThresholdUnreachable(string(merged.Metric), string(merged.Comparison), merged.Threshold); reason != "" {
+		return api.ErrAlertRuleInvalid(reason)
 	}
 	return nil
 }
