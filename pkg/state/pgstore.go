@@ -27269,7 +27269,7 @@ func scanAppInto(a *App, row pgx.Row) error {
 		&onlyAllowDeclaredRoutes, &declaredRoutesBytes, &visibility,
 		&a.RetryPolicyJSON, &securityPolicy, &orgID,
 		&a.RequestRateLimitRPS, &a.RequestRateLimitBurst, &egressPorts,
-		&a.PlatformTenantRequired, &a.EgressAllowlistRevision, &a.SandboxTemplate); err != nil {
+		&a.PlatformTenantRequired, &a.EgressAllowlistRevision, &a.SandboxTemplate, &a.RouteOfAppID); err != nil {
 		return mapErr(err)
 	}
 	a.EgressPorts = egressPortsFromDB(egressPorts)
@@ -27473,7 +27473,9 @@ const appsSelectColumns = `
 	-- positional scans stable.
 	egress_allowlist_revision,
 	-- ADR-20261027090013: sandbox template build apps.
-	sandbox_template`
+	sandbox_template,
+	-- ADR-20261121170000 amendment 6: a route split's route app.
+	coalesce(route_of_app_id::text, '')`
 
 // Compile-time anchor: the const is interpolated only inside SQL raw-string
 // literals (the 9 SELECT/RETURNING sites), which golangci-lint's `unused`
