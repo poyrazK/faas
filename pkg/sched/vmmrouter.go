@@ -453,11 +453,11 @@ func (r *VMMRouter) Client(nodeID string) VMM {
 // Refresh closes it, so an RPC already in flight can finish.
 //
 // Sized above the longest per-call budget the engine hands out. The
-// longest is the snapshot capture, SnapshotBudgetFor at the largest
-// plan RAM — a Scale park uploads ~1 GB to the OCI registry — plus
-// headroom for the dial and response. Anything shorter reintroduces the
-// bug for the calls most expensive to lose.
-var routerCloseGrace = SnapshotBudgetFor(maxPlanRAMMB()) + 30*time.Second
+// longest is the snapshot capture, SnapshotCaptureBudget at the largest
+// plan RAM and app layer — a Scale park uploads both — plus headroom for
+// the dial and response. Anything shorter reintroduces the bug for the
+// calls most expensive to lose.
+var routerCloseGrace = SnapshotCaptureBudget(maxPlanRAMMB(), int64(maxPlanAppLayerMB())<<20) + 30*time.Second
 
 // maxPlanRAMMB is the largest per-instance RAM any plan allows. Derived
 // from the limits table rather than hardcoded so a future plan with more
@@ -468,6 +468,18 @@ func maxPlanRAMMB() int {
 	for _, plan := range api.Plans {
 		if limits, ok := api.LimitsFor(plan); ok && limits.RAMMB > max {
 			max = limits.RAMMB
+		}
+	}
+	return max
+}
+
+// maxPlanAppLayerMB is the largest app layer any plan allows, for the same
+// reason as maxPlanRAMMB: a capture publishes the layer's private clone.
+func maxPlanAppLayerMB() int {
+	max := 0
+	for _, plan := range api.Plans {
+		if limits, ok := api.LimitsFor(plan); ok && limits.AppLayerMaxMB > max {
+			max = limits.AppLayerMaxMB
 		}
 	}
 	return max
