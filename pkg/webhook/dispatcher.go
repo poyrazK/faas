@@ -976,7 +976,7 @@ func (d *Dispatcher) emitAudit(ctx context.Context, kind string, row state.AppWe
 		"app_id":       row.AppID,
 		"account_id":   row.AccountID,
 		"event":        string(row.Event),
-		"target_url":   hook.TargetURL,
+		"target_url":   api.RedactURLUserinfo(hook.TargetURL),
 		"attempt":      row.Attempt,
 		"status_code":  statusCode,
 		"retry_policy": string(hook.RetryPolicy),

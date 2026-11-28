@@ -88,6 +88,10 @@ import (
 
 var ResolveAlertmanagerURL = resolveAlertmanagerURL
 
+var ValidateWebhookURL = validateWebhookURL
+
+var WebhookTargetProblem = webhookTargetProblem
+
 var CronResidentSecondsPerMonth = cronResidentSecondsPerMonth
 
 // SealNotificationChannel validates a channel create request (ADR-749).

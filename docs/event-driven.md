@@ -639,6 +639,13 @@ gregale webhook deliver checkout-api https://customer.example/webhook \
   --type order.paid --data '{"order_id":"ord_123"}'
 ```
 
+A target URL must not carry credentials (`https://user:password@host/...`):
+Gregale refuses it with `app_webhook_invalid`, because the URL is shown in
+webhook listings and the audit log. Verify deliveries with the signing
+secret, or check a token in the URL path. Targets saved with credentials
+before this check keep delivering, and are shown with `redacted@` in place of
+the credentials.
+
 The destination may also be the registered webhook id. The equivalent API is
 `POST /v1/apps/checkout-api/outbox`; the first-party SDKs expose matching
 delivery methods. Explicit delivery uses the registered destination's HMAC

@@ -39,7 +39,7 @@ func platformTenantWebhookLimits(w http.ResponseWriter, acct state.Account) (api
 func platformTenantWebhookResponse(row state.AppWebhook) api.PlatformTenantWebhookResponse {
 	return api.PlatformTenantWebhookResponse{
 		ID: row.ID, Scope: string(row.Scope), PlatformTenantID: row.PlatformTenantID,
-		AccountID: row.AccountID, TargetURL: row.TargetURL,
+		AccountID: row.AccountID, TargetURL: api.RedactURLUserinfo(row.TargetURL),
 		WebhookSecretSealedMasked: api.AppWebhookSecretMasked,
 		EventFilter:               append([]string(nil), row.EventFilter...), RetryPolicy: string(row.RetryPolicy),
 		DeliveryFormat: string(row.DeliveryFormat), Enabled: row.Enabled,
@@ -160,7 +160,7 @@ func (s *server) createPlatformTenantWebhook(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	s.audit.Emit(r.Context(), "platform_tenant.webhook_created", &acct.ID, map[string]any{
-		"tenant_id": tenant.ID, "webhook_id": row.ID, "target_url": row.TargetURL,
+		"tenant_id": tenant.ID, "webhook_id": row.ID, "target_url": api.RedactURLUserinfo(row.TargetURL),
 	})
 	writeJSON(w, http.StatusCreated, platformTenantWebhookResponse(row))
 }
@@ -235,7 +235,7 @@ func (s *server) updatePlatformTenantWebhook(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	s.audit.Emit(r.Context(), "platform_tenant.webhook_updated", &acct.ID, map[string]any{
-		"tenant_id": tenant.ID, "webhook_id": row.ID, "target_url": row.TargetURL, "enabled": row.Enabled,
+		"tenant_id": tenant.ID, "webhook_id": row.ID, "target_url": api.RedactURLUserinfo(row.TargetURL), "enabled": row.Enabled,
 	})
 	writeJSON(w, http.StatusOK, platformTenantWebhookResponse(row))
 }

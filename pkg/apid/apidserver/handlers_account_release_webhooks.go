@@ -76,7 +76,7 @@ func (s *server) accountReleaseWebhookByRequest(w http.ResponseWriter, r *http.R
 func accountReleaseWebhookResponse(row state.AppWebhook) api.AccountReleaseWebhookResponse {
 	return api.AccountReleaseWebhookResponse{
 		ID: row.ID, Scope: string(state.AppWebhookScopeAccount), AccountID: row.AccountID,
-		TargetURL: row.TargetURL, WebhookSecretSealedMasked: api.AppWebhookSecretMasked,
+		TargetURL: api.RedactURLUserinfo(row.TargetURL), WebhookSecretSealedMasked: api.AppWebhookSecretMasked,
 		EventFilter: row.EventFilter, RetryPolicy: string(row.RetryPolicy),
 		DeliveryFormat: string(row.DeliveryFormat), Enabled: row.Enabled,
 		CreatedAt: api.FormatAlertTime(row.CreatedAt), UpdatedAt: api.FormatAlertTime(row.UpdatedAt),
@@ -123,7 +123,7 @@ func (s *server) createAccountReleaseWebhook(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	s.audit.Emit(r.Context(), "account.release_webhook_created", &acct.ID, map[string]any{
-		"webhook_id": row.ID, "target_url": row.TargetURL, "event_filter": row.EventFilter,
+		"webhook_id": row.ID, "target_url": api.RedactURLUserinfo(row.TargetURL), "event_filter": row.EventFilter,
 	})
 	writeJSON(w, http.StatusCreated, accountReleaseWebhookResponse(row))
 }
@@ -220,7 +220,7 @@ func (s *server) updateAccountReleaseWebhook(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	s.audit.Emit(r.Context(), "account.release_webhook_updated", &acct.ID, map[string]any{
-		"webhook_id": row.ID, "target_url": row.TargetURL, "enabled": row.Enabled,
+		"webhook_id": row.ID, "target_url": api.RedactURLUserinfo(row.TargetURL), "enabled": row.Enabled,
 	})
 	writeJSON(w, http.StatusOK, accountReleaseWebhookResponse(row))
 }
@@ -280,7 +280,7 @@ func (s *server) deleteAccountReleaseWebhook(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	s.audit.Emit(r.Context(), "account.release_webhook_deleted", &acct.ID, map[string]any{
-		"webhook_id": row.ID, "target_url": row.TargetURL,
+		"webhook_id": row.ID, "target_url": api.RedactURLUserinfo(row.TargetURL),
 	})
 	w.WriteHeader(http.StatusNoContent)
 }
