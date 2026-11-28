@@ -204,3 +204,22 @@ func TestEnabledByRuleCountsOnlyARuleOrOptIn(t *testing.T) {
 		t.Error("a nil decider names no account")
 	}
 }
+
+// interactive-app-sessions inherits app-tasks' flag: an account the app_tasks
+// rule admits gets it with no rule of its own, and nobody else does.
+func TestInheritingSubFeatureHasNoFlagAndFollowsItsParent(t *testing.T) {
+	if _, ok := platformflags.CapabilityFlag("interactive-app-sessions"); ok {
+		t.Fatal("interactive-app-sessions must not have a flag of its own")
+	}
+	on := true
+	set := platformflags.NewSet(map[string]platformflags.Definition{
+		flagKey(t, "app-tasks"): {Enabled: true, Rules: []platformflags.Rule{{ID: "beta", Accounts: []string{"acct-1"}, Value: &on}}},
+	})
+	d := load(t, set)
+	if !d.Enabled("interactive-app-sessions", platformflags.Subject{AccountID: "acct-1"}) {
+		t.Error("an account app_tasks admits must get interactive-app-sessions")
+	}
+	if d.Enabled("interactive-app-sessions", platformflags.Subject{AccountID: "acct-2"}) {
+		t.Error("an account app_tasks does not admit must not get interactive-app-sessions")
+	}
+}
