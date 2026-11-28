@@ -371,3 +371,11 @@ The app's dashboard page links to the same history under **View task
 history**. Only the tail of the output is kept, up to the task's
 `--max-output-bytes`; interactive sessions record the command and exit code,
 never the terminal output.
+
+Each task runs in its own VM of the app's size, so an account can have only
+so many queued or running at once: 2 on Free, 4 on Hobby, 10 on Pro and 25 on
+Scale, counted across all its apps. `app exec`, interactive sessions,
+`app cp` and `app port-forward` count; release commands, command crons and
+`bindings verify` probes do not. A task over the cap is refused with
+`429 plan_limit_app_tasks`, which names the limit and how many are active;
+wait for one to finish or cancel one with `gregale app tasks cancel`.
