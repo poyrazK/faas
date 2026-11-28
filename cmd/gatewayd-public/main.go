@@ -254,6 +254,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	edgeRedirectAddr, err := edgeHTTPRedirectAddr(edgeTLS, os.Getenv)
+	if err != nil {
+		return err
+	}
 	edgeLimits, err := edgeClientLimitsFromEnv(edgeMode, os.Getenv)
 	if err != nil {
 		return err
@@ -919,6 +923,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return err
 		}
 	}
+	// ADR-20261127170000: plain HTTP on the entry addresses is redirected.
+	stopRedirect, err := startEdgeHTTPRedirect(ctx, edgeRedirectAddr, domains.Platform, log)
+	if err != nil {
+		listeners.close()
+		return err
+	}
+	defer stopRedirect()
 	notifyStop := wire.NotifyReadyWhen(ctx, probe.ReadyFunc())
 	defer notifyStop()
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), opsMetrics, log)()

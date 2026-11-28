@@ -939,6 +939,18 @@ it:
 gregale consumers signup-set my-mcp --display-name "Search tools" --plans free,pro --free-plan free --oauth-consumers
 ```
 
+Gregale must check the tokens itself to know who is calling. With
+`oauth-proxy` it does. A server made with `--auth external-oauth` checks
+tokens in its own code, so also hand that check to Gregale, from the
+server's source directory:
+
+```bash
+gregale mcp policy --path . --name my-mcp
+```
+
+Without it, callers are served but never become customers and are not
+metered. `gregale edge rule list my-mcp` shows the `jwt` rule it adds.
+
 - **Who they are.** A customer is the token's issuer and subject: the same
   person signing in again is the same consumer. The token's `email`, when it
   has one, names the consumer; it is never used to match one.

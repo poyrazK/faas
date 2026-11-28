@@ -7528,6 +7528,9 @@ func (s *server) usageSummary(w http.ResponseWriter, r *http.Request, acct state
 			"Bad month", "expected YYYY-MM"))
 		return
 	}
+	if writeFutureUsageMonth(w, month, monthStr) {
+		return
+	}
 	summary, err := s.buildUsageSummary(r.Context(), acct, monthStr, month)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not load usage"))
@@ -7734,6 +7737,9 @@ func (s *server) accountUsage(w http.ResponseWriter, r *http.Request, acct state
 	if err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Bad month", "expected YYYY-MM"))
+		return
+	}
+	if writeFutureUsageMonth(w, month, monthStr) {
 		return
 	}
 	compute, err := s.buildUsageSummary(r.Context(), acct, monthStr, month)
@@ -8760,4 +8766,18 @@ func appUpdateUnavailable(err error) *api.Problem {
 			WithHeader("Retry-After", "5")
 	}
 	return api.ErrCapacity("could not update app")
+}
+
+// writeFutureUsageMonth refuses a month that has not started. `billing usage
+// summary --month 2099-01` answered zero usage with "Included: 0 GB-hours",
+// an allowance no plan has, because no plan history reaches that month
+// (prod hunt r69).
+func writeFutureUsageMonth(w http.ResponseWriter, month time.Time, monthStr string) bool {
+	current := time.Now().UTC().Format("2006-01")
+	if month.Format("2006-01") <= current {
+		return false
+	}
+	api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+		"Bad month", fmt.Sprintf("month %s has not started; the latest month with usage is %s", monthStr, current)))
+	return true
 }

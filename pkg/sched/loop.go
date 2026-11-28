@@ -2213,6 +2213,20 @@ const maxConcurrentPrimes = api.SnapshotPrimeConcurrentSlots
 
 const maxSnapshotPrimeAttempts = 2
 
+// finalPrimeAttemptKey marks the context of dispatchPrime's last attempt, so a
+// transient capture failure there activates the release without a snapshot
+// instead of failing it (prod hunt r71).
+type finalPrimeAttemptKey struct{}
+
+func withFinalPrimeAttempt(ctx context.Context) context.Context {
+	return context.WithValue(ctx, finalPrimeAttemptKey{}, true)
+}
+
+func finalPrimeAttempt(ctx context.Context) bool {
+	final, _ := ctx.Value(finalPrimeAttemptKey{}).(bool)
+	return final
+}
+
 // maxPrimeRuntimeValuesRetries bounds how often a prime boots again because
 // the app's config or secrets changed while it booted.
 const maxPrimeRuntimeValuesRetries = 3

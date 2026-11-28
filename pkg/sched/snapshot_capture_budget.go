@@ -67,19 +67,3 @@ func (w *Watchdog) snapshotCaptureBudget(ctx context.Context, ins state.Instance
 	}
 	return SnapshotCaptureBudget(ins.RAMMB, dep.RootfsBytes)
 }
-
-type finalPrimeAttemptKey struct{}
-
-// withFinalPrimeAttempt marks the last prime attempt dispatchPrime makes.
-func withFinalPrimeAttempt(ctx context.Context) context.Context {
-	return context.WithValue(ctx, finalPrimeAttemptKey{}, true)
-}
-
-// finalPrimeAttempt reports whether no prime retry follows this attempt.
-// A capture failure the retry would otherwise absorb then activates the
-// deployment without a snapshot (ADR-005), instead of failing a release
-// whose app booted healthy.
-func finalPrimeAttempt(ctx context.Context) bool {
-	final, _ := ctx.Value(finalPrimeAttemptKey{}).(bool)
-	return final
-}

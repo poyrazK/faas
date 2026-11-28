@@ -3295,3 +3295,8 @@ func SetDoctorBootMemorySources(cleanup func(func()), plan func(context.Context)
 	doctorImagePlanLimits, doctorBootAppInfo = plan, appInfo
 	cleanup(func() { doctorImagePlanLimits, doctorBootAppInfo = oldPlan, oldApp })
 }
+
+// RunDeployBootCheck runs `deploy --local-image IMAGE --boot`'s check alone.
+func RunDeployBootCheck(ctx context.Context, image string) int {
+	return runDeployBootCheck(ctx, deployBootFlags{image: image, app: "demo"})
+}
