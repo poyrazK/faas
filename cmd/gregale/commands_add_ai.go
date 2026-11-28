@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -16,12 +17,17 @@ import (
 // addAIResult is the --json shape of `gregale add ai` (ADR 20261027132936).
 // It never contains the provider key.
 type addAIResult struct {
-	App                string            `json:"app"`
-	IntegrationID      string            `json:"integration_id"`
-	Provider           string            `json:"provider"`
-	IntegrationCreated bool              `json:"integration_created"`
-	KeyStored          bool              `json:"key_stored"`
-	Env                map[string]string `json:"env,omitempty"`
+	App                string `json:"app"`
+	IntegrationID      string `json:"integration_id"`
+	Provider           string `json:"provider"`
+	IntegrationCreated bool   `json:"integration_created"`
+	KeyStored          bool   `json:"key_stored"`
+	// KeyKept reports a key found in the provider's usual variable that was
+	// not stored because the integration was reused and no key flag asked.
+	KeyKept bool `json:"key_kept,omitempty"`
+	// BaseURLKept reports the app's existing GREGALE_AI_BASE_URL left as is.
+	BaseURLKept bool              `json:"base_url_kept,omitempty"`
+	Env         map[string]string `json:"env,omitempty"`
 }
 
 // addAIProvider is how `gregale add ai` sets up one provider: its origin,
@@ -118,6 +124,10 @@ func cmdAddAI(args []string) int {
 		return printErr("Provider key unavailable", err)
 	}
 	plan.key = key
+	// A key named by a flag replaces a reused integration's key; one found in
+	// the provider's usual variable only keys a new integration (prod hunt
+	// 2026-11-28: binding a second app replaced the key every app shared).
+	plan.keyExplicit = *keyEnv != "" || *keyStdin || *keyFile != ""
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -136,6 +146,16 @@ func cmdAddAI(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "%s AI integration %s (%s) and bound it to %s\n", action, result.IntegrationID, result.Provider, result.App)
 	if result.KeyStored {
 		_, _ = fmt.Fprintln(osStdout, "Stored the provider key; Gregale seals it and never returns it")
+	} else if result.KeyKept {
+		flagName := "--key-env NAME"
+		if setup.keyEnv != "" {
+			flagName = "--key-env " + setup.keyEnv
+		}
+		_, _ = fmt.Fprintf(osStdout, "Kept the integration's stored key; pass %s (or --key-stdin, --key-file) to replace it for every app it serves\n", flagName)
+	}
+	if result.BaseURLKept {
+		_, _ = fmt.Fprintf(osStdout, "Kept the app's GREGALE_AI_BASE_URL, which may name another integration; this one is at %s\n",
+			addAIProviderBaseURLKey(result.Provider))
 	}
 	for _, key := range sortedKeys(result.Env) {
 		_, _ = fmt.Fprintf(osStdout, "Set %s=%s\n", key, result.Env[key])
@@ -228,22 +248,27 @@ type addAIPlan struct {
 	origin                             string
 	prefixes                           []string
 	key, scope                         string
-	setEnv                             bool
+	// keyExplicit marks a key named by --key-env, --key-stdin or
+	// --key-file: only such a key replaces a reused integration's.
+	keyExplicit bool
+	setEnv      bool
 }
 
 // apply creates or reuses the integration, stores the key, binds the app and
 // sets its SDK settings. A rerun reuses the AI integration of the same name.
 func (p addAIPlan) apply(ctx context.Context, client *api.Client) (addAIResult, error) {
 	result := addAIResult{App: p.app, Provider: p.provider, IntegrationID: p.integrationID}
-	if result.IntegrationID == "" {
-		offers, err := client.ListOutboundIntegrationOffers(ctx)
-		if err != nil {
-			return result, fmt.Errorf("list integrations: %w", err)
-		}
-		for _, offer := range offers.Items {
-			if offer.Name == p.name && offer.AIProvider == p.provider {
-				result.IntegrationID = offer.ID
-			}
+	offers, err := client.ListOutboundIntegrationOffers(ctx)
+	if err != nil {
+		return result, fmt.Errorf("list integrations: %w", err)
+	}
+	// A reused integration whose key was never stored (an earlier run failed
+	// after creating it) takes the key like a new one. An --integration ID
+	// the list lacks is taken to have one.
+	credentialConfigured := true
+	for _, offer := range offers.Items {
+		if (result.IntegrationID == "" && offer.Name == p.name && offer.AIProvider == p.provider) || offer.ID == p.integrationID {
+			result.IntegrationID, credentialConfigured = offer.ID, offer.CredentialConfigured
 		}
 	}
 	if result.IntegrationID == "" {
@@ -256,17 +281,32 @@ func (p addAIPlan) apply(ctx context.Context, client *api.Client) (addAIResult, 
 		}
 		result.IntegrationID, result.IntegrationCreated = created.ID, true
 	}
-	if p.key != "" {
+	switch {
+	case p.key != "" && (result.IntegrationCreated || p.keyExplicit || !credentialConfigured):
 		if err := client.PutOutboundCredential(ctx, result.IntegrationID, p.key); err != nil {
 			return result, fmt.Errorf("store the provider key: %w", err)
 		}
 		result.KeyStored = true
+	case p.key != "":
+		result.KeyKept = true
+	}
+	keepBaseURL := false
+	if p.setEnv {
+		keep, err := addAIKeepsBaseURL(ctx, client, p, result.IntegrationID)
+		if err != nil {
+			return result, err
+		}
+		keepBaseURL = keep
 	}
 	if _, err := client.BindOutboundIntegration(ctx, p.app, result.IntegrationID); err != nil {
 		return result, fmt.Errorf("bind the integration to %s: %w", p.app, err)
 	}
 	if p.setEnv {
 		result.Env = addAIEnv(p.provider, result.IntegrationID)
+		if keepBaseURL {
+			delete(result.Env, "GREGALE_AI_BASE_URL")
+			result.BaseURLKept = true
+		}
 		for _, key := range sortedKeys(result.Env) {
 			if err := client.SetSecretWithScope(ctx, p.app, key, result.Env[key], p.scope); err != nil {
 				return result, fmt.Errorf("set %s: %w", key, err)
@@ -274,6 +314,30 @@ func (p addAIPlan) apply(ctx context.Context, client *api.Client) (addAIResult, 
 		}
 	}
 	return result, nil
+}
+
+// addAIKeepsBaseURL reports whether the app keeps its GREGALE_AI_BASE_URL.
+// It names one integration: an app that has it and is still bound to
+// another provider's AI integration keeps it, so binding a second provider
+// does not move the first one's calls (prod hunt 2026-11-28). With no such
+// binding (the same provider again, or the integration it named was
+// removed) it is pointed at this integration. Each provider's own
+// GREGALE_AI_<PROVIDER>_BASE_URL is always set.
+func addAIKeepsBaseURL(ctx context.Context, client *api.Client, p addAIPlan, integrationID string) (bool, error) {
+	existing, err := client.ListSecretsWithScope(ctx, p.app, p.scope)
+	if err != nil {
+		return false, fmt.Errorf("list %s settings: %w", p.app, err)
+	}
+	if !slices.ContainsFunc(existing.Secrets, func(s api.AppSecretResponse) bool { return s.Key == "GREGALE_AI_BASE_URL" }) {
+		return false, nil
+	}
+	bindings, err := client.ListOutboundAppBindings(ctx, p.app)
+	if err != nil {
+		return false, fmt.Errorf("list %s integrations: %w", p.app, err)
+	}
+	return slices.ContainsFunc(bindings.Items, func(b api.OutboundAppBinding) bool {
+		return b.Integration.ID != integrationID && b.Integration.AIProvider != "" && b.Integration.AIProvider != p.provider
+	}), nil
 }
 
 // addAIPlaceholderKey stands in for the provider key in the app: the
@@ -284,7 +348,7 @@ const addAIPlaceholderKey = "gregale-managed"
 // relay path and, for OpenAI and Anthropic, the variables their SDKs read.
 func addAIEnv(provider, integrationID string) map[string]string {
 	base := api.OutboundRelayURL + "/i/" + integrationID
-	env := map[string]string{"GREGALE_AI_BASE_URL": base}
+	env := map[string]string{"GREGALE_AI_BASE_URL": base, addAIProviderBaseURLKey(provider): base}
 	switch provider {
 	case api.OutboundAIProviderOpenAI:
 		env["OPENAI_BASE_URL"], env["OPENAI_API_KEY"] = base+"/v1", addAIPlaceholderKey
@@ -292,6 +356,12 @@ func addAIEnv(provider, integrationID string) map[string]string {
 		env["ANTHROPIC_BASE_URL"], env["ANTHROPIC_API_KEY"] = base, addAIPlaceholderKey
 	}
 	return env
+}
+
+// addAIProviderBaseURLKey is the variable naming one provider's
+// integration, such as GREGALE_AI_ANTHROPIC_BASE_URL.
+func addAIProviderBaseURLKey(provider string) string {
+	return "GREGALE_AI_" + strings.ToUpper(provider) + "_BASE_URL"
 }
 
 // addAIProductionScope reports whether the SDK settings' scope is one the

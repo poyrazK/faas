@@ -381,7 +381,10 @@ end user (`X-Gregale-AI-User`) has their own answers;
 | Response | Meaning |
 | --- | --- |
 | `403 outbound_ai_model_unpriced` | A cost cap applies to the call and its model has no price, so the cap could not count it. Add the model to the integration's price list (`gregale ai prices`), or let such calls through outside the cost caps with `--allow-unmetered on`. |
-| `429` with `X-Gregale-Outbound-Rejection` | A cap or rate limit was reached; `Retry-After` says when it resets. Trace limits (`trace_call_limit`, `trace_cost_limit`, `trace_tool_loop`) never reset: start a new trace. |
+| `429 outbound_budget_exhausted` | A token or cost cap is spent; `Retry-After` says when it resets. When calls in flight hold the rest of the budget, `Retry-After` is a few seconds. Trace limits (`trace_call_limit`, `trace_cost_limit`, `trace_tool_loop`) never reset: start a new trace. `X-Gregale-Outbound-Rejection` names the cap. |
+| `429 outbound_ai_reservation_exceeds_budget` | The budget is not spent, but this call's reservation does not fit what is left. A call reserves its output ceiling for every answer it asks for (`n`, `best_of`, `candidateCount`), or its model's longest response when it names none, and its model's context window when it continues stored context (`previous_response_id`, a conversation, cached content, an uploaded file). Set a smaller `max_tokens` or fewer answers; there is no `Retry-After`, as the same call would be refused until the cap resets. |
+| `429 outbound_rate_limited` | A rate, concurrency, requests-per-minute or tokens-per-minute limit was reached; retry after `Retry-After`. |
+| `429 outbound_provider_cooldown` | The provider is cooling down after failing calls or asked the gateway to wait; retry after `Retry-After`. |
 | `404 outbound_ai_call_not_found` | Feedback named a call that is not in the integration's request log, or that another app made. |
 | `400 outbound_ai_trace_invalid` | `X-Gregale-AI-Trace` is empty, longer than 64 characters or has a character outside `A-Z a-z 0-9 . _ : @ + = / \| -`. |
 | `400 outbound_ai_content_blocked` | The content policy blocked the request. The problem names the detector, never the content. |
@@ -412,7 +415,7 @@ end user (`X-Gregale-AI-User`) has their own answers;
 | `400 outbound_ai_batch_unreadable` | The gateway could not read the batch's requests to size them against your caps. |
 | `413 outbound_ai_batch_too_large` | The batch is larger than the gateway can size. |
 | `403 outbound_ai_realtime_policy_unenforceable` | The integration's content policy checks requests or responses, which a realtime session's audio cannot be checked against. |
-| Realtime `error` event, then close code `1008` | A cap refused the session's next response (`outbound_budget_exhausted`), the session reached its one-hour limit, or the provider sent a message the gateway could not read. |
+| Realtime `error` event, then close code `1008` | A cap or limit refused the session's next response (the codes of the `429` rows above), the session reached its one-hour limit, or the provider sent a message the gateway could not read. |
 
 A model with no price in the integration's list or the built-in catalog
 costs nothing in usage reports; under a cost cap it is refused (above).

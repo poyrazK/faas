@@ -18,10 +18,12 @@ import (
 // fakeAddAIAPI is an in-memory apid for the routes `gregale add ai` uses
 // (ADR 20261027132936). It records every mutating call with its body.
 type fakeAddAIAPI struct {
-	mu     sync.Mutex
-	offers []api.OutboundIntegrationOffer
-	calls  []string
-	bodies []map[string]any
+	mu       sync.Mutex
+	offers   []api.OutboundIntegrationOffer
+	secrets  []string
+	bindings []api.OutboundAppBinding
+	calls    []string
+	bodies   []map[string]any
 }
 
 func (f *fakeAddAIAPI) serve(t *testing.T) {
@@ -39,6 +41,14 @@ func (f *fakeAddAIAPI) serve(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/outbound/integrations":
 			_ = json.NewEncoder(w).Encode(api.OutboundIntegrationOfferList{Items: f.offers})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/shop/secrets":
+			var list api.AppSecretListResponse
+			for _, key := range f.secrets {
+				list.Secrets = append(list.Secrets, api.AppSecretResponse{Key: key})
+			}
+			_ = json.NewEncoder(w).Encode(list)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/shop/outbound-bindings":
+			_ = json.NewEncoder(w).Encode(api.OutboundAppBindingList{Items: f.bindings})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/outbound/integrations":
 			_ = json.NewEncoder(w).Encode(api.OutboundIntegrationOffer{ID: "int-1", Name: "openai", AIProvider: "openai"})
 		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/v1/apps/shop/outbound-bindings/"):
@@ -62,11 +72,12 @@ func TestCmdAddAICreatesBindsAndPointsTheSDK(t *testing.T) {
 		t.Fatalf("add ai = %d, want 0", code)
 	}
 	want := "POST /v1/outbound/integrations,PUT /v1/outbound/integrations/int-1/credential,PUT /v1/apps/shop/outbound-bindings/int-1," +
-		"PUT /v1/apps/shop/secrets/GREGALE_AI_BASE_URL,PUT /v1/apps/shop/secrets/OPENAI_API_KEY,PUT /v1/apps/shop/secrets/OPENAI_BASE_URL"
+		"PUT /v1/apps/shop/secrets/GREGALE_AI_BASE_URL,PUT /v1/apps/shop/secrets/GREGALE_AI_OPENAI_BASE_URL," +
+		"PUT /v1/apps/shop/secrets/OPENAI_API_KEY,PUT /v1/apps/shop/secrets/OPENAI_BASE_URL"
 	if got := strings.Join(f.calls, ","); got != want {
 		t.Fatalf("calls = %s\nwant    %s", got, want)
 	}
-	create, credential, baseURL := f.bodies[0], f.bodies[1], f.bodies[5]
+	create, credential, baseURL := f.bodies[0], f.bodies[1], f.bodies[6]
 	if create["ai_provider"] != "openai" || create["origin"] != "https://api.openai.com" || create["name"] != "openai" {
 		t.Fatalf("create body = %v", create)
 	}
@@ -79,6 +90,35 @@ func TestCmdAddAICreatesBindsAndPointsTheSDK(t *testing.T) {
 }
 
 func TestCmdAddAIReusesTheIntegrationOfTheSameName(t *testing.T) {
+	f := &fakeAddAIAPI{offers: []api.OutboundIntegrationOffer{{ID: "int-9", Name: "anthropic", AIProvider: "anthropic", CredentialConfigured: true}}}
+	f.serve(t)
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+	_ = captureAddDatadogStdout(t)
+
+	// Prod hunt 2026-11-28: the key in the provider's usual variable does not
+	// replace a reused integration's key, which other apps share.
+	if code := main.CmdAdd([]string{"ai", "--app", "shop", "--provider", "anthropic", "--no-env"}); code != 0 {
+		t.Fatalf("add ai = %d, want 0", code)
+	}
+	if got := strings.Join(f.calls, ","); got != "PUT /v1/apps/shop/outbound-bindings/int-9" {
+		t.Fatalf("calls = %s; want the existing integration reused with its key and no settings set", got)
+	}
+	// A key flag replaces it.
+	f.calls, f.bodies = nil, nil
+	if code := main.CmdAdd([]string{"ai", "--app", "shop", "--provider", "anthropic", "--no-env", "--key-env", "ANTHROPIC_API_KEY"}); code != 0 {
+		t.Fatalf("add ai --key-env = %d, want 0", code)
+	}
+	if got := strings.Join(f.calls, ","); got != "PUT /v1/outbound/integrations/int-9/credential,PUT /v1/apps/shop/outbound-bindings/int-9" {
+		t.Fatalf("calls = %s; want the key replaced", got)
+	}
+	if f.bodies[0]["authorization"] != "sk-ant-test" {
+		t.Fatalf("credential body = %v; want the raw Anthropic key", f.bodies[0])
+	}
+}
+
+// Review of #8198: a reused integration whose key was never stored (an
+// earlier run failed after creating it) takes the key from the usual variable.
+func TestCmdAddAIStoresTheKeyOfAnIntegrationWithoutOne(t *testing.T) {
 	f := &fakeAddAIAPI{offers: []api.OutboundIntegrationOffer{{ID: "int-9", Name: "anthropic", AIProvider: "anthropic"}}}
 	f.serve(t)
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
@@ -88,10 +128,30 @@ func TestCmdAddAIReusesTheIntegrationOfTheSameName(t *testing.T) {
 		t.Fatalf("add ai = %d, want 0", code)
 	}
 	if got := strings.Join(f.calls, ","); got != "PUT /v1/outbound/integrations/int-9/credential,PUT /v1/apps/shop/outbound-bindings/int-9" {
-		t.Fatalf("calls = %s; want the existing integration reused and no settings set", got)
+		t.Fatalf("calls = %s; want the missing key stored", got)
 	}
-	if f.bodies[0]["authorization"] != "sk-ant-test" {
-		t.Fatalf("credential body = %v; want the raw Anthropic key", f.bodies[0])
+}
+
+// Prod hunt 2026-11-28: binding a second provider moved the app's
+// GREGALE_AI_BASE_URL off the first one; an existing one is kept and each
+// provider has its own variable.
+func TestCmdAddAIKeepsAnExistingBaseURL(t *testing.T) {
+	f := &fakeAddAIAPI{secrets: []string{"GREGALE_AI_BASE_URL", "OPENAI_BASE_URL"},
+		bindings: []api.OutboundAppBinding{{Integration: api.OutboundIntegrationOffer{ID: "int-0", AIProvider: "openai"}}}}
+	f.serve(t)
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+	out := captureAddDatadogStdout(t)
+
+	if code := main.CmdAdd([]string{"ai", "--app", "shop", "--provider", "anthropic"}); code != 0 {
+		t.Fatalf("add ai = %d, want 0", code)
+	}
+	got := strings.Join(f.calls, ",")
+	if strings.Contains(got, "/secrets/GREGALE_AI_BASE_URL") || !strings.Contains(got, "/secrets/GREGALE_AI_ANTHROPIC_BASE_URL") ||
+		!strings.Contains(got, "/secrets/ANTHROPIC_BASE_URL") {
+		t.Fatalf("calls = %s; want GREGALE_AI_BASE_URL kept and the Anthropic variables set", got)
+	}
+	if text := out.String(); !strings.Contains(text, "Kept the app's GREGALE_AI_BASE_URL") {
+		t.Fatalf("output = %q; want the kept variable named", text)
 	}
 }
 
@@ -128,5 +188,23 @@ func TestCmdAddAIRefusesNonProductionScope(t *testing.T) {
 	}
 	if len(f.calls) != 0 {
 		t.Fatalf("calls = %v; want nothing changed", f.calls)
+	}
+}
+
+// Review of #8198: GREGALE_AI_BASE_URL is kept only while the app is bound to
+// another provider's AI integration; otherwise (the integration it named was
+// removed, or the same provider again) it moves to the new integration.
+func TestCmdAddAIRepointsABaseURLNoOtherProviderUses(t *testing.T) {
+	f := &fakeAddAIAPI{secrets: []string{"GREGALE_AI_BASE_URL"},
+		bindings: []api.OutboundAppBinding{{Integration: api.OutboundIntegrationOffer{ID: "int-old", AIProvider: "openai"}}}}
+	f.serve(t)
+	t.Setenv("OPENAI_API_KEY", "sk-test")
+	_ = captureAddDatadogStdout(t)
+
+	if code := main.CmdAdd([]string{"ai", "--app", "shop", "--provider", "openai"}); code != 0 {
+		t.Fatalf("add ai = %d, want 0", code)
+	}
+	if got := strings.Join(f.calls, ","); !strings.Contains(got, "/secrets/GREGALE_AI_BASE_URL") {
+		t.Fatalf("calls = %s; want GREGALE_AI_BASE_URL pointed at the new integration", got)
 	}
 }
