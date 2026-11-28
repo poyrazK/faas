@@ -184,7 +184,8 @@ client, never one that adds your Gregale credentials. For a download, request
 
 - URLs last five minutes by default and at most fifteen.
 - A PUT URL writes once: a retry of the same URL after success returns the
-  saved result instead of writing again.
+  saved result instead of writing again. A second PUT with a different size or
+  content gets `409 OperationAborted`; request a new URL to write again.
 - Each URL reserves storage when it is issued, so do not retry the issuing call
   automatically.
 - Revoking the API key or its bucket grant stops URLs that have not been used.
