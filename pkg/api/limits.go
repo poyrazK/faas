@@ -2122,9 +2122,38 @@ const (
 	MCPListingToolTitleMax           = 128
 	MCPListingToolDescriptionMax     = 1024
 	MCPListingEndpointMax            = 2048
-	MCPListingRequestMaxBytes        = 512 << 10
+	MCPListingRequestMaxBytes        = 1536 << 10
 	MCPListingRegistryDescriptionMax = 100
 	MCPListingToolsMaxBytes          = 256000
+	// Tool contract gate (ADR-20261127191645): the catalog contract a
+	// listing is published with is at most MCPListingContractMaxBytes of
+	// canonical JSON, below the 2 MiB CHECK on mcp_listings.contract and
+	// mcp_contract_checks.candidate. An override admits one candidate for
+	// MCPContractOverrideDefaultTTL unless asked for less or more, between
+	// MCPContractOverrideMinTTL and MCPContractOverrideMaxTTL; an app holds
+	// at most MCPContractOverrideOpenCap open overrides (one bound to a
+	// deployment that ended no longer counts). The owner view lists the
+	// newest MCPContractChecksMax checks; the public changelog the newest
+	// MCPContractChangelogMax accepted changes. A check stores at most
+	// MCPContractChangesMax changes in at most MCPContractChangesMaxBytes
+	// (the column allows 262,144 bytes of jsonb text). An override request
+	// body is at most MCPContractOverrideRequestMaxBytes. The gate spends at
+	// most MCPContractGateBudget opening one candidate's session, probe
+	// secret and catalog, and a refused deploy's failure detail names at
+	// most MCPContractBreakingSummaryMax breaking changes.
+	MCPContractChangesMax              = 200
+	MCPContractGateBudget              = 45 * time.Second
+	MCPContractBreakingSummaryMax      = 8
+	MCPContractOverrideMinTTL          = time.Minute
+	MCPContractChangesMaxBytes         = 120_000
+	MCPContractOverrideRequestMaxBytes = 8 << 10
+	MCPListingContractMaxBytes         = 1_000_000
+	MCPContractOverrideDefaultTTL      = time.Hour
+	MCPContractOverrideMaxTTL          = 24 * time.Hour
+	MCPContractOverrideOpenCap         = 5
+	MCPContractReasonMax               = 512
+	MCPContractChecksMax               = 20
+	MCPContractChangelogMax            = 20
 )
 
 // Consumer and platform tenant controls (ADR-1314, ADR-1315, ADR-1322,

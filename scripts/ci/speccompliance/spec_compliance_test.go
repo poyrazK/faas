@@ -2285,6 +2285,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "consumer_signup.go"),  // ADR-20261021143000 consumer self-service sign-up
 		filepath.Join(root, "pkg", "api", "mcp_seller_stats.go"), // ADR-20261126082046 seller stats
 		filepath.Join(root, "pkg", "api", "mcp_listing.go"),      // ADR-20261126175800 server listing
+		filepath.Join(root, "pkg", "api", "mcp_contract.go"),     // ADR-20261127191645 tool contract gate
 		filepath.Join(root, "pkg", "api", "consumer_credit_packs.go"),
 		filepath.Join(root, "pkg", "api", "consumer_credits.go"),      // ADR-1306 prepaid credit and spend caps
 		filepath.Join(root, "pkg", "api", "platform_tenant_plans.go"), // ADR-1307 tenant plans

@@ -3435,6 +3435,7 @@
         "/dashboard/mcp",
         "/v1/apps/{}/deployments/{}/instances/{}/mcp-health",
         "/v1/apps/{}/deployments/{}/instances/{}/mcp-probe",
+        "/v1/apps/{}/mcp-contract",
         "/v1/apps/{}/mcp-listing",
         "/v1/deployments/{}/mcp-admissions",
         "/v1/mcp",
