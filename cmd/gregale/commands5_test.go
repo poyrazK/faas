@@ -894,20 +894,20 @@ func TestCmdEnvPush_StrictMode_PropagatesLine(t *testing.T) {
 	}
 }
 
-// TestCmdEnvPush_DefaultScan_PointsAtEnvSet pins where the default scan
-// sends detected secrets: `gregale env set`, not --secret-scan=off. The
-// override-only message taught a coding agent to turn the scan off for a
-// real credential (agent eval rc.357, Django task).
-func TestCmdEnvPush_DefaultScan_PointsAtEnvSet(t *testing.T) {
+// TestCmdEnvPush_DefaultScan_SealsDetectedSecrets pins that the default
+// scan no longer drops credentials: env push writes only to the sealed
+// store, so a detected Stripe key is pushed and reported as sealed. The old
+// drop left the app without the key the .env was pushed to deliver and told
+// the caller to resend the same file through `env set`.
+func TestCmdEnvPush_DefaultScan_SealsDetectedSecrets(t *testing.T) {
 	stripeKey := "STRIPE_SECRET_KEY=" + "sk_live_" + "aBcDeFgHiJkLmNoPqRsTuVwXyZ" + "_XXXX" + "\n"
 	for _, tc := range []struct {
 		name     string
 		body     string
-		wantCode int
 		wantPuts []string
 	}{
-		{name: "all secrets", body: stripeKey, wantCode: 1},
-		{name: "mixed", body: "PORT=8080\n" + stripeKey, wantCode: 0, wantPuts: []string{"PORT"}},
+		{name: "all secrets", body: stripeKey, wantPuts: []string{"STRIPE_SECRET_KEY"}},
+		{name: "mixed", body: "PORT=8080\n" + stripeKey, wantPuts: []string{"PORT", "STRIPE_SECRET_KEY"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			envFile := filepath.Join(t.TempDir(), ".env")
@@ -935,17 +935,20 @@ func TestCmdEnvPush_DefaultScan_PointsAtEnvSet(t *testing.T) {
 			osStderr = &stderr
 			defer func() { osStderr = origStderr }()
 
-			if code := envPush([]string{"--app", "hello", "-f", envFile}); code != tc.wantCode {
-				t.Fatalf("envPush = %d, want %d; stderr: %s", code, tc.wantCode, stderr.String())
+			if code := envPush([]string{"--app", "hello", "-f", envFile}); code != 0 {
+				t.Fatalf("envPush = %d, want 0; stderr: %s", code, stderr.String())
 			}
 			if strings.Join(puts, ",") != strings.Join(tc.wantPuts, ",") {
 				t.Errorf("PUT keys = %v, want %v", puts, tc.wantPuts)
 			}
-			if want := "gregale env set --app hello --file " + envFile; !strings.Contains(stderr.String(), want) {
-				t.Errorf("stderr should point at %q; got: %q", want, stderr.String())
+			if !strings.Contains(stderr.String(), "STRIPE_SECRET_KEY") || !strings.Contains(stderr.String(), "sealed") {
+				t.Errorf("stderr should say the detected key was sealed; got: %q", stderr.String())
 			}
-			if strings.Contains(stderr.String(), "Use --secret-scan=off to override") {
-				t.Errorf("stderr still offers the scan override as the fix: %q", stderr.String())
+			if strings.Contains(stderr.String(), "skipped") || strings.Contains(stderr.String(), "secret-scan=off") {
+				t.Errorf("stderr still describes a dropped pair or the scan override: %q", stderr.String())
+			}
+			if strings.Contains(stderr.String(), "aBcDeFgHiJkLmNoPqRsTuVwXyZ") {
+				t.Errorf("stderr leaked the secret value: %q", stderr.String())
 			}
 		})
 	}

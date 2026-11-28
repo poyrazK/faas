@@ -4969,7 +4969,7 @@ var cliCommands = []cliCommand{
 				{Name: "f", ShortName: "f", Short: "input file (default .env)", Value: "PATH"},
 				{Name: "from-stdin", Short: "read KEY=VALUE pairs from stdin"},
 				{Name: "restart", Short: "restart app after applying changes (otherwise changes apply on next cold wake)"},
-				{Name: "secret-scan", Short: "scan pairs before pushing", Value: "MODE", ClosedSet: []string{"on", "off", "strict", "source-tree"}},
+				{Name: "secret-scan", Short: "note pairs that look like credentials (all values are sealed)", Value: "MODE", ClosedSet: []string{"on", "off", "strict", "source-tree"}},
 				{Name: "no-guard", Short: "do not open a config guard for these changes", Bool: true},
 			}},
 			{Name: "diff", Short: "Render the env-diff matrix (presence / value-equality across scopes)", Examples: []string{"gregale env diff --app my-api", "gregale env diff --app my-api --json"}, Flags: []cliFlag{

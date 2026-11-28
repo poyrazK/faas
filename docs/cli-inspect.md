@@ -113,9 +113,10 @@ Values and scan snippets are hidden in both human and `--json` output.
 Existing keys are marked as updates; sealed values cannot be compared to detect
 unchanged values. Repeated keys are shown in upload order.
 
-The default scan skips detected pairs; strict mode blocks the upload. Invalid
-keys, values above the plan limit, exceeding the secret quota, or an input
-entirely skipped by the scan produce a nonzero exit status. The JSON preview
+Every pushed value is sealed, so the default scan only notes pairs that look
+like known credentials; strict mode blocks the upload. Invalid keys, values
+above the plan limit, or exceeding the secret quota produce a nonzero exit
+status. The JSON preview
 includes `can_push`, `changes`, `scan_findings`, and `blockers`.
 
 `--dry-run` reads account and secret metadata but uploads nothing and requests
