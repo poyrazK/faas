@@ -37,7 +37,7 @@ func TestBranchSharesThePullRequestsEmptyDatabase(t *testing.T) {
 	bind := managedpostgres.CreateBindingRequest{AccountID: account, DatabaseID: database.ID, AppID: f.parent.ID,
 		Scope: "pr-7", EnvironmentKey: "DATABASE_URL", Access: managedpostgres.CredentialReadWrite}
 	for range 3 {
-		if err = f.manager.BindBranch(ctx, bind); !errors.Is(err, previewdb.ErrPending) {
+		if _, err = f.manager.BindBranch(ctx, bind); !errors.Is(err, previewdb.ErrPending) {
 			break
 		}
 	}

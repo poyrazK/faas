@@ -74,7 +74,7 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 			if flagKey, ok := platformflags.FlagForCapability(capabilities.Capabilities[i].Key); ok {
 				available = available && s.platformFlagFor(flagKey, flagSubject(r, acct))
 			}
-		case "app-tasks", "tcp-listeners", "udp-listeners", dataAPICapability, api.ManagedValkeyCapability:
+		case "app-tasks", "interactive-app-sessions", "tcp-listeners", "udp-listeners", dataAPICapability, api.ManagedValkeyCapability:
 			// Prod findings 2026-11-15 #25: these were listed as available
 			// while their runtime was off and every request was refused.
 			available = s.capabilityRuntimeReady(capabilities.Capabilities[i].Key)
@@ -187,6 +187,11 @@ func (s *server) capabilityRuntimeReady(key string) bool {
 	switch key {
 	case "app-tasks":
 		return s.appTaskAPIEnabled
+	case "interactive-app-sessions":
+		// `app exec -it`, cp, port-forward and postgres connect need
+		// FAAS_INTERACTIVE_APP_TASKS on top of the app-task API; they were
+		// listed under app-tasks while every session was refused with 501.
+		return s.appTaskAPIEnabled && s.interactiveAppTasksEnabled
 	case "tcp-listeners":
 		return s.tcpListenersEnabled
 	case "udp-listeners":

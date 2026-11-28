@@ -12960,11 +12960,48 @@
     "kind": "operational"
   },
   {
+    "table": "mcp_contract_checks",
+    "columns": [
+      "accepted_at",
+      "account_id",
+      "app_id",
+      "baseline_sha256",
+      "candidate",
+      "candidate_sha256",
+      "changes",
+      "checked_at",
+      "deployment_id",
+      "live_at",
+      "override_id",
+      "verdict"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "mcp_contract_overrides",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "created_by",
+      "deployment_id",
+      "expires_at",
+      "id",
+      "reason",
+      "used_at",
+      "used_by_deployment"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "mcp_listings",
     "columns": [
       "account_id",
       "app_id",
+      "contract",
+      "contract_sha256",
       "endpoint",
+      "probe_secret",
       "published_at",
       "registry_name",
       "show_usage",
@@ -18937,6 +18974,9 @@
       "egress_allow",
       "egress_deny",
       "expires_at",
+      "fork_capture_id",
+      "fork_local_refused_at",
+      "fork_requested_at",
       "forked_from",
       "id",
       "idle_timeout_sec",
@@ -18988,9 +19028,11 @@
       "id",
       "mem_bytes",
       "node_id",
+      "purpose",
       "session_id",
       "state",
       "storage_key",
+      "uploaded_at",
       "vmstate_bytes",
       "vmstate_storage_key",
       "volume_backup_id"

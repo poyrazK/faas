@@ -169,8 +169,7 @@ func cmdCronsOccurrences(args []string) int {
 	}
 	id := pos[0]
 	if !cronIDPattern.MatchString(id) {
-		printCommandValidation(os.Stderr, "usage: gregale cron occurrences <id> [--cursor C] [--all] [--limit N]\n")
-		return 1
+		return refuseCronID("occurrences", id)
 	}
 	client, err := authedClient()
 	if err != nil {

@@ -143,8 +143,8 @@ func (s *server) reconcileEnvironmentBranchDataPass(ctx context.Context, store s
 			s.activateEnvironmentBranch(ctx, store, branch)
 			continue
 		}
-		if environmentBranchDataInProgress(copyErr) && now.Sub(branch.CreatedAt) < environmentBranchDataInProgressBudget {
-			if err := store.DeferProjectEnvironmentBranchData(ctx, branch.EnvironmentID, lease, now.Add(environmentBranchDataInProgressDelay(now.Sub(branch.CreatedAt)))); err != nil {
+		if age := now.Sub(environmentBranchDataInProgressSince(branch, copyErr)); environmentBranchDataInProgress(copyErr) && age < environmentBranchDataInProgressBudget {
+			if err := store.DeferProjectEnvironmentBranchData(ctx, branch.EnvironmentID, lease, now.Add(environmentBranchDataInProgressDelay(age))); err != nil {
 				errs = errors.Join(errs, err)
 			}
 			soon = true
@@ -166,6 +166,45 @@ func (s *server) reconcileEnvironmentBranchDataPass(ctx context.Context, store s
 
 func environmentBranchDataInProgress(err error) bool {
 	return errors.Is(err, errEnvironmentBranchDataInProgress) || errors.Is(err, errDatabaseCopyInProgress)
+}
+
+// copyStartedError is a copy or binding still being made, with when it was
+// made.
+type copyStartedError struct {
+	at  time.Time
+	err error
+}
+
+func (e *copyStartedError) Error() string { return e.err.Error() }
+func (e *copyStartedError) Unwrap() error { return e.err }
+
+// copyStarted records that err is about a database or binding made at at.
+// The latest time wins: a new binding of an older database starts its own
+// budget.
+func copyStarted(at time.Time, err error) error {
+	if err == nil || at.IsZero() {
+		return err
+	}
+	var inner *copyStartedError
+	if errors.As(err, &inner) && !inner.at.Before(at) {
+		return err
+	}
+	return &copyStartedError{at: at, err: err}
+}
+
+// environmentBranchDataInProgressSince is when the in-progress budget of a
+// copy still being made started: when its database was made, or when the
+// branch was if that is later. A branch whose copy could not start for a
+// while (prod 2026-11-28: stale usage refused an empty PR database for two
+// hours) used to spend an attempt, and wait up to 10 minutes, each time it
+// found the copy it finally started still provisioning.
+func environmentBranchDataInProgressSince(branch state.ProjectEnvironmentBranch, err error) time.Time {
+	since := branch.CreatedAt
+	var started *copyStartedError
+	if errors.As(err, &started) && started.at.After(since) {
+		since = started.at
+	}
+	return since
 }
 
 // reconcileOrphanedEnvironmentBranchDatabasesAndBuckets deletes one bounded
@@ -402,7 +441,7 @@ func (s *server) copyEnvironmentBranchDatabases(ctx context.Context, store state
 			return err
 		}
 		if err := s.bindEnvironmentBranchDatabase(ctx, acct, branch, plans, id, copied.ID); err != nil {
-			return err
+			return copyStarted(copied.CreatedAt, err)
 		}
 	}
 	for _, id := range empties {
@@ -411,10 +450,10 @@ func (s *server) copyEnvironmentBranchDatabases(ctx context.Context, store state
 			continue // turned off since the plan was read, or the plan gives none
 		}
 		if err != nil {
-			return environmentBranchPreviewError("set up the pull request's empty PostgreSQL database", err)
+			return copyStarted(database.CreatedAt, environmentBranchPreviewError("set up the pull request's empty PostgreSQL database", err))
 		}
 		if err := s.bindEnvironmentBranchPreviewDatabase(ctx, acct, branch, plans, id, database.ID); err != nil {
-			return err
+			return copyStarted(database.CreatedAt, err)
 		}
 	}
 	return nil
@@ -484,12 +523,12 @@ func (s *server) bindEnvironmentBranchPreviewDatabase(ctx context.Context, acct 
 		if plan.kind != "managed_postgres" || plan.database.ID != sourceID {
 			continue
 		}
-		err := manager.BindBranch(ctx, managedpostgres.CreateBindingRequest{
+		binding, err := manager.BindBranch(ctx, managedpostgres.CreateBindingRequest{
 			AccountID: acct.ID, DatabaseID: databaseID, AppID: plan.app.ID,
 			Scope: branch.Slug, EnvironmentKey: plan.postgres.EnvironmentKey, Access: plan.postgres.Access,
 		})
 		if err != nil {
-			return environmentBranchPreviewError(fmt.Sprintf("bind the empty database for workload %q", plan.app.Slug), err)
+			return copyStarted(binding.CreatedAt, environmentBranchPreviewError(fmt.Sprintf("bind the empty database for workload %q", plan.app.Slug), err))
 		}
 	}
 	return nil
@@ -502,7 +541,7 @@ func (s *server) bindEnvironmentBranchPreviewDatabase(ctx context.Context, acct 
 func environmentBranchPreviewError(op string, err error) error {
 	switch {
 	case errors.Is(err, previewdb.ErrPending):
-		return fmt.Errorf("%s: %w%w", op, errEnvironmentBranchDataInProgress, managedpostgres.ErrConflict)
+		return fmt.Errorf("%s: %w: %w", op, errEnvironmentBranchDataInProgress, managedpostgres.ErrConflict)
 	case errors.Is(err, managedpostgres.ErrPreviewDatabaseLimit):
 		return fmt.Errorf("%s: %w", op, errEnvironmentBranchPreviewDatabaseLimit)
 	}
@@ -528,13 +567,13 @@ func (s *server) bindEnvironmentBranchDatabase(ctx context.Context, acct state.A
 		// The binding reconciler holds it, or its next attempt is not due:
 		// still provisioning, not a failed attempt.
 		if errors.Is(err, managedpostgres.ErrConflict) && binding.DatabaseID == databaseID && binding.AppID == plan.app.ID {
-			return fmt.Errorf("branch database binding for workload %q is not ready: %w%w", plan.app.Slug, errEnvironmentBranchDataInProgress, err)
+			return copyStarted(binding.CreatedAt, fmt.Errorf("branch database binding for workload %q is not ready: %w: %w", plan.app.Slug, errEnvironmentBranchDataInProgress, err))
 		}
 		if err != nil {
 			return fmt.Errorf("bind branch database for workload %q: %w", plan.app.Slug, err)
 		}
 		if binding.DatabaseID == databaseID && binding.State == managedpostgres.BindingStateProvisioning {
-			return fmt.Errorf("branch database binding for workload %q is not ready: %w%w", plan.app.Slug, errEnvironmentBranchDataInProgress, managedpostgres.ErrUnavailable)
+			return copyStarted(binding.CreatedAt, fmt.Errorf("branch database binding for workload %q is not ready: %w: %w", plan.app.Slug, errEnvironmentBranchDataInProgress, managedpostgres.ErrUnavailable))
 		}
 		if binding.State != managedpostgres.BindingStateReady || binding.DatabaseID != databaseID {
 			return fmt.Errorf("branch database binding for workload %q is not ready: %w", plan.app.Slug, managedpostgres.ErrUnavailable)

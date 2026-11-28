@@ -6890,8 +6890,13 @@ haveApp:
 		if billingAttributed {
 			r = withBillingRoute(r, h.billingRouteSetFor(app.ID).admit(preLabel))
 			r = withPlanRoute(r, preLabel)
-		} else if jwtTenantPossible {
-			r = withBillingRouteCandidate(r, preLabel)
+		} else {
+			if jwtTenantPossible {
+				r = withBillingRouteCandidate(r, preLabel)
+			}
+			// An MCP OAuth caller becomes a consumer only in the JWT rule,
+			// after edge rewrites; keep the original path's label for it.
+			r = withUnattributedRoute(r, preLabel)
 		}
 		// A route earns one of the app's bounded labels only once the app
 		// answers it (ADR-20261026143210): until then the label is pending
@@ -7185,9 +7190,12 @@ haveApp:
 	// ADR-831 / kind=waf. Placed after the cheap rejections (limit, body
 	// cap, throttle) so rejected traffic is never inspected, and before
 	// validate so a schema 422 is still sampled. Warn and block rules check
-	// headers and URI in-path (~1 ms; block answers 403 here). Every rule
-	// records the body prefix as later stages read it and submits the
-	// sample when ServeHTTP returns, so bodies never delay the request.
+	// headers and URI in-path (~1 ms; block answers 403 here). Under
+	// edge_waf_strict_inspection and edge_waf_inline_body they first read
+	// the body's first 2 KiB, under upload admission's deadlines and only for
+	// a body admitRequestBody reads to the end anyway (ADR-831 amendment
+	// 22), and put it back. Every rule records the body prefix as later
+	// stages read it and submits the sample when ServeHTTP returns.
 	if blocked, submitWAF := h.applyEdgeRuleWAF(w, r, app, rec); blocked {
 		h.metrics.ObserveEdgeRejection(app.ID, "waf", rec.status)
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})

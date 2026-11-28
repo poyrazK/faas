@@ -452,6 +452,10 @@ func (s *MemoryStore) Release(ctx context.Context, databaseID, leaseToken string
 	}
 	database.State = next
 	database.LastErrorCode = errorCode
+	if errorCode == "" {
+		// The provider still working is not a failed attempt (PostgresStore).
+		database.AttemptCount = 0
+	}
 	database.LeaseToken = ""
 	database.LeaseUntil = time.Time{}
 	database.UpdatedAt = now

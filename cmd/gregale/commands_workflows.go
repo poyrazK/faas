@@ -133,6 +133,12 @@ func cmdWorkflowsList(args []string) int {
 		return jsonOut(writeNDJSON(items))
 	}
 
+	if len(items) == 0 && *offset == 0 && *status == "" && *workflowName == "" && *createdAfter == "" && *createdBefore == "" {
+		// Unfiltered, the "next step" repeated the command just run
+		// (prod hunt r65); point at starting a run instead.
+		printEmptyResult("workflow runs in app "+*appSlug, "", recoveryCLI()+" workflow run --app "+recoveryArgument(*appSlug)+" WORKFLOW_NAME")
+		return 0
+	}
 	if len(items) == 0 {
 		detail := fmt.Sprintf("offset=%d; status=%q; workflow=%q; created-after=%q; created-before=%q (blank filters are unrestricted)", *offset, *status, *workflowName, *createdAfter, *createdBefore)
 		printEmptyResult("workflow runs in app "+*appSlug, detail, recoveryCLI()+" workflow list --app "+recoveryArgument(*appSlug))
@@ -263,7 +269,7 @@ func cmdWorkflowsStatus(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 || (fs.Arg(0) != "latest" && !workflowUUIDPattern.MatchString(fs.Arg(0))) {
-		printCommandValidation(osStderr, "error: invalid run ID or arguments; %s\n", "usage: gregale workflow status RUN_ID|latest [--workflow-name NAME] [--app SLUG] [--check]")
+		printWorkflowRunIDRefusal(fs, "usage: gregale workflow status RUN_ID|latest [--workflow-name NAME] [--app SLUG] [--check]")
 		return 1
 	}
 	target, code := validateWorkflowReadTarget(fs.Arg(0), *app, *name)
@@ -341,7 +347,7 @@ func cmdWorkflowsSteps(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 || (fs.Arg(0) != "latest" && !workflowUUIDPattern.MatchString(fs.Arg(0))) {
-		printCommandValidation(osStderr, "error: invalid run ID or arguments; %s\n", "usage: gregale workflow steps RUN_ID|latest [--workflow-name NAME] [--app SLUG] [--failed-only]")
+		printWorkflowRunIDRefusal(fs, "usage: gregale workflow steps RUN_ID|latest [--workflow-name NAME] [--app SLUG] [--failed-only]")
 		return 1
 	}
 	target, code := validateWorkflowReadTarget(fs.Arg(0), *app, *name)
@@ -794,4 +800,15 @@ func workflowRunDeploymentLabel(r api.WorkflowRunResponse) string {
 		return "legacy (unpinned)"
 	}
 	return r.DeploymentID
+}
+
+// printWorkflowRunIDRefusal names the word that is not a run ID. `workflow
+// get nope` printed a lowercase "error: invalid run ID or arguments" that
+// never said which argument (prod hunt r76).
+func printWorkflowRunIDRefusal(fs *flag.FlagSet, usage string) {
+	if fs.NArg() == 1 {
+		printCommandValidation(osStderr, "%q is not a workflow run ID: pass a run ID from `gregale workflow list` or `latest`.\n  %s\n", fs.Arg(0), usage)
+		return
+	}
+	printCommandValidation(osStderr, "Pass one workflow run ID or `latest`.\n  %s\n", usage)
 }

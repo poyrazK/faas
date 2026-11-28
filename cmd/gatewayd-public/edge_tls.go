@@ -374,6 +374,24 @@ func clientLeftServerError(msg string) bool {
 	return strings.Contains(msg, "error reading preface from client") && strings.HasSuffix(msg, ": EOF")
 }
 
+// strangerHandshake reports a failed handshake that says nothing about the
+// edge: an internet scanner asking for a name that is no app host (a bare IP),
+// speaking plain HTTP to 443, or hanging up or stalling mid-handshake. On
+// 2026-11-27 these were about 170 of 177 daily handshake Warns on a node
+// (prod hunt r72); they stay counted but log at Debug, so a certificate
+// failure, which does say something, is the Warn left.
+func strangerHandshake(msg string) bool {
+	if strings.Contains(msg, errNotAnAppHost.Error()) || strings.Contains(msg, "first record does not look like a TLS handshake") {
+		return true
+	}
+	for _, gone := range []string{": EOF", ": unexpected EOF", "connection reset by peer", "i/o timeout"} {
+		if strings.HasSuffix(msg, gone) {
+			return true
+		}
+	}
+	return false
+}
+
 // handshakeFailed counts a handshake the client limits' gate saw fail, before
 // the server had the connection, the way net/http reports its own.
 func (e *edgeServerErrors) handshakeFailed(remote net.Addr, err error) {
@@ -382,6 +400,10 @@ func (e *edgeServerErrors) handshakeFailed(remote net.Addr, err error) {
 
 func (e *edgeServerErrors) handshake(msg string) {
 	e.failures.Inc()
+	if strangerHandshake(msg) {
+		e.log.Debug("gatewayd-public: edge TLS handshake failed", "err", msg)
+		return
+	}
 	now := e.now().UnixNano()
 	last := e.lastLog.Load()
 	if now-last >= int64(time.Minute) && e.lastLog.CompareAndSwap(last, now) {

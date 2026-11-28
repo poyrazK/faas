@@ -420,6 +420,10 @@ func ValidateOrgSlug(slug string) string {
 	if strings.ContainsAny(slug, "_") {
 		return "slug may not contain underscores"
 	}
+	if strings.HasPrefix(slug, "purged-") {
+		// Purged organizations' tombstone slugs (ADR-061 amendment 1).
+		return "slugs starting with purged- are reserved"
+	}
 	matched, err := regexp.MatchString(OrgSlugPattern, slug)
 	if err != nil {
 		return "invalid slug pattern"

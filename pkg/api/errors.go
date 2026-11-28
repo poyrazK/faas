@@ -2008,6 +2008,10 @@ const (
 	// promoted (ADR-20261122220000). The deployment's hosting receipt holds
 	// the full report.
 	CodeDeploymentVerificationContractFailed = "deployment_verification_contract_failed"
+	// CodeMCPContractBreaking means a listed MCP server's candidate breaks
+	// the tool contract its paying customers were promised, so it was not
+	// promoted (ADR-20261127191645). The hosting receipt lists the changes.
+	CodeMCPContractBreaking = "mcp_contract_breaking"
 	// CodePromotionRolledBack means an environment promotion was rolled back
 	// and this release, the first in its environment, had no earlier release
 	// to restore, so it was retired. The release itself did not fail.
@@ -2561,6 +2565,7 @@ func StatusForCode(code string) int {
 		CodeExecutionModeConflict,
 		CodeDeploymentSmokeFailed,
 		CodeDeploymentVerificationContractFailed,
+		CodeMCPContractBreaking,
 		CodeReleaseCommandFailed,
 		CodeReleasePhaseUnavailable,
 		CodeReleaseOutcomeUncertain:

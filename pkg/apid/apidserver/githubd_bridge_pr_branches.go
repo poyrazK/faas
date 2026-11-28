@@ -9,6 +9,7 @@ import (
 
 	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -247,5 +248,86 @@ func (s *server) pullRequestBranchBuild(ctx context.Context, app state.App, scop
 	case branch.PullRequestNumber != pullRequest:
 		return status.Errorf(codes.FailedPrecondition, "EnqueueBuild: environment %s was not made for pull request #%d", scope, pullRequest)
 	}
+	if err := s.reopenPullRequestBranchData(ctx, app, branch); err != nil && s.log != nil {
+		// Best effort: the build goes ahead with the branch's bindings as
+		// they are, as it did before bindings were refreshed.
+		s.log.Warn("environment branch: refresh a pull request's database bindings",
+			"environment", branch.EnvironmentID, notifyAppField, app.ID, "err", err)
+	}
 	return nil
+}
+
+// reopenPullRequestBranchData sets a ready pull request branch's data pending
+// again when app binds, in production, a managed PostgreSQL database its pull
+// requests get (previews copy or empty) under an environment key the
+// branch's scope does not bind: a binding made after the branch's data was
+// copied (prod 2026-11-28: a migration binding never reached the release
+// command of the PR's next build). An app preview sets up its databases on
+// every build the same way. The branch data reconciler adds the binding, and
+// the build waits for the branch's data in imaged and schedd.
+func (s *server) reopenPullRequestBranchData(ctx context.Context, app state.App, branch state.ProjectEnvironmentBranch) error {
+	reopener, ok := s.store.(state.ProjectEnvironmentBranchDataReopener)
+	if !ok || branch.DataState != state.EnvironmentBranchDataReady || s.managedPostgres == nil || s.managedPostgresBindings == nil {
+		return nil
+	}
+	ctx, acct, _, err := s.environmentBranchOwner(ctx, branch)
+	if err != nil {
+		return err
+	}
+	missing, err := s.pullRequestBranchMissesBinding(ctx, acct, app, branch)
+	if err != nil || !missing {
+		return err
+	}
+	reopened, err := reopener.ReopenProjectEnvironmentBranchData(ctx, branch.EnvironmentID, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if reopened {
+		s.wakeEnvironmentBranchData()
+	}
+	return nil
+}
+
+// pullRequestBranchMissesBinding reports whether app has a production
+// binding of a database its pull requests get whose environment key branch's
+// scope does not bind. A pull request gets a database with previews copy that
+// existed at the branch point (a later one has nothing to copy as of then), or
+// one with previews empty while app has the preview databases capability; the
+// branch data reconciler would otherwise fail on every reopen.
+func (s *server) pullRequestBranchMissesBinding(ctx context.Context, acct state.Account, app state.App, branch state.ProjectEnvironmentBranch) (bool, error) {
+	bindings, err := s.managedPostgresBindings.ListForApp(ctx, acct.ID, app.ID, "")
+	if errors.Is(err, managedpostgres.ErrUnsupported) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	databases, err := s.managedPostgres.List(ctx, acct.ID)
+	if err != nil {
+		return false, err
+	}
+	empties := s.capabilityEnabledFor(previewDatabasesCapability, acct, app)
+	previewed := map[string]bool{}
+	for _, database := range databases {
+		switch database.Previews {
+		case managedpostgres.PreviewsCopy:
+			previewed[database.Name] = !database.CreatedAt.After(branch.BranchPoint)
+		case managedpostgres.PreviewsEmpty:
+			previewed[database.Name] = empties
+		}
+	}
+	bound := map[string]bool{}
+	for _, binding := range bindings {
+		if binding.Scope == branch.Slug {
+			bound[binding.EnvironmentKey] = true
+		}
+	}
+	for _, binding := range bindings {
+		production := binding.Scope == api.DefaultEnvScope || binding.Scope == "production"
+		live := binding.State == string(managedpostgres.BindingStateReady) || binding.State == string(managedpostgres.BindingStateProvisioning)
+		if production && live && previewed[binding.DatabaseName] && !bound[binding.EnvironmentKey] {
+			return true, nil
+		}
+	}
+	return false, nil
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apidgrpc"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // OAuth consumers (ADR-20261124094745): a caller whose token an MCP
@@ -136,6 +137,12 @@ func (h *Handler) oauthConsumer(ctx context.Context, app App, issuer, subject, e
 	return e, nil
 }
 
+// oauthStageCaller reports whether app was reached through a stage's
+// environment URL or scoped domain rather than production.
+func oauthStageCaller(app App) bool {
+	return app.PublicEnvironmentID != "" && !state.IsProductionScope(app.PinnedDeploymentScope)
+}
+
 // oauthIssuer is the issuer an OAuth consumer's identity is keyed by: the
 // token's iss, or the rule's pinned issuer when the token has none.
 func oauthIssuer(rule *EdgeRuleJWTResolved, claims *JWTClaims) string {
@@ -172,7 +179,7 @@ func (h *Handler) attachOAuthConsumer(w http.ResponseWriter, r *http.Request, ap
 		if h.log != nil {
 			h.log.Warn("oauth consumer enrollment refused", "app_id", app.ID)
 		}
-		return mcpPolicyReject(w, http.StatusForbidden, rule.MCP, "This MCP server cannot open an account for you; contact its owner")
+		return mcpRefuseWithoutChallenge(w, "This MCP server cannot open an account for you; contact its owner")
 	case err != nil:
 		if h.log != nil {
 			h.log.Error("oauth consumer enrollment unavailable", "err", err, "app_id", app.ID)
@@ -184,9 +191,14 @@ func (h *Handler) attachOAuthConsumer(w http.ResponseWriter, r *http.Request, ap
 	case e.id == "":
 		return false
 	case !e.active:
-		return mcpPolicyReject(w, http.StatusForbidden, rule.MCP, "This account was closed by the MCP server's owner")
+		return mcpRefuseWithoutChallenge(w, "This account was closed by the MCP server's owner")
 	}
 	authenticated.ConsumerID = e.id
+	// A stage's callers are never billed or plan-capped, like a stage's
+	// consumer keys (ADR-20261104120000 amendment 2026-11-22). A consumer
+	// key wins over a tenant surface, and so does an OAuth consumer
+	// (usageAttribution keeps one of them).
+	authenticated.StageConsumer = oauthStageCaller(app)
 	ctx := withAuthenticated(r.Context(), authenticated)
 	if e.accountTools {
 		ctx = context.WithValue(ctx, mcpAccountToolsKey{}, true)

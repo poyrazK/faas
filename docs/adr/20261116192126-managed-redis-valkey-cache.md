@@ -440,7 +440,8 @@ closed by a later slice:
   would get the HTTP liveness probe on its next wake and be killed. Before
   removing an image, this query on the control-plane database must return no
   row for it:
-  `SELECT d.image_digest, count(*) FROM managed_valkey_caches c JOIN deployments d ON d.app_id = c.app_id WHERE d.status IN ('imaging', 'live') GROUP BY 1;`
+  `SELECT d.image_digest, count(*) FROM managed_valkey_caches c JOIN apps a ON a.id = c.app_id JOIN deployments d ON d.app_id = c.app_id WHERE a.status <> 'deleted' AND d.status IN ('imaging', 'live') GROUP BY 1;`
+  (A deleted cache app can keep a `live` deployment row, but it never wakes.)
   First use: 8.1.4 → 8.1.12 (9 live caches on 8.1.4 on 2026-11-25).
   Step 1 (#8091) added 8.1.12 to the list; step 2 makes it the image apid
   deploys and keeps 8.1.4 accepted for the caches that still run it.
@@ -450,6 +451,10 @@ closed by a later slice:
   an 8.1.4 cache (apid's server command, 5,000 keys, a writer running) into
   8.1.12 in containers: the new VM promoted itself, opened 6379 after 5 s and
   held every acknowledged write (127 of 127).
+  Rolled out 2026-11-27: prod (rc.382+) created a new cache on 8.1.12, and
+  `gregale redis update` moved the two remaining 8.1.4 caches in about 45 s
+  each, keeping their data. With no 8.1.4 cache left outside deleted apps,
+  8.1.4 left the list.
 - **Cross-account isolation verified on prod (2026-11-25):** an app in
   another account cannot reach a cache. Service addresses are indexes within
   each account, so the proxy resolves a foreign cache's address in the

@@ -1773,6 +1773,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if cfg.Role == role.RoleControlPlane && store != nil {
 		go runOwnerAuthorityMetrics(ctx, ops.Registry(), store, time.Minute, log)
 	}
+	// A snapshot whose storage object is gone is retired so its app's next
+	// wake cold-boots instead of failing a restore first, and the hourly
+	// fan-out requeue stops (prod hunt r72). Marking stale is idempotent, so
+	// every schedd may run it.
+	if store != nil {
+		go sched.RunSnapshotOriginMissingSweep(ctx, store, log)
+	}
 	// ADR-20261118160000: the control plane moves parked, long-idle apps back
 	// toward the least owned node, which nothing did after a drain. Every
 	// move is a compare-and-set on apps.node_id, so it is safe under either

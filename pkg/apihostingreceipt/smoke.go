@@ -45,6 +45,10 @@ const (
 	// app's gregale.verify.yaml failed against the candidate
 	// (ADR-20261122220000). The receipt carries the full report.
 	SmokeErrorVerificationContractFailed = "smoke_verification_contract_failed"
+	// SmokeErrorMCPContractBreaking means a listed MCP server's candidate
+	// breaks the tool contract its paying customers were promised and the
+	// seller holds no override (ADR-20261127191645).
+	SmokeErrorMCPContractBreaking = "smoke_mcp_contract_breaking"
 )
 
 const (

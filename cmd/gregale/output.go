@@ -400,7 +400,7 @@ func visibleSubcommands(path string, command cliCommand) cliCommand {
 // that takes an app gets it: `keys list h14-py` is no command (H14-64).
 func printSubcommandChoices(w io.Writer, path string, command cliCommand, got string) {
 	names := make([]string, 0, len(command.Subcommands))
-	listApp := ""
+	listApp, noun := "", "an app"
 	for _, sub := range command.Subcommands {
 		if slices.Contains(names, sub.Name) {
 			continue
@@ -408,11 +408,12 @@ func printSubcommandChoices(w io.Writer, path string, command cliCommand, got st
 		names = append(names, sub.Name)
 		if sub.Name == subList {
 			listApp = listAppForm(sub, got)
+			noun = listTargetNoun(sub)
 		}
 	}
 	_, _ = fmt.Fprintf(w, "  Subcommands: %s\n", strings.Join(names, ", "))
 	if listApp != "" && api.ValidAppSlug(got) && !commonVerbWord(got) {
-		_, _ = fmt.Fprintf(w, "  If %s is an app, the subcommand comes first: gregale %s %s\n", got, cliTreeSpellPath(path+" list"), listApp)
+		_, _ = fmt.Fprintf(w, "  If %s is %s, the subcommand comes first: gregale %s %s\n", got, noun, cliTreeSpellPath(path+" list"), listApp)
 	}
 	printConceptHints(w, path, command, got)
 }
@@ -431,6 +432,18 @@ func listAppForm(list cliSub, slug string) string {
 		}
 	}
 	return ""
+}
+
+// listTargetNoun names what a `list` verb's positional is: `environment list
+// <project-slug>` takes a project, so `projects environments bindtest` said
+// "If bindtest is an app" (prod hunt r73).
+func listTargetNoun(list cliSub) string {
+	for _, positional := range list.Positionals {
+		if strings.Contains(positional, "project") {
+			return "a project"
+		}
+	}
+	return "an app"
 }
 
 // commonVerbWord is a verb another CLI would accept here (`alerts get`); it

@@ -1,3 +1,11 @@
 [Service]
 # The public app-task API (faas_app_task_api, ADR-230). The unit sets 0.
 Environment=FAAS_APP_TASK_API_ENABLED={{ '1' if (faas_app_task_api | bool) else '0' }}
+{% if (faas_app_task_api | bool) and (faas_interactive_app_tasks | default(false) | bool) %}
+# Interactive sessions (ADR-1037: `app exec -it`, `app cp`, `app port-forward`,
+# `postgres connect`) on top of the app-task API (faas_interactive_app_tasks).
+Environment=FAAS_INTERACTIVE_APP_TASKS=1
+{% endif %}
+{# Off writes nothing: apid defaults to off, and a host's own drop-in that
+   turns sessions on (a test node qualifying the attach path) is not
+   overridden by this later-sorting file. #}

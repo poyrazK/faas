@@ -36,6 +36,9 @@ type VerificationLease struct {
 	Scope  string
 	// Contract is the app's stored contract JSON; nil when it holds none.
 	Contract []byte
+	// ProbeSecret is the key the app's MCP listing names for the tool
+	// contract gate (ADR-20261127191645); "" when it names none.
+	ProbeSecret string
 }
 
 // VerificationLeaseStore is the optional Store extension
@@ -110,8 +113,9 @@ func (s *Server) OpenVerificationSecrets(ctx context.Context, req *secretdpb.Ope
 }
 
 // verificationLease admits name only while it holds deploymentID's unexpired
-// lease for appID, the deployment is still a candidate and the app's stored
-// contract references every key.
+// lease for appID, the deployment is still a candidate and every key is
+// referenced by the app's stored contract or is the MCP listing's probe
+// secret (ADR-20261127191645).
 func (s *Server) verificationLease(ctx context.Context, leases VerificationLeaseStore, name, appID, deploymentID string, keys []string) (VerificationLease, error) {
 	refuse := func(reason, msg string) (VerificationLease, error) {
 		s.log.Warn("secretd: refused verification secrets", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID),
@@ -133,6 +137,15 @@ func (s *Server) verificationLease(ctx context.Context, leases VerificationLease
 	if !candidateStatus(lease.Status) {
 		return refuse("not a candidate", "the deployment is no longer a candidate")
 	}
+	var contractKeys []string
+	for _, key := range keys {
+		if lease.ProbeSecret == "" || key != lease.ProbeSecret {
+			contractKeys = append(contractKeys, key)
+		}
+	}
+	if len(contractKeys) == 0 {
+		return lease, nil
+	}
 	if lease.Contract == nil {
 		return refuse("no contract", "the app holds no verification contract")
 	}
@@ -141,7 +154,7 @@ func (s *Server) verificationLease(ctx context.Context, leases VerificationLease
 		return refuse("contract invalid", "the app's verification contract does not validate")
 	}
 	refs := contract.SecretRefs()
-	for _, key := range keys {
+	for _, key := range contractKeys {
 		if i := sort.SearchStrings(refs, key); i >= len(refs) || refs[i] != key {
 			return refuse("unreferenced key", "the app's verification contract does not reference "+key)
 		}

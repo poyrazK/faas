@@ -110,11 +110,19 @@ func applyOutputCeiling(plan *aiCallPlan, ai *aiRequest, ceiling int64) *aiCallR
 	if !plan.facts.ceilingKnown || ai == nil {
 		return unenforceable
 	}
-	if plan.facts.outputCeiling > ceiling {
+	// The ceiling bounds the call's whole output: every answer it asks for
+	// can run to the per-answer limit (prod hunt 2026-11-28).
+	choices := plan.facts.choiceCount()
+	if plan.facts.outputCeiling > 0 && plan.facts.outputCeiling*choices > ceiling {
 		return &aiCallRejection{http.StatusBadRequest, "outbound_ai_max_tokens_exceeded",
-			"The requested output tokens exceed this app's ceiling"}
+			"The requested output tokens, times the answers asked for, exceed this app's ceiling"}
 	}
 	if plan.facts.outputCeiling == 0 {
+		ceiling /= choices
+		if ceiling == 0 {
+			return &aiCallRejection{http.StatusBadRequest, "outbound_ai_max_tokens_exceeded",
+				"The answers asked for exceed this app's output-token ceiling"}
+		}
 		rewritten, ok := withOutputCeiling(plan.endpoint, ai.body, ceiling)
 		if !ok {
 			return unenforceable
@@ -161,14 +169,33 @@ func estimateAIReservation(r *http.Request, integration Integration, plan *aiCal
 	// ADR-1433: the request's built-in tools reserve their fees.
 	estimate.WebSearches, estimate.FileSearches = plan.facts.tools.webSearches, plan.facts.tools.fileSearches
 	estimate.CodeSessionGB = plan.facts.tools.codeSessionGB
+	// A call continuing context stored at the provider bills input its body
+	// does not show; it reserves the model's context window (prod hunt
+	// 2026-11-28: a previous_response_id call costing USD 0.60 was admitted
+	// with USD 0.085 left under the cap).
+	// Only the cost reserves it: the token reservation, which token-per-minute
+	// and daily token guardrails check, keeps the body estimate, as it keeps
+	// the default output, so a continued conversation is not refused by every
+	// token guardrail smaller than a context window.
+	rateInputTokens := min(estimate.InputTokens, api.OutboundAIMaxTokensPerResponse)
+	if plan.endpoint.generation && plan.facts.storedContext {
+		estimate.InputTokens = max(estimate.InputTokens, modelInputReserve(integration, plan.facts.model))
+	}
 	estimate.InputTokens = min(estimate.InputTokens, api.OutboundAIMaxTokensPerResponse)
 	estimate.OutputTokens = min(estimate.OutputTokens, api.OutboundAIMaxTokensPerResponse)
 	estimate.OutputImageTokens = min(estimate.OutputImageTokens, estimate.OutputTokens)
-	cost := aiCallCostMillicents(integration, estimate)
 	if rateTokens < 0 || rateTokens > estimate.OutputTokens {
 		rateTokens = estimate.OutputTokens
 	}
-	return aiReservation{tokens: estimate.InputTokens + rateTokens, cost: cost, estimate: estimate}
+	// Each answer a call asks for (n, best_of, candidateCount) can run to the
+	// output ceiling: 20 concurrent n=2000 calls spent USD 2.72 under a USD
+	// 0.33 cap when only one answer was reserved (prod hunt 2026-11-28).
+	if choices := plan.facts.choiceCount(); choices > 1 && plan.endpoint.media == aiMediaNone {
+		estimate.OutputTokens *= choices
+		rateTokens *= choices
+	}
+	cost := aiCallCostMillicents(integration, estimate)
+	return aiReservation{tokens: rateInputTokens + rateTokens, cost: cost, estimate: estimate}
 }
 
 // modelOutputReserve is what a generation call that names no output ceiling
@@ -181,6 +208,17 @@ func modelOutputReserve(integration Integration, model string) int64 {
 		return max(limit, api.OutboundAIDefaultOutputReserveTokens)
 	}
 	return api.OutboundAIUnknownModelOutputReserveTokens
+}
+
+// modelInputReserve is the input a call that continues stored context
+// reserves: its model's context window, or
+// api.OutboundAIUnknownModelInputReserveTokens for a model the catalog does
+// not know.
+func modelInputReserve(integration Integration, model string) int64 {
+	if limit, ok := aiprices.Default().MaxInputTokens(integration.AIProvider, model); ok {
+		return limit
+	}
+	return api.OutboundAIUnknownModelInputReserveTokens
 }
 
 // estimateMediaReservation reserves an image, transcription or speech call

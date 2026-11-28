@@ -566,13 +566,17 @@ UPDATE sandbox_sessions SET resume_requested_at=coalesce(resume_requested_at, no
 -- its image ready, and one from a template until it has a finished build
 -- (ADR-20261027090013).
 -- A paused persistent session asked to resume is claimable too
--- (ADR-20261122132055 §1).
+-- (ADR-20261122132055 §1). A fork is claimable once its capture exists: it
+-- starts on the capture's node until that node refuses it, then waits for
+-- the shared store to hold the capture (§3, same-node forks).
 SELECT sb.id::text AS id, sb.account_id::text AS account_id FROM sandbox_sessions sb
  WHERE (sb.state='queued' AND sb.expires_at > now()
  AND (sb.image_ref IS NULL OR EXISTS (SELECT 1 FROM jobs j WHERE j.id=sb.image_job_id AND j.account_id=sb.account_id
    AND j.status <> 'deleted' AND j.image_materialization_status='ready' AND j.image_storage_key IS NOT NULL)
    OR EXISTS (SELECT 1 FROM sandbox_templates t JOIN deployments d ON d.app_id=t.app_id
-   WHERE t.id=sb.template_id AND t.account_id=sb.account_id AND d.status='live' AND d.rootfs_key <> '')))
+   WHERE t.id=sb.template_id AND t.account_id=sb.account_id AND d.status='live' AND d.rootfs_key <> ''))
+ AND (sb.forked_from IS NULL OR EXISTS (SELECT 1 FROM sandbox_session_captures c
+   WHERE c.id=sb.fork_capture_id AND (c.uploaded_at IS NOT NULL OR sb.fork_local_refused_at IS NULL))))
  OR (sb.state='paused' AND sb.resume_requested_at IS NOT NULL AND sb.close_requested_at IS NULL AND sb.expires_at > now()
    AND (sb.resume_not_before IS NULL OR sb.resume_not_before <= now()))
  ORDER BY sb.created_at, sb.id LIMIT sqlc.arg(max_rows)::integer FOR UPDATE OF sb SKIP LOCKED;
@@ -610,9 +614,14 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, 
   coalesce(sb.volume_gb, 0)::integer AS volume_gb, coalesce(vol.latest_backup_id::text, '')::text AS volume_backup_id,
   coalesce(vol.node_id, '')::text AS volume_node_id,
   coalesce((SELECT b.id::text FROM sandbox_volume_backups b WHERE b.session_id=sb.id AND b.state='stored'
-    ORDER BY b.created_at DESC, b.id DESC LIMIT 1), '')::text AS volume_stored_backup_id
+    ORDER BY b.created_at DESC, b.id DESC LIMIT 1), '')::text AS volume_stored_backup_id,
+  coalesce(sb.fork_capture_id::text, '')::text AS fork_capture_id,
+  coalesce(cap.volume_backup_id::text, '')::text AS capture_volume_backup_id,
+  coalesce(cap.session_id::text, '')::text AS capture_session_id,
+  (cap.uploaded_at IS NOT NULL)::boolean AS capture_uploaded
  FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id
- LEFT JOIN sandbox_session_captures cap ON cap.session_id=sb.id AND cap.state='live'
+ LEFT JOIN sandbox_session_captures cap ON (sb.fork_capture_id IS NOT NULL AND cap.id=sb.fork_capture_id)
+   OR (sb.fork_capture_id IS NULL AND cap.session_id=sb.id AND cap.state='live' AND cap.purpose='pause')
  LEFT JOIN sandbox_volumes vol ON vol.session_id=sb.id
  LEFT JOIN sandbox_templates st ON st.id=sb.template_id AND st.account_id=sb.account_id
  LEFT JOIN sandbox_workspace_snapshots ws ON ws.id=sb.workspace_snapshot_id AND ws.account_id=sb.account_id
@@ -632,7 +641,7 @@ UPDATE sandbox_sessions SET placed_node_id=sqlc.arg(node_id)::text, updated_at=n
 -- name: MarkSandboxSessionReady :execrows
 -- The VM is up: record where it runs, so a read mints a token that reaches it.
 UPDATE sandbox_sessions SET state='ready', node_id=sqlc.arg(node_id)::text, instance_id=sqlc.arg(instance_id)::text,
-  last_activity_at=now(), updated_at=now()
+  fork_capture_id=NULL, last_activity_at=now(), updated_at=now()
  WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state='starting';
 
 -- name: RenewSandboxSessionLease :one
@@ -643,7 +652,7 @@ UPDATE sandbox_sessions SET lease_expires_at=now()+make_interval(secs=>sqlc.arg(
  WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text
  AND state IN ('starting','ready','frozen','pausing','resuming')
  RETURNING (close_requested_at IS NOT NULL)::boolean AS close_requested, idle_timeout_sec, expires_at,
-  (pause_requested_at IS NOT NULL)::boolean AS pause_requested;
+  (pause_requested_at IS NOT NULL)::boolean AS pause_requested, (fork_requested_at IS NOT NULL)::boolean AS fork_requested;
 
 -- name: MarkSandboxSessionResumed :execrows
 -- A resumed session is ready again (ADR-20261122132055 §2): its capture is
@@ -699,8 +708,12 @@ WITH session AS (
     sqlc.arg(has_backing)::boolean, NULLIF(sqlc.arg(volume_backup_id)::text, '')::uuid
   FROM session
   RETURNING session_id
+), forks AS (
+  UPDATE sandbox_sessions f SET fork_capture_id=sqlc.arg(capture_id)::text::uuid, updated_at=now()
+   WHERE f.forked_from IN (SELECT session_id FROM capture) AND f.fork_capture_id IS NULL AND f.state='queued'
 )
-UPDATE sandbox_sessions sb SET state='paused', paused_at=now(), pause_requested_at=NULL, durability='node',
+UPDATE sandbox_sessions sb SET state='paused', paused_at=now(), pause_requested_at=NULL, fork_requested_at=NULL, durability='node',
+  resume_requested_at=CASE WHEN sqlc.arg(resume_after)::boolean AND sb.close_requested_at IS NULL THEN now() ELSE sb.resume_requested_at END,
   node_id=NULL, instance_id=NULL, lease_token=NULL, lease_owner=NULL, lease_expires_at=NULL,
   expires_at=now()+make_interval(secs=>sqlc.arg(retention_seconds)::double precision), updated_at=now()
  WHERE sb.id IN (SELECT session_id FROM capture);
@@ -776,6 +789,14 @@ SELECT method, samples, expected_samples, measured_ms, paused_ms, frozen_ms, pri
 UPDATE sandbox_sessions SET state='queued', lease_token=NULL, lease_expires_at=NULL, lease_owner=NULL, updated_at=now()
  WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state='starting';
 
+-- name: RequeueSandboxForkElsewhere :execrows
+-- A fork its capture's node refused goes back to the queue to wait for the
+-- shared store to hold the capture, then starts on any node.
+UPDATE sandbox_sessions SET state='queued', lease_token=NULL, lease_expires_at=NULL, lease_owner=NULL,
+  fork_local_refused_at=coalesce(fork_local_refused_at, now()), updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state='starting'
+ AND forked_from IS NOT NULL;
+
 -- name: FinishSandboxSession :execrows
 -- A session that ends, from resuming too, never restores its capture: it
 -- is used, so the sweep deletes it.
@@ -799,7 +820,9 @@ UPDATE sandbox_sessions SET state='queued', lease_token=NULL, lease_expires_at=N
 -- A persistent session with a volume whose replica stopped renewing lost
 -- its VM, not its files: it goes back to paused without a capture and
 -- resumes cold from its volume (ADR-20261122132055 §4), kept for its plan's
--- paused retention. Run before FailExpiredLiveSandboxSessions.
+-- paused retention. A running one's VM waits on its node for a reattach
+-- until grace_seconds past its lease (§7), as in FailExpiredLiveSandboxSessions.
+-- Run before FailExpiredLiveSandboxSessions.
 UPDATE sandbox_sessions sb SET state='paused', paused_at=now(), pause_requested_at=NULL, resume_requested_at=NULL,
   durability=NULL, node_id=NULL, instance_id=NULL, lease_token=NULL, lease_owner=NULL, lease_expires_at=NULL,
   expires_at=now()+make_interval(days=>(sqlc.arg(retention_days)::integer[])[array_position(sqlc.arg(plans)::text[], a.plan)]),
@@ -808,6 +831,8 @@ UPDATE sandbox_sessions sb SET state='paused', paused_at=now(), pause_requested_
  WHERE a.id=sb.account_id
    AND coalesce((sqlc.arg(retention_days)::integer[])[array_position(sqlc.arg(plans)::text[], a.plan)], 0) > 0
    AND sb.kind='persistent' AND sb.state IN ('ready','frozen','pausing') AND sb.lease_expires_at < now()
+   AND NOT (sb.state IN ('ready','frozen') AND sb.node_id IS NOT NULL
+     AND sb.lease_expires_at > now()-make_interval(secs=>sqlc.arg(grace_seconds)::double precision))
    AND EXISTS (SELECT 1 FROM sandbox_volumes v WHERE v.session_id=sb.id);
 
 -- name: PauseLostSandboxSession :execrows
@@ -823,10 +848,25 @@ UPDATE sandbox_sessions sb SET state='paused', paused_at=now(), pause_requested_
 
 -- name: FailExpiredLiveSandboxSessions :execrows
 -- A live session whose replica stopped renewing has lost its VM with the
--- replica's stream; it is never booted again.
+-- replica's stream; it is never booted again. A running persistent
+-- session's VM waits on its node for a reattach until grace_seconds past
+-- its lease (ADR-20261122132055 §7).
 UPDATE sandbox_sessions SET state='failed', outcome_code='lease_lost',
   outcome_message='agentd lost the session; its VM ended with it', lease_token=NULL, lease_expires_at=NULL, closed_at=now(), updated_at=now()
- WHERE state IN ('ready','frozen','pausing') AND lease_expires_at < now();
+ WHERE state IN ('ready','frozen','pausing') AND lease_expires_at < now()
+   AND NOT (kind='persistent' AND state IN ('ready','frozen') AND node_id IS NOT NULL
+     AND lease_expires_at > now()-make_interval(secs=>sqlc.arg(grace_seconds)::double precision));
+
+-- name: ClaimDetachedSandboxSession :one
+-- A running persistent session whose replica stopped renewing, within the
+-- reattach grace: a replica takes it over and reattaches to its VM.
+UPDATE sandbox_sessions SET lease_token=sqlc.arg(lease_token)::text, lease_owner=sqlc.arg(lease_owner)::text,
+  lease_expires_at=now()+make_interval(secs=>sqlc.arg(ttl_seconds)::double precision), updated_at=now()
+ WHERE id=(SELECT d.id FROM sandbox_sessions d
+   WHERE d.kind='persistent' AND d.state IN ('ready','frozen') AND d.node_id IS NOT NULL AND d.instance_id IS NOT NULL
+     AND d.lease_expires_at < now() AND d.lease_expires_at > now()-make_interval(secs=>sqlc.arg(grace_seconds)::double precision)
+   ORDER BY d.lease_expires_at LIMIT 1 FOR UPDATE SKIP LOCKED)
+RETURNING id::text AS id, state, coalesce(node_id, '')::text AS node_id, coalesce(instance_id, '')::text AS instance_id;
 
 -- name: ReturnExpiredResumingSandboxSessions :execrows
 -- A resume whose replica stopped renewing ended with its stream before the
@@ -856,9 +896,12 @@ SELECT id::text AS id FROM ended;
 -- name: ListConsumedSandboxSessionCaptures :many
 -- Captures a resume used or a session's end left: the sweep deletes their
 -- objects once their node's upload is over, then the row. Oldest capture
--- first: those are past any upload.
-SELECT id::text AS id, storage_key, vmstate_storage_key, has_backing, created_at FROM sandbox_session_captures
- WHERE state='consumed' ORDER BY checked_at NULLS FIRST, created_at, id LIMIT sqlc.arg(max_rows)::integer;
+-- first: those are past any upload. A fork capture waits for the forks that
+-- still restore it.
+SELECT cap.id::text AS id, cap.storage_key, cap.vmstate_storage_key, cap.has_backing, cap.created_at FROM sandbox_session_captures cap
+ WHERE cap.state='consumed' AND NOT EXISTS (SELECT 1 FROM sandbox_sessions f
+   WHERE f.fork_capture_id=cap.id AND f.state IN ('queued','starting'))
+ ORDER BY cap.checked_at NULLS FIRST, cap.created_at, cap.id LIMIT sqlc.arg(max_rows)::integer;
 
 -- name: TouchSandboxSessionCaptures :exec
 -- A sweep found these captures not yet uploaded: the next sweeps take
@@ -888,10 +931,14 @@ SELECT cap.id::text AS id, cap.session_id::text AS session_id, cap.account_id::t
  ORDER BY cap.checked_at NULLS FIRST, cap.created_at, cap.id LIMIT sqlc.arg(max_rows)::integer;
 
 -- name: MarkSandboxCaptureRemote :execrows
+WITH uploaded AS (
+  UPDATE sandbox_session_captures SET uploaded_at=coalesce(uploaded_at, now())
+   WHERE id=sqlc.arg(capture_id)::text::uuid AND session_id=sqlc.arg(session_id)::text::uuid AND state='live'
+  RETURNING id
+)
 UPDATE sandbox_sessions sb SET durability='remote', updated_at=now()
  WHERE sb.id=sqlc.arg(session_id)::text::uuid AND sb.state='paused' AND sb.durability='node'
- AND EXISTS (SELECT 1 FROM sandbox_session_captures cap
-   WHERE cap.id=sqlc.arg(capture_id)::text::uuid AND cap.session_id=sb.id AND cap.state='live');
+ AND EXISTS (SELECT 1 FROM uploaded);
 
 -- name: MarkSandboxSessionVolumeNode :one
 -- ADR-20261122132055 §4: the session's VM booted on node_id with its volume
@@ -936,7 +983,8 @@ SELECT b.id::text AS id, b.session_id::text AS session_id, b.account_id::text AS
   JOIN sandbox_volume_backups l ON l.id=v.latest_backup_id
  WHERE b.state <> 'deleted' AND b.id <> l.id AND b.created_at < l.created_at
    AND (b.state='stored' OR b.created_at < now() - make_interval(secs=>sqlc.arg(upload_window_seconds)::double precision))
-   AND NOT EXISTS (SELECT 1 FROM sandbox_session_captures c WHERE c.volume_backup_id=b.id AND c.state='live')
+   AND NOT EXISTS (SELECT 1 FROM sandbox_session_captures c WHERE c.volume_backup_id=b.id
+     AND (c.state='live' OR EXISTS (SELECT 1 FROM sandbox_sessions f WHERE f.fork_capture_id=c.id AND f.state IN ('queued','starting'))))
  ORDER BY b.created_at, b.id LIMIT sqlc.arg(max_rows)::integer;
 
 -- name: ListEndedSandboxVolumes :many
@@ -945,6 +993,8 @@ SELECT b.id::text AS id, b.session_id::text AS session_id, b.account_id::text AS
 SELECT v.session_id::text AS session_id, v.account_id::text AS account_id, v.node_id
   FROM sandbox_volumes v JOIN sandbox_sessions sb ON sb.id=v.session_id
  WHERE sb.state IN ('closed','expired','failed')
+   AND NOT EXISTS (SELECT 1 FROM sandbox_session_captures c JOIN sandbox_volume_backups b ON b.id=c.volume_backup_id
+     WHERE b.session_id=v.session_id AND (c.state='live' OR EXISTS (SELECT 1 FROM sandbox_sessions f WHERE f.fork_capture_id=c.id AND f.state IN ('queued','starting'))))
  ORDER BY v.updated_at, v.session_id LIMIT sqlc.arg(max_rows)::integer;
 
 -- name: ListSandboxVolumeBackupIDs :many
@@ -959,6 +1009,93 @@ UPDATE sandbox_volume_backups SET state='deleted', deleted_at=now()
 DELETE FROM sandbox_volumes v USING sandbox_sessions sb
  WHERE v.session_id=sqlc.arg(session_id)::text::uuid AND sb.id=v.session_id AND sb.state IN ('closed','expired','failed')
    AND NOT EXISTS (SELECT 1 FROM sandbox_volume_backups b WHERE b.session_id=v.session_id AND b.state <> 'deleted');
+
+-- name: GetSandboxForkSource :one
+-- ADR-20261122132055 §3: the session a fork request names, locked so its
+-- forks see one state.
+SELECT state, (task_kind IS NOT NULL)::boolean AS is_task,
+  coalesce((SELECT c.id::text FROM sandbox_session_captures c
+    WHERE c.session_id=sb.id AND c.state='live' AND c.purpose='pause'), '')::text AS pause_capture_id,
+  (close_requested_at IS NOT NULL)::boolean AS close_requested
+ FROM sandbox_sessions sb WHERE sb.id=sqlc.arg(session_id)::text::uuid AND sb.account_id=sqlc.arg(account_id)::text::uuid
+ FOR UPDATE OF sb;
+
+-- name: InsertSandboxFork :one
+-- A fork is a new session with its source's machine, network, image and
+-- volume size, queued until its capture is uploaded.
+INSERT INTO sandbox_sessions (account_id,tenant_id,kind,preset,ram_mb,network_mode,idle_timeout_sec,expires_at,labels,
+  image_ref,image_job_id,template_id,browser,egress_allow,egress_deny,vcpu,volume_gb,forked_from,fork_capture_id)
+SELECT src.account_id, src.tenant_id, sqlc.arg(kind)::text, src.preset, src.ram_mb, src.network_mode, src.idle_timeout_sec,
+  sqlc.arg(expires_at)::timestamptz, sqlc.arg(labels)::jsonb, src.image_ref, src.image_job_id, src.template_id, src.browser,
+  src.egress_allow, src.egress_deny, src.vcpu, src.volume_gb, src.id, NULLIF(sqlc.arg(fork_capture_id)::text, '')::uuid
+ FROM sandbox_sessions src WHERE src.id=sqlc.arg(source_id)::text::uuid AND src.account_id=sqlc.arg(account_id)::text::uuid
+RETURNING id::text AS id;
+
+-- name: RequestSandboxSessionFork :execrows
+-- A running source's fork capture is agentd's: apid records the request.
+UPDATE sandbox_sessions SET fork_requested_at=coalesce(fork_requested_at, now()), updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
+ AND state IN ('starting','ready','frozen','pausing');
+
+-- name: NotifySandboxSessionRequest :exec
+-- Wakes the agentd replica holding a session to renew its lease now and see
+-- a pause, close or fork request, instead of at its next renewal. The row is
+-- the request; this is only a nudge (sent at commit inside a transaction).
+SELECT pg_notify('sandbox_session_request', sqlc.arg(session_id)::text);
+
+-- name: RecordSandboxSessionFork :one
+-- vmmd captured the running source: the capture serves the forks waiting
+-- for one, and the request is answered.
+WITH source AS (
+  SELECT id, account_id FROM sandbox_sessions
+   WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text
+), capture AS (
+  INSERT INTO sandbox_session_captures (id, session_id, account_id, node_id, storage_key, vmstate_storage_key, fc_version,
+    mem_bytes, vmstate_bytes, has_backing, volume_backup_id, purpose)
+  SELECT sqlc.arg(capture_id)::text::uuid, id, account_id, sqlc.arg(node_id)::text, sqlc.arg(storage_key)::text,
+    sqlc.arg(vmstate_storage_key)::text, sqlc.arg(fc_version)::text, sqlc.arg(mem_bytes)::bigint, sqlc.arg(vmstate_bytes)::bigint,
+    sqlc.arg(has_backing)::boolean, NULLIF(sqlc.arg(volume_backup_id)::text, '')::uuid, 'fork'
+  FROM source
+  RETURNING id, session_id
+), forks AS (
+  UPDATE sandbox_sessions f SET fork_capture_id=c.id, updated_at=now() FROM capture c
+   WHERE f.forked_from=c.session_id AND f.fork_capture_id IS NULL AND f.state='queued'
+  RETURNING f.id
+), answered AS (
+  UPDATE sandbox_sessions sb SET fork_requested_at=NULL, updated_at=now() FROM capture c WHERE sb.id=c.session_id
+)
+SELECT count(*)::bigint AS forks FROM forks;
+
+-- name: ListUnuploadedSandboxForkCaptures :many
+-- Captures forks wait for that the shared store may not hold yet: a live
+-- fork capture, or a pause capture a queued fork names (its session may have
+-- resumed before the upload). agentd checks each and marks it uploaded once
+-- the store holds it, and its forks become claimable.
+SELECT cap.id::text AS id, cap.session_id::text AS session_id, cap.account_id::text AS account_id, cap.storage_key,
+  cap.vmstate_storage_key, cap.has_backing, coalesce(cap.volume_backup_id::text, '')::text AS volume_backup_id
+  FROM sandbox_session_captures cap WHERE cap.uploaded_at IS NULL
+   AND ((cap.purpose='fork' AND cap.state='live')
+     OR EXISTS (SELECT 1 FROM sandbox_sessions f WHERE f.fork_capture_id=cap.id AND f.state='queued'))
+ ORDER BY cap.created_at, cap.id LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: MarkSandboxForkCaptureUploaded :execrows
+UPDATE sandbox_session_captures SET uploaded_at=now()
+ WHERE id=sqlc.arg(capture_id)::text::uuid AND uploaded_at IS NULL;
+
+-- name: ConsumeSpentSandboxForkCaptures :execrows
+-- A fork capture no fork waits for any more is used; the capture sweep
+-- deletes its objects.
+UPDATE sandbox_session_captures cap SET state='consumed', consumed_at=now()
+ WHERE cap.purpose='fork' AND cap.state='live' AND cap.created_at < now() - interval '1 minute'
+ AND NOT EXISTS (SELECT 1 FROM sandbox_sessions f WHERE f.fork_capture_id=cap.id AND f.state IN ('queued','starting'));
+
+-- name: FailOrphanedSandboxForks :execrows
+-- A fork whose source ended before it was captured never starts.
+UPDATE sandbox_sessions f SET state='failed', outcome_code='fork_source_ended',
+  outcome_message='the session it forked ended before the fork was taken', closed_at=now(), updated_at=now()
+ FROM sandbox_sessions src
+ WHERE f.forked_from=src.id AND f.state='queued' AND f.fork_capture_id IS NULL
+ AND src.state IN ('closed','expired','failed');
 
 -- name: GrowPausedSandboxVolume :one
 -- PATCH {volume_gb} on a paused persistent session (ADR-20261122132055 §4):
@@ -982,7 +1119,8 @@ WITH old AS (
 SELECT id::text AS id FROM grown;
 
 -- name: DeleteSandboxSessionCapture :execrows
-DELETE FROM sandbox_session_captures WHERE id=sqlc.arg(capture_id)::text::uuid AND state='consumed';
+DELETE FROM sandbox_session_captures cap WHERE cap.id=sqlc.arg(capture_id)::text::uuid AND cap.state='consumed'
+ AND NOT EXISTS (SELECT 1 FROM sandbox_sessions f WHERE f.fork_capture_id=cap.id AND f.state IN ('queued','starting'));
 
 -- name: ExpireQueuedSandboxSessions :execrows
 -- A session still queued at its end never starts.

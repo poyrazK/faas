@@ -31,6 +31,10 @@ const (
 	// (ADR-20261124094745), so the call is refused rather than served
 	// unbilled.
 	CodeConsumerEnrollmentUnavailable = "consumer_enrollment_unavailable"
+	// CodeMCPGatewayPolicyMissing refuses turning OAuth consumers on while
+	// the gateway does not check the MCP server's OAuth tokens: callers
+	// would be served but never become customers (ADR-20261124094745).
+	CodeMCPGatewayPolicyMissing = "mcp_gateway_policy_missing"
 	// CodeConsumerLinkKeyRejected reports a key that is not a live key of
 	// one of the app's consumers (ADR-20261124094745).
 	CodeConsumerLinkKeyRejected = "consumer_link_key_rejected"

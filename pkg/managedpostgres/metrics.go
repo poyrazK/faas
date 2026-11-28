@@ -55,6 +55,9 @@ const (
 	metricsUsageRecorded         = "recorded"
 	metricsUsageDeferred         = "deferred"
 	metricsUsageIncludedInSource = "included_in_source"
+	// metricsUsageSettledUnreported is a deleted database's final window the
+	// provider published the hour without and the sweep settled at zero.
+	metricsUsageSettledUnreported = "settled_unreported"
 
 	metricsSweepSuccess  = "success"
 	metricsSweepDegraded = "degraded"
@@ -188,13 +191,13 @@ func NewMetrics(reg prometheus.Registerer, prefix string, usageEnabled bool) (*M
 			m.reconcileDuration.WithLabelValues(resource, operation)
 		}
 	}
-	for _, outcome := range []string{metricsUsageRecorded, metricsUsageDeferred, metricsUsageIncludedInSource} {
+	for _, outcome := range []string{metricsUsageRecorded, metricsUsageDeferred, metricsUsageIncludedInSource, metricsUsageSettledUnreported} {
 		m.usageDatabaseTotal.WithLabelValues(outcome).Add(0)
 	}
 	for _, outcome := range []string{metricsSweepSuccess, metricsSweepDegraded, metricsSweepError, metricsSweepDisabled} {
 		m.usageSweepTotal.WithLabelValues(outcome).Add(0)
 	}
-	for _, state := range []string{"discovered", "recorded", metricsUsageIncludedInSource, "deferred"} {
+	for _, state := range []string{"discovered", "recorded", metricsUsageIncludedInSource, metricsUsageSettledUnreported, "deferred"} {
 		m.usageDatabases.WithLabelValues(state).Set(0)
 	}
 	for _, outcome := range []string{metricsAdmissionAllowed, metricsAdmissionDenied} {
@@ -320,7 +323,7 @@ func (m *Metrics) ObserveUsage(observation UsageCollectionObservation) {
 		return
 	}
 	switch observation.Outcome {
-	case metricsUsageRecorded, metricsUsageDeferred, metricsUsageIncludedInSource:
+	case metricsUsageRecorded, metricsUsageDeferred, metricsUsageIncludedInSource, metricsUsageSettledUnreported:
 		m.usageDatabaseTotal.WithLabelValues(observation.Outcome).Inc()
 	}
 }
@@ -358,6 +361,7 @@ func (m *Metrics) ObserveUsageSweep(summary UsageCollectionSummary, sweepErr err
 	m.usageDatabases.WithLabelValues("discovered").Set(float64(summary.Discovered))
 	m.usageDatabases.WithLabelValues("recorded").Set(float64(summary.Recorded))
 	m.usageDatabases.WithLabelValues(metricsUsageIncludedInSource).Set(float64(summary.IncludedInSourceUsage))
+	m.usageDatabases.WithLabelValues(metricsUsageSettledUnreported).Set(float64(summary.SettledUnreported))
 	m.usageDatabases.WithLabelValues("deferred").Set(float64(summary.Deferred))
 	if !summary.Enabled {
 		m.usageSweepTotal.WithLabelValues(metricsSweepDisabled).Inc()

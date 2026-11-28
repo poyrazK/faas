@@ -247,7 +247,10 @@ func (r *Runner) runWorkTick(ctx context.Context) {
 		}
 		if err := r.syncJob(ctx, job); err != nil {
 			if storage.IsNotFound(err) {
-				err = state.PermanentSnapshotReplicaError(err)
+				// The canonical object is gone: schedd retires a snapshot
+				// recorded this way once it is past its upload grace, so the
+				// hourly requeue stops failing it forever (prod hunt r72).
+				err = state.SnapshotOriginMissingError(err)
 			}
 			if !job.Revalidation {
 				r.metricsObserve("failed", job.Region)

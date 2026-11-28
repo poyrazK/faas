@@ -127,7 +127,7 @@ internal hosting service and Gregale Agents are already unreachable.
 | 18 | Deploy-time vulnerability scan (Grype) and secret scan | `gregale deployment --show-scan --show-secret-scan` | **MISSING** | — | beta |
 | 19 | Projects: multi-app apply, submissions, project previews | `/v1/projects` (93 routes), `gregale projects` | `projects` ga | — | GA |
 | 20 | Environments and Environment GitOps (field ownership) | `gregale environment`, `environment-field-ownership` | **MISSING** | — | preview |
-| 21 | App tasks: one-off commands (`app exec`, ADR-230) | `/v1/apps/{slug}/tasks` | **MISSING** | `env: FAAS_APP_TASK_API_ENABLED=0` | preview |
+| 21 | App tasks: one-off commands (`app exec`, `app tasks`, ADR-230) and interactive sessions (`exec -it`, `app cp`, `app port-forward`, `postgres connect`, ADR-1037) | `/v1/apps/{slug}/tasks`, dashboard `tasks` | `app-tasks` preview, `interactive-app-sessions` preview | `faas_app_task_api: true` on production (2026-11-22); sessions `faas_interactive_app_tasks: false` | preview |
 | 22 | Image runs: run an image interactively | `/v1/image-runs` | **MISSING** | `faas_image_runs_enabled: false` | internal |
 | 23 | Deploy queue controls: reorder, deploy immediately, cancel, clear obsolete | `gregale deploy` queue routes | **MISSING** | plan: `QueueControlsAllowed` | beta |
 

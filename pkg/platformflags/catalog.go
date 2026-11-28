@@ -143,6 +143,10 @@ const (
 	// changes: a URI past the inspection bound is a detection, and warn and
 	// block rules check the wider CRS rule set.
 	EdgeWAFStrictInspection = "edge_waf_strict_inspection"
+	// EdgeWAFInlineBody releases ADR-831 amendment 22: under strict
+	// inspection, warn and block rules also score the body's first 6 fields
+	// (within 2 KiB) in-path.
+	EdgeWAFInlineBody = "edge_waf_inline_body"
 )
 
 // EdgeFeatures are the edge rule features apid refuses to configure and
@@ -552,6 +556,17 @@ var catalog = []Spec{
 			"(method enforcement, PHP, Node.js and generic injection, session fixation, Java incl. Log4Shell), and count a URI over 8 KiB as an uninspected-uri detection; " +
 			"observe reports such URIs too. Off by default because rules already in block then start refusing long URIs and methods outside GET, HEAD, POST, OPTIONS, PUT, PATCH and DELETE. " +
 			"While it is off, warn and block check the earlier rule set on the first 8 KiB of the URI.",
+		ADR:        "ADR-831",
+		Consumers:  []string{"gatewayd-internal"},
+		Attributes: []Attribute{AttributePlan},
+		RetireBy:   "2027-03-31",
+	},
+	{
+		Key:   EdgeWAFInlineBody,
+		Label: "Edge WAF in-path body checks",
+		Description: "Release ADR-831 amendment 22 to accounts that also have edge_waf_strict_inspection: warn and block rules score the first 6 JSON values or form fields (within 2 KiB) of an uncompressed request body in-path, " +
+			"so block refuses a body attack with 403 before the app wakes. Off by default because rules already in block then start refusing bodies observe only reported " +
+			"(GraphQL bodies 932235/942290, prose with SQL 942350). While it is off, bodies are sampled and reported only.",
 		ADR:        "ADR-831",
 		Consumers:  []string{"gatewayd-internal"},
 		Attributes: []Attribute{AttributePlan},

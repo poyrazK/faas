@@ -122,6 +122,10 @@ type SandboxWakeRequest struct {
 	// a restore runs none of them again. A cold-boot fallback (ADR-005) runs
 	// them as for a new session.
 	SessionCapture bool
+	// ForkedFrom is the source session of a fork restored from its fork
+	// capture (ADR-20261122132055 §3). Once the guest answers, it is told,
+	// so commands see GREGALE_FORKED_FROM and those that asked reseed.
+	ForkedFrom string
 	// Volume is a persistent session's workspace volume, a host path from
 	// SandboxVolumes.Ensure (ADR-20261122132055 §4). guest-init mounts it at
 	// /workspace. A warm snapshot has no such drive, so a session with a
@@ -217,8 +221,33 @@ func (m *Manager) WakeSandbox(ctx context.Context, req SandboxWakeRequest) (*Ins
 			return destroy(err)
 		}
 	}
+	if req.ForkedFrom != "" {
+		m.markSandboxForked(ctx, dialer, req)
+	}
 	return inst, nil
 }
+
+// markSandboxForked tells a fork's guest its source. A guest-init from
+// before the marker refuses the op; the fork runs on without it.
+func (m *Manager) markSandboxForked(ctx context.Context, dialer SandboxDialer, req SandboxWakeRequest) {
+	markCtx, cancel := context.WithTimeout(ctx, sandboxForkMarkTimeout)
+	defer cancel()
+	conn, err := dialer.DialSandbox(markCtx, req.Instance)
+	if err == nil {
+		var res sandboxproto.ForkedResult
+		err = sandboxproto.Do(markCtx, conn, sandboxproto.Request{Op: sandboxproto.OpForked, ForkedFrom: req.ForkedFrom},
+			func(uint32, []byte) error { return nil }, &res)
+		_ = conn.Close()
+		if err == nil {
+			m.log.Info("fcvm: sandbox fork marked", "instance", req.Instance, "forked_from", req.ForkedFrom, "signaled", res.Signaled)
+			return
+		}
+	}
+	m.log.Warn("fcvm: sandbox fork not marked", "instance", req.Instance, "forked_from", req.ForkedFrom, "err", err)
+}
+
+// sandboxForkMarkTimeout bounds telling a fork's guest it is one.
+const sandboxForkMarkTimeout = 5 * time.Second
 
 // The sandbox browser's commands (ADR-20261116182615 §1): gregale-browser
 // in agent-base starts Chromium and its CDP relay; its --wait polls the

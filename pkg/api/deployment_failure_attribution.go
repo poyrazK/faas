@@ -11,9 +11,13 @@ import (
 // content: the guest kernel refused the readiness connection, the workload
 // crashed or ran out of its plan memory, the build could not install the
 // customer's dependencies, or a policy gate rejected what the customer
-// shipped. Codes whose evidence can also come from the platform
-// (app_startup_timeout when the guest never answered, deployment_smoke_failed,
-// stage_* timeouts, internal) are deliberately absent.
+// shipped: its app layer is over the plan's filesystem cap, or its GitHub
+// branch moved past the commit being deployed (prod 2026-11-28: two Free
+// signups' refusals put "deployments degraded" on the public status page).
+// Codes whose evidence can also come from the platform (app_startup_timeout
+// when the guest never answered, deployment_smoke_failed, stage_* timeouts,
+// internal, source_ref_unavailable when GitHub could not be asked,
+// image_manifest_invalid) are deliberately absent.
 var customerCausedDeploymentFailureCodes = []string{
 	CodeAppNotListening,
 	CodeAppLoopbackBound,
@@ -28,6 +32,8 @@ var customerCausedDeploymentFailureCodes = []string{
 	CodeStatelessOnlyViolation,
 	CodeSecurityScanBlocked,
 	CodeAPIContractBreakingChange,
+	CodeAppLayerTooBig,
+	CodeSourceRefStale,
 }
 
 // CustomerCausedDeploymentFailureCodes returns a copy of the error codes that
