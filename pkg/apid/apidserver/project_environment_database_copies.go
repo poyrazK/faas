@@ -159,7 +159,7 @@ func (s *server) ensureProjectEnvironmentDatabaseClone(ctx context.Context, acct
 	}
 	// The right copy, still being restored: only its state is not ready yet.
 	if cloned.State == managedpostgres.StateProvisioning {
-		return managedpostgres.Database{}, fmt.Errorf("isolated PostgreSQL copy is not ready: %w%w", errDatabaseCopyInProgress, managedpostgres.ErrConflict)
+		return managedpostgres.Database{}, copyStarted(cloned.CreatedAt, fmt.Errorf("isolated PostgreSQL copy is not ready: %w: %w", errDatabaseCopyInProgress, managedpostgres.ErrConflict))
 	}
 	if cloned.State != managedpostgres.StateReady {
 		return managedpostgres.Database{}, fmt.Errorf("isolated PostgreSQL copy is not ready: %w", managedpostgres.ErrConflict)
@@ -178,7 +178,7 @@ var errDatabaseCopyInProgress = errors.New("database copy is still being restore
 // a branch's data off for 20 s).
 func projectEnvironmentDatabaseCopyRestoreError(cloned managedpostgres.Database, copy projectEnvironmentDatabaseCopy, err error) error {
 	if errors.Is(err, managedpostgres.ErrConflict) && cloned.State == managedpostgres.StateProvisioning && projectEnvironmentDatabaseCopyMatches(cloned, copy) {
-		return fmt.Errorf("isolated PostgreSQL copy is not ready: %w%w", errDatabaseCopyInProgress, err)
+		return copyStarted(cloned.CreatedAt, fmt.Errorf("isolated PostgreSQL copy is not ready: %w: %w", errDatabaseCopyInProgress, err))
 	}
 	return err
 }
