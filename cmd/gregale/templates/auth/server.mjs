@@ -11,8 +11,10 @@ import { callbackTokens, createRealtimeAuthorizer } from './realtime.mjs'
 import { storageBindings } from './storage.mjs'
 import { createWorkflowStarter, workflowsConfig } from './workflows.mjs'
 import { createEventPublisher, lifecycleConfig, publishesAfter, setLifecycleEvents } from './events.mjs'
-import { createAnonymousPruner, createAttemptPruner, createAuditPruner, createOrgAuditPruner, createUnusedClientPruner } from './retention.mjs'
-import { addressBucket, budgetKey, budgets, createAttempts, guardedPath, outcome, passwordEntries, secondStepEntries, signInSubject } from './attempts.mjs'
+import { createAnonymousPruner, createAttemptPruner, createAuditPruner, createOrgAuditPruner, createSignInSeenPruner, createUnusedClientPruner } from './retention.mjs'
+import { addressBucket, budgetKey, budgets, createAttempts, goQueryValue, guardedPath, outcome, passwordEntries, secondStepEntries, signInSubject } from './attempts.mjs'
+import { createSignInSecurity, serverAgent, sessionFromAnswer, sessionFromLocation } from './security.mjs'
+import { createSends, messageBudgets, sendRoute } from './sends.mjs'
 import { bodyAllowed, smsSendPath } from './sms.mjs'
 import { createScimHandler } from './scim.mjs'
 import { signupRefusal } from './signups.mjs'
@@ -135,10 +137,25 @@ async function serveAdminKey(req, res, adminKeys, attempts) {
 
 // limited answers 429 for a spent budget, with the limit, the count so far,
 // the window and where the limits are documented.
-function limited(res, code, budget, observed, wait) {
+function limited(res, code, budget, observed, wait, extra = {}) {
   if (res.headersSent) return res.destroy()
   res.writeHead(429, { 'Content-Type': 'application/problem+json', 'Cache-Control': 'no-store', 'Retry-After': String(wait) })
-  res.end(JSON.stringify({ status: 429, code, limit: budget.limit, observed, window_seconds: budget.seconds, retry_after: wait, docs_url: limitsDocs }))
+  res.end(JSON.stringify({ status: 429, code, ...extra, limit: budget.limit, observed, window_seconds: budget.seconds, retry_after: wait, docs_url: limitsDocs }))
+}
+
+// tokenRoute names a request whose answer may hand a client a session: a
+// token grant (by its grant type), a verified one-time code, or a sign-up
+// that signs the person in at once.
+function tokenRoute(method, path) {
+  if (method !== 'POST') return null
+  const [raw, query = ''] = path.split('?')
+  const route = raw.replace(/\/+$/, '')
+  if (route === '/token') return goQueryValue(query, 'grant_type') ?? ''
+  return route === '/verify' || route === '/signup' ? route.slice(1) : null
+}
+
+function logFailure(event) {
+  return err => console.error(JSON.stringify({ level: 'error', event, sqlstate: err?.code ?? null }))
 }
 
 // readBody buffers a request body up to bodyBytes for an SMS country check.
@@ -159,7 +176,14 @@ function tokenReply(res, status, payload, headers = {}) {
   res.end(JSON.stringify(payload))
 }
 
-export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz, ui, realtime, admin, settings, smsCountries = null, scim, oauth = null, serviceAccounts = null, attempts = null, adminKeys = [] } = {}) {
+export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz, ui, realtime, admin, settings, smsCountries = null, scim, oauth = null, serviceAccounts = null, attempts = null, adminKeys = [], signIns = null, sends = null, captcha = false } = {}) {
+  // signedIn records a session GoTrue handed this client (security.mjs). A
+  // session only a redirect showed (an email link scanner may follow it)
+  // neither alerts nor trusts its network, and a refreshed one trusts only
+  // a network its account was already seen on (record's trust).
+  const signedIn = (req, session, { alert = true, trust = true } = {}) => {
+    if (signIns && session && !serverAgent(req.headers['user-agent'])) signIns.record({ ...session, address: clientAddress(req), userAgent: req.headers['user-agent'], alert, trust }).catch(logFailure('sign_in_record_failed'))
+  }
   return http.createServer((req, res) => {
     // A third-party OAuth client's token is good here only for userinfo.
     const bearer = bearerClaims(req.headers.authorization)
@@ -205,7 +229,7 @@ export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bo
         if (!request) {
           const headers = forwardHeaders(req.headers)
           delete headers['content-length']
-          return upstreamRequest(req, res, path, upstreamPort, { ...headers, 'content-length': String(body.length) }, oauth).end(body)
+          return upstreamRequest(req, res, path, upstreamPort, { ...headers, 'content-length': String(body.length) }, { oauth, signedIn }).end(body)
         }
         // The public gateway replaces X-Real-IP with the verified client address.
         serviceAccounts.issue({ ...request, address: String(req.headers['x-real-ip'] ?? req.socket.remoteAddress) }).then(payload => tokenReply(res, 200, payload), err => {
@@ -218,18 +242,17 @@ export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bo
     // Password sign-ins and second-step codes spend failed-attempt budgets
     // the instances share (attempts.mjs).
     const guarded = attempts ? guardedPath(req.method, path) : null
-    if (guarded) return readBody(req, res, bodyBytes, body => guardAttempt({ req, res, path, upstreamPort, body, oauth, attempts, kind: guarded, bearer }))
-    // A request that may text a number is read whole, checked against the
-    // country allowlist and forwarded as read.
-    if (smsCountries && smsSendPath(req.method, req.url)) {
-      return readBody(req, res, bodyBytes, body => {
-        if (!bodyAllowed(body, smsCountries)) return problem(res, 422, 'sms_country_not_allowed')
-        const headers = forwardHeaders(req.headers)
-        delete headers['content-length']
-        upstreamRequest(req, res, path, upstreamPort, { ...headers, 'content-length': String(body.length) }, oauth).end(body)
-      })
-    }
-    proxy(req, res, path, upstreamPort, bodyBytes, oauth)
+    if (guarded) return readBody(req, res, bodyBytes, body => guardAttempt({ req, res, path, upstreamPort, body, oauth, attempts, kind: guarded, bearer, signIns, signedIn, captcha }))
+    // A request that may send a message is read whole, checked against the
+    // SMS country allowlist and the message budgets (sends.mjs), and
+    // forwarded as read.
+    const send = sends ? sendRoute(req.method, path) : null
+    const sms = smsCountries !== null && smsSendPath(req.method, req.url)
+    if (send || sms) return readBody(req, res, bodyBytes, body => forwardSend({ req, res, path, upstreamPort, body, oauth, signedIn, send, sends, smsCountries: sms ? smsCountries : null, bearer }))
+    // Other answers that hand out a session are read to record it.
+    const issuing = signIns ? tokenRoute(req.method, path) : null
+    const observe = issuing === null ? null : async (status, answer) => { if (status === 200) signedIn(req, sessionFromAnswer(answer), { trust: issuing === 'refresh_token' ? 'known' : true }) }
+    proxy(req, res, path, upstreamPort, bodyBytes, { oauth, observe, signedIn })
   })
 }
 
@@ -270,53 +293,128 @@ async function registerClient(req, res, path, upstreamPort, bodyBytes, oauth, at
     req.resume()
     return problem(res, 503, 'auth_unavailable')
   }
-  proxy(req, res, path, upstreamPort, bodyBytes, oauth)
+  proxy(req, res, path, upstreamPort, bodyBytes, { oauth })
 }
 
 // guardAttempt counts a password sign-in or second-step code against its
 // budgets, refuses it when that overspends one, and otherwise forwards it
-// and settles the count from GoTrue's answer before relaying it.
-async function guardAttempt({ req, res, path, upstreamPort, body, oauth, attempts, kind, bearer }) {
-  let entries
+// and settles the count from GoTrue's answer before relaying it. Past the
+// account-wide password budget a sign-in still goes ahead from a network
+// the account signed in from recently (security.mjs), or, up to
+// limits.trustedBudgetMultiplier times the budget, when the app checks a
+// CAPTCHA, which GoTrue then verifies on every password sign-in: guessing
+// from many addresses can slow an account but not lock its owner out on
+// their own network. A refused attempt, or one GoTrue never answered, gives
+// back what it counted, and a success clears
+// the address's budget but not the account's, so the owner signing in does
+// not hand a guesser a fresh budget.
+async function guardAttempt({ req, res, path, upstreamPort, body, oauth, attempts, kind, bearer, signIns, signedIn, captcha }) {
+  let entries, subject = null
   if (kind === 'password') {
-    let subject
     try { subject = signInSubject(body) } catch (err) { return problem(res, 400, err.message === 'ambiguous' ? 'ambiguous_sign_in' : 'bad_json') }
     entries = subject ? passwordEntries(subject, clientAddress(req)) : []
   } else {
     entries = secondStepEntries(bearer)
   }
+  const counted = []
+  const giveBack = () => counted.length ? attempts.release(counted).catch(logFailure('attempt_budget_failed')) : undefined
   try {
-    const wait = entries.length ? await attempts.reserve(entries) : 0
-    if (wait > 0) {
-      if (res.headersSent) return res.destroy()
-      res.writeHead(429, { 'Content-Type': 'application/problem+json', 'Cache-Control': 'no-store', 'Retry-After': String(wait) })
-      return res.end(JSON.stringify({ status: 429, code: 'too_many_attempts', error_code: 'too_many_attempts', retry_after: wait }))
+    for (const entry of entries) {
+      const { count, wait } = await attempts.take(entry)
+      counted.push(entry)
+      if (wait === 0) continue
+      if (entry.budget === budgets.passwordAccount) {
+        if (captcha && count <= entry.budget.limit * limits.trustedBudgetMultiplier) continue
+        if (await signIns?.trusted(subject, clientAddress(req))) continue
+      }
+      await giveBack()
+      return limited(res, 'too_many_attempts', entry.budget, count - 1, wait, { error_code: 'too_many_attempts' })
     }
   } catch (err) {
-    console.error(JSON.stringify({ level: 'error', event: 'attempt_budget_failed', sqlstate: err?.code ?? null }))
+    logFailure('attempt_budget_failed')(err)
+    await giveBack()
     return problem(res, 503, 'auth_unavailable')
   }
   const headers = forwardHeaders(req.headers)
   delete headers['content-length']
-  const observe = entries.length ? async (status, answer) => {
-    const result = outcome(kind, status, answer)
+  const observe = async (status, answer) => {
+    const result = entries.length ? outcome(kind, status, answer) : null
     try {
-      if (result === 'success') await attempts.clear(entries)
-      else if (result !== 'failure') await attempts.release(entries)
+      // A success clears the address's budget and gives back what it
+      // counted against the account's, whose failures stay.
+      if (result === 'success') {
+        await attempts.clear(entries.filter(entry => entry.budget !== budgets.passwordAccount))
+        await attempts.release(entries.filter(entry => entry.budget === budgets.passwordAccount))
+      }
+      else if (result !== 'failure' && entries.length) await attempts.release(entries)
     } catch (err) {
-      console.error(JSON.stringify({ level: 'error', event: 'attempt_budget_failed', sqlstate: err?.code ?? null }))
+      logFailure('attempt_budget_failed')(err)
     }
-  } : null
-  upstreamRequest(req, res, path, upstreamPort, { ...headers, 'content-length': String(body.length) }, oauth, observe).end(body)
+    if (status === 200) signedIn(req, sessionFromAnswer(answer))
+  }
+  upstreamRequest(req, res, path, upstreamPort, { ...headers, 'content-length': String(body.length) }, { oauth, observe, signedIn, onError: giveBack }).end(body)
+}
+
+// forwardSend checks a request that may send a message: a texted number
+// against the country allowlist, then the message budgets. A budget GoTrue's
+// refusal shows was not spent is given back.
+async function forwardSend({ req, res, path, upstreamPort, body, oauth, signedIn, send, sends, smsCountries, bearer }) {
+  if (smsCountries && !bodyAllowed(body, smsCountries)) return problem(res, 422, 'sms_country_not_allowed')
+  let taken = []
+  if (send) {
+    let recipients
+    try {
+      recipients = await sends.recipients(send, body, bearer)
+    } catch (err) {
+      if (err.message === 'ambiguous') return problem(res, 400, 'ambiguous_recipient')
+      logFailure('message_budget_failed')(err)
+      return problem(res, 503, 'auth_unavailable')
+    }
+    try {
+      const result = await sends.take(recipients, clientAddress(req))
+      if (result.refused) {
+        const { name, budget, count, wait } = result.refused
+        return limited(res, 'too_many_messages', budget, count, wait, { error_code: 'too_many_messages', scope: name })
+      }
+      taken = result.taken
+    } catch (err) {
+      logFailure('message_budget_failed')(err)
+      return problem(res, 503, 'auth_unavailable')
+    }
+  }
+  const headers = forwardHeaders(req.headers)
+  delete headers['content-length']
+  const giveBack = () => taken.length ? sends.release(taken).catch(logFailure('message_budget_failed')) : undefined
+  // A sign-up that signs the person in at once hands over a session.
+  const observe = async (status, answer) => {
+    // An email or phone change GoTrue applied without writing to anyone
+    // (the same value, or no confirmation needed) sent nothing.
+    if (status >= 400 || (send?.user && status === 200 && !answer?.new_email && !answer?.new_phone)) await giveBack()
+    if (status === 200) signedIn(req, sessionFromAnswer(answer))
+  }
+  upstreamRequest(req, res, path, upstreamPort, { ...headers, 'content-length': String(body.length) }, { oauth, observe, signedIn, onError: giveBack }).end(body)
 }
 
 // upstreamRequest opens the request to GoTrue and relays its answer, with
 // the OAuth server's consent redirect and an authorization's resource. With
-// observe, the answer is read whole and shown to it before it is relayed.
-function upstreamRequest(req, res, path, upstreamPort, headers, oauth, observe = null) {
+// observe, the answer is read whole and shown to it before it is relayed. A
+// redirect that hands the browser a session in its fragment is recorded
+// with signedIn.
+function upstreamRequest(req, res, path, upstreamPort, headers, { oauth = null, observe = null, signedIn = null, onError = null } = {}) {
+  let failed = false
+  const dropped = () => {
+    if (failed) return
+    failed = true
+    onError?.()
+    problem(res, 502, 'auth_unavailable')
+  }
   const upstream = http.request({ host: gotrue.host, port: upstreamPort, method: req.method, path, headers }, response => {
     const responseHeaders = forwardHeaders(response.headers)
+    if (signedIn && typeof responseHeaders.location === 'string' && responseHeaders.location.includes('access_token=')) signedIn(req, sessionFromLocation(responseHeaders.location), { alert: false, trust: false })
     if (oauth && responseHeaders.location) responseHeaders.location = oauth.location(responseHeaders.location)
+    // A dropped answer gives back what the request counted and answers 502.
+    response.on('error', dropped)
+    response.on('aborted', dropped)
     if (observe) return observed(response, res, responseHeaders, observe)
     const details = oauth && req.method === 'GET' && response.statusCode === 200 ? authorizationDetails.exec(path.split('?')[0]) : null
     if (details) return withResource(response, res, responseHeaders, oauth, details[1])
@@ -324,12 +422,12 @@ function upstreamRequest(req, res, path, upstreamPort, headers, oauth, observe =
     res.writeHead(response.statusCode, responseHeaders)
     response.pipe(res)
   })
-  upstream.on('error', () => problem(res, 502, 'auth_unavailable'))
+  upstream.on('error', dropped)
   return upstream
 }
 
-function proxy(req, res, path, upstreamPort, bodyBytes, oauth) {
-  const upstream = upstreamRequest(req, res, path, upstreamPort, forwardHeaders(req.headers), oauth)
+function proxy(req, res, path, upstreamPort, bodyBytes, options) {
+  const upstream = upstreamRequest(req, res, path, upstreamPort, forwardHeaders(req.headers), options)
   let received = 0
   req.on('data', chunk => {
     received += chunk.length
@@ -350,6 +448,7 @@ function observed(response, res, headers, observe) {
   let size = 0
   response.on('data', chunk => { size += chunk.length; if (size <= limits.bodyBytes) chunks.push(chunk) })
   response.on('end', async () => {
+    if (response.aborted) return
     if (size > limits.bodyBytes) return problem(res, 502, 'auth_unavailable')
     const payload = Buffer.concat(chunks)
     let answer = null
@@ -454,9 +553,12 @@ export function start(env = process.env) {
     resource: id => authorizationResource(pool, id),
     clientCredentials: config.serviceAccounts,
   } : null
+  const signIns = createSignInSecurity({ pool, mailer, alerts: config.security.newDeviceAlerts, app: config.app })
   const server = createServer({ authz, ui, realtime, admin, // Admin keys are not listed in the public settings; the CLI asks
     // /settings/v1/admin-keys/<ID> for each key it finds among the secrets.
-    settings: config.settings, adminKeys: adminKeySummary(adminKeys), smsCountries: config.smsCountries, scim, oauth, serviceAccounts, attempts })
+    settings: config.settings, adminKeys: adminKeySummary(adminKeys), smsCountries: config.smsCountries, scim, oauth, serviceAccounts, attempts,
+    // Trusted networks and new-device alerts, and message budgets.
+    signIns, sends: createSends({ attempts, pool, budgets: messageBudgets(config.security), trusted: signIns.trusted }), captcha: config.captcha !== null })
   // Lifecycle events publish after requests that may change users, and
   // once at startup for anything recorded while the app was parked.
   const lifecycle = lifecycleConfig(env)
@@ -471,7 +573,7 @@ export function start(env = process.env) {
     console.error(JSON.stringify({ level: 'error', event: 'domain_join_setup_failed', sqlstate: err?.code ?? null }))
   })
   // Activity retention prunes on the same request-driven schedule.
-  const pruners = [createAuditPruner({ pool, days: config.auditRetentionDays }), createOrgAuditPruner({ pool, days: config.auditRetentionDays }), createAnonymousPruner({ pool, days: config.anonymousRetentionDays }), createAttemptPruner({ pool }),
+  const pruners = [createAuditPruner({ pool, days: config.auditRetentionDays }), createOrgAuditPruner({ pool, days: config.auditRetentionDays }), createAnonymousPruner({ pool, days: config.anonymousRetentionDays }), createAttemptPruner({ pool }), createSignInSeenPruner({ pool }),
     ...(config.oauth ? [createUnusedClientPruner({ pool })] : [])]
   for (const pruner of pruners) pruner.poke()
   server.on('request', (req, res) => {

@@ -44,6 +44,15 @@ const unusedClientStatement = `UPDATE auth.oauth_clients SET deleted_at = now() 
       AND NOT EXISTS (SELECT 1 FROM auth.oauth_authorizations a WHERE a.client_id = c.id AND a.created_at > now() - make_interval(hours => $1))
     LIMIT $2)`
 
+// Sign-in records (sql/0025) older than limits.newDeviceDays: past that, a
+// network or device kind counts as new again.
+const signInSeenStatement = `DELETE FROM gregale_auth.sign_in_seen WHERE key IN (
+    SELECT key FROM gregale_auth.sign_in_seen WHERE last_seen < now() - make_interval(days => $1) LIMIT $2)`
+
+export function createSignInSeenPruner(options) {
+  return createPruner({ ...options, days: limits.newDeviceDays, statement: signInSeenStatement, event: 'sign_in_seen' })
+}
+
 export function createUnusedClientPruner(options) {
   return createPruner({ ...options, days: limits.oauthUnusedClientHours, statement: unusedClientStatement, event: 'unused_oauth_clients' })
 }

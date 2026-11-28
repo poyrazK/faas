@@ -302,3 +302,15 @@ func TestSessionLimits(t *testing.T) {
 		t.Fatal("format")
 	}
 }
+
+func TestSignInProtection(t *testing.T) {
+	set, unset, err := Change{NewDeviceAlerts: ptr(false), MessagesPerRecipient: ptr(3), MessagesPerNetwork: ptr(0)}.Secrets()
+	if err != nil || !reflect.DeepEqual(set, map[string]string{"AUTH_NEW_DEVICE_ALERTS": "0", "AUTH_MESSAGES_PER_RECIPIENT": "3"}) || !reflect.DeepEqual(unset, []string{"AUTH_MESSAGES_PER_NETWORK"}) {
+		t.Fatalf("set %v unset %v err %v", set, unset, err)
+	}
+	for _, bad := range []Change{{MessagesPerRecipient: ptr(-1)}, {MessagesPerRecipient: ptr(51)}, {MessagesPerNetwork: ptr(1001)}} {
+		if _, _, err := bad.Secrets(); err == nil {
+			t.Errorf("%+v accepted", bad)
+		}
+	}
+}

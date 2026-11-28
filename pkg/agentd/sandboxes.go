@@ -506,7 +506,15 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 	switch code := status.Code(recvErr); {
 	case ctx.Err() != nil:
 		// The replica is stopping; the lease lapses and the sweeper decides.
-	case claim.Reattach != nil && !ready && code == codes.NotFound:
+	case claim.Reattach != nil && !ready && reattachFinal(code):
+		// Nothing to reattach to, or a reattach that cannot succeed (an
+		// older schedd or vmmd that booted afresh, a session outside the
+		// plan): each claim moves the grace, so trying again would never
+		// end. A session with a volume resumes cold from it.
+		s.log.Info("agentd: sandbox reattach failed", "sandbox_id", claim.ID, "cause", code.String())
+		if s.pauseLost(ctx, claim) {
+			return
+		}
 		s.finish(ctx, claim, &sessionEnd{agentstore.SandboxFailed, sandboxOutcomeVMLost, "the session's VM ended unexpectedly"})
 	case claim.Reattach != nil && !ready, persistent && detachable && code == codes.Unavailable:
 		// The VM may run on without a stream: the lease lapses and a claim
@@ -1127,6 +1135,19 @@ func (s *Sandboxes) finish(ctx context.Context, claim agentstore.SandboxClaim, e
 		return
 	}
 	s.log.Info("agentd: sandbox ended", "sandbox_id", claim.ID, "state", end.state, "outcome", end.code)
+}
+
+// reattachFinal reports a reattach failure no later claim gets past: no VM
+// to take over, a session outside the plan, or a schedd or vmmd that booted
+// afresh (Internal) or cannot reattach. Anything else (Unavailable,
+// Canceled during a restart, a stream that ended cleanly) tries again.
+func reattachFinal(code codes.Code) bool {
+	switch code {
+	case codes.NotFound, codes.Internal, codes.FailedPrecondition, codes.InvalidArgument,
+		codes.Unimplemented, codes.DataLoss, codes.PermissionDenied:
+		return true
+	}
+	return false
 }
 
 // pauseLost returns a persistent session whose VM ended unexpectedly to
