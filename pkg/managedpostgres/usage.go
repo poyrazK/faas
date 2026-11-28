@@ -30,9 +30,12 @@ type UsageCollectionSummary struct {
 	Discovered            int
 	Recorded              int
 	IncludedInSourceUsage int
-	Deferred              int
-	Enabled               bool
-	CompletedAt           time.Time
+	// SettledUnreported counts deleted databases whose final window the
+	// provider never reported and this sweep settled at zero.
+	SettledUnreported int
+	Deferred          int
+	Enabled           bool
+	CompletedAt       time.Time
 }
 
 // UsageSummary is the provider-neutral account usage read model. It contains
@@ -87,6 +90,12 @@ type UsageCollector struct {
 	observeSweep func(UsageCollectionSummary, error)
 	afterSweep   func(context.Context)
 	exclusive    func(context.Context) (func(), bool, error)
+
+	// publishedUntil and liveBackends are per sweep, by backend: how far the
+	// provider has reported any database that still exists there, and
+	// whether one exists at all (hourPublished).
+	publishedUntil map[string]time.Time
+	liveBackends   map[string]bool
 
 	idleTailObserver func(IdleTailObservation)
 	// pendingIdleTails is the last Collect's work for readIdleTails.
@@ -198,6 +207,7 @@ func (c *UsageCollector) Collect(ctx context.Context) (summary UsageCollectionSu
 	sort.SliceStable(work, func(i, j int) bool {
 		return work[i].observedAt.Before(work[j].observedAt)
 	})
+	c.startPublication(work)
 	err := c.collectUsageRounds(ctx, work, now, false)
 	c.queueIdleTails(work)
 	if err != nil {
@@ -228,6 +238,14 @@ type usageCollectionWork struct {
 	// latest is the database's latest closed window when this sweep
 	// collected it for the first time.
 	latest *Usage
+	// collectedUntil is the database's durable coverage when the sweep began.
+	collectedUntil time.Time
+	// unreportedFrom, when set, is a deleted database's final window the
+	// provider reported nothing for. It waits, without another request, for
+	// evidence that the provider has published the hour (settleUnreported).
+	unreportedFrom time.Time
+	// settled marks a final window this sweep's main rounds settled at zero.
+	settled bool
 }
 
 func (c *UsageCollector) prepareUsageCollection(ctx context.Context, database Database, to time.Time) *usageCollectionWork {
@@ -283,6 +301,7 @@ func (c *UsageCollector) prepareUsageCollection(ctx context.Context, database Da
 		return work
 	}
 	work.observedAt = progress.ObservedAt
+	work.collectedUntil = progress.CollectedUntil
 	to = work.to
 	// Keep replaying the final correction tail until every window has an
 	// observation beyond the existing three-window correction horizon. Retained
@@ -334,14 +353,34 @@ func (c *UsageCollector) collectUsageRounds(ctx context.Context, work []*usageCo
 	if corrections {
 		rounds = recentUsageCorrectionWindows
 	}
+	// A final window still waiting for evidence when the rounds end stays
+	// unreported, and the database is deferred to a later sweep.
+	defer func() {
+		for _, item := range work {
+			if !item.unreportedFrom.IsZero() {
+				item.unreportedFrom, item.err = time.Time{}, ErrUsageNotReported
+			}
+		}
+	}()
 	for round := 0; round < rounds; round++ {
 		attempted := false
 		for _, item := range work {
-			if item.err != nil || item.included || item.completed || item.requests >= maximumUsageWindowsPerSweep {
+			if item.err != nil || item.included || item.completed {
 				continue
 			}
 			if err := ctx.Err(); err != nil {
 				return err
+			}
+			if !item.unreportedFrom.IsZero() {
+				// No new request: a later report of the hour, by another
+				// database in this sweep, may settle it.
+				if c.settleUnreported(ctx, item, corrections, observedAt) {
+					attempted = true
+				}
+				continue
+			}
+			if item.requests >= maximumUsageWindowsPerSweep {
+				continue
 			}
 			if item.discover {
 				if !corrections {
@@ -365,6 +404,14 @@ func (c *UsageCollector) collectUsageRounds(ctx context.Context, work []*usageCo
 			item.requests++
 			var usage Usage
 			usage, item.err = c.collectWindow(ctx, item.database, item.backend, from, from.Add(c.policy.Window), observedAt)
+			if errors.Is(item.err, ErrUsageNotReported) && c.finalWindowUnreported(item.database, from.Add(c.policy.Window)) {
+				item.err, item.unreportedFrom = nil, from
+				c.settleUnreported(ctx, item, corrections, observedAt)
+				continue
+			}
+			if item.err == nil {
+				c.notePublished(item.database.BackendID, from.Add(c.policy.Window))
+			}
 			if item.err == nil && !corrections && usage.Window.To.Equal(item.to) {
 				item.latest = &usage
 			}
@@ -423,6 +470,9 @@ func (c *UsageCollector) finishUsageCollection(ctx context.Context, work []*usag
 		case item.included:
 			outcome = "included_in_source"
 			summary.IncludedInSourceUsage++
+		case item.settled:
+			outcome = metricsUsageSettledUnreported
+			summary.SettledUnreported++
 		default:
 			summary.Recorded++
 		}
@@ -455,14 +505,19 @@ func (c *UsageCollector) recordSharedUsage(ctx context.Context, database Databas
 
 func (c *UsageCollector) collectWindow(ctx context.Context, database Database, backend Backend, from, to, observedAt time.Time) (Usage, error) {
 	usage, err := backend.Provider.Usage(ctx, database.ProviderResourceID, UsageWindow{From: from, To: to})
-	if errors.Is(err, ErrUsageNotReported) && c.settlesUnreportedWindow(database, to) {
-		c.logger.Info("managed postgres usage settled a deleted database's unreported final window",
-			"database_id", database.ID, "window_from", from, "window_to", to)
-		usage, err = unreportedUsage(backend, from, to), nil
+	if errors.Is(err, ErrUsageNotReported) {
+		// Kept apart from other unavailability: a deleted database's final
+		// window may settle at zero (settleUnreported).
+		return Usage{}, ErrUsageNotReported
 	}
 	if err != nil {
 		return Usage{}, normalizeProviderError(err)
 	}
+	return c.recordWindow(ctx, database, backend, usage, from, to, observedAt)
+}
+
+// recordWindow validates one complete window and commits it to the ledger.
+func (c *UsageCollector) recordWindow(ctx context.Context, database Database, backend Backend, usage Usage, from, to, observedAt time.Time) (Usage, error) {
 	if err := usage.Validate(); err != nil {
 		return Usage{}, ErrUnavailable
 	}
@@ -509,22 +564,79 @@ func (c *UsageCollector) collectWindow(ctx context.Context, database Database, b
 	return usage, nil
 }
 
-// settlesUnreportedWindow reports whether a window the provider reported no
+// finalWindowUnreported reports whether a window the provider reported no
 // consumption for is a deleted database's final window, now closed. Neon
 // reports nothing for the hour a project was deleted in (production
-// 2026-11-27). Without this the final window never completes: every sweep
-// deferred it, FaasManagedPostgresUsageCollectionStale fired, and admission
-// refused the account's new databases as stale. Neon bills from the same
-// consumption data, so the unreported partial hour is zero on both sides.
-// Earlier windows and live databases still wait for a report, and the final
-// correction tail asks for this window again, so a late report replaces the
-// zeros.
-func (c *UsageCollector) settlesUnreportedWindow(database Database, to time.Time) bool {
+// 2026-11-27). Without settling it the final window never completes: every
+// sweep deferred it, FaasManagedPostgresUsageCollectionStale fired, and
+// admission refused the account's new databases as stale. Earlier windows
+// and existing databases always wait for a report.
+func (c *UsageCollector) finalWindowUnreported(database Database, to time.Time) bool {
 	if database.State != StateDeleted || database.DeletedAt == nil {
 		return false
 	}
 	end := usageEnd(*database.DeletedAt, c.policy.Window)
 	return !end.IsZero() && to.Equal(end) && !c.now().Before(end)
+}
+
+// settleUnreported records a waiting final window as zero once the provider
+// has published that hour, and reports whether it acted. Neon bills from the
+// same consumption data, so an hour it published without this project is
+// zero on both sides. A provider that is merely slow or failing has published
+// nothing for the hour, so the database waits rather than losing usage, and
+// the correction tail asks for the window again, so a late report still
+// replaces the zeros. Only the main rounds count and log a settlement; a
+// correction that settles the same window again only confirms it.
+func (c *UsageCollector) settleUnreported(ctx context.Context, item *usageCollectionWork, corrections bool, observedAt time.Time) bool {
+	from := item.unreportedFrom
+	to := from.Add(c.policy.Window)
+	if !c.hourPublished(item.database.BackendID, to) {
+		return false
+	}
+	item.unreportedFrom = time.Time{}
+	if _, item.err = c.recordWindow(ctx, item.database, item.backend, unreportedUsage(item.backend, from, to), from, to, observedAt); item.err != nil {
+		return true
+	}
+	if corrections {
+		item.replayUntil = from
+		return true
+	}
+	item.from, item.settled = to, true
+	c.logger.Info("managed postgres usage settled a deleted database's unreported final window",
+		"database_id", item.database.ID, "window_from", from, "window_to", to)
+	return true
+}
+
+// startPublication seeds, per backend, how far the provider has reported
+// databases that still exist there, from their durable coverage. A deleted
+// database's coverage may hold settled zeros, so it is never evidence.
+func (c *UsageCollector) startPublication(work []*usageCollectionWork) {
+	c.publishedUntil, c.liveBackends = map[string]time.Time{}, map[string]bool{}
+	for _, item := range work {
+		if item.included || item.err != nil || item.database.State == StateDeleted {
+			continue
+		}
+		c.liveBackends[item.database.BackendID] = true
+		c.notePublished(item.database.BackendID, item.collectedUntil)
+	}
+}
+
+// notePublished raises a backend's published hour after a real report.
+func (c *UsageCollector) notePublished(backendID string, until time.Time) {
+	if until.After(c.publishedUntil[backendID]) {
+		c.publishedUntil[backendID] = until
+	}
+}
+
+// hourPublished reports whether the provider has published the window ending
+// at to: another database on the backend has a report through it. With no
+// other database there to report, the correction horizon is the longest a
+// report is worth waiting for.
+func (c *UsageCollector) hourPublished(backendID string, to time.Time) bool {
+	if !c.publishedUntil[backendID].Before(to) {
+		return true
+	}
+	return !c.liveBackends[backendID] && !c.now().Before(to.Add(recentUsageCorrectionWindows*c.policy.Window))
 }
 
 // unreportedUsage is a zero reading for every meter the backend promises, so
