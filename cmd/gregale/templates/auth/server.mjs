@@ -362,7 +362,7 @@ async function guardAttempt({ req, res, path, upstreamPort, body, oauth, attempt
 // refusal shows was not spent is given back.
 async function forwardSend({ req, res, path, upstreamPort, body, oauth, signedIn, send, sends, smsCountries, bearer }) {
   if (smsCountries && !bodyAllowed(body, smsCountries)) return problem(res, 422, 'sms_country_not_allowed')
-  let taken = [], settle = []
+  let taken = []
   if (send) {
     let recipients
     try {
@@ -379,7 +379,6 @@ async function forwardSend({ req, res, path, upstreamPort, body, oauth, signedIn
         return limited(res, 'too_many_messages', budget, count, wait, { error_code: 'too_many_messages', scope: name })
       }
       taken = result.taken
-      settle = result.settle
     } catch (err) {
       logFailure('message_budget_failed')(err)
       return problem(res, 503, 'auth_unavailable')
@@ -391,7 +390,6 @@ async function forwardSend({ req, res, path, upstreamPort, body, oauth, signedIn
   // A sign-up that signs the person in at once hands over a session.
   const observe = async (status, answer) => {
     if (status >= 400) await giveBack()
-    else if (settle.length) await sends.settle(settle).catch(logFailure('message_budget_failed'))
     if (status === 200) signedIn(req, sessionFromAnswer(answer))
   }
   upstreamRequest(req, res, path, upstreamPort, { ...headers, 'content-length': String(body.length) }, { oauth, observe, signedIn, onError: giveBack }).end(body)

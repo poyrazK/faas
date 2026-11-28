@@ -6,7 +6,7 @@ import { createServer } from '../server.mjs'
 import { budgets } from '../attempts.mjs'
 import { limits, securityConfig } from '../config.mjs'
 import { createSignInSecurity, deviceKind, deviceLabel, serverAgent, sessionFromAnswer, sessionFromLocation } from '../security.mjs'
-import { bodyRecipients, createSends, messageBudgets, sendRoute } from '../sends.mjs'
+import { bodyRecipients, createSends, inbox, messageBudgets, sendRoute } from '../sends.mjs'
 import { routeTeam } from '../team.mjs'
 
 const user = '11111111-2222-4333-8444-555555555555'
@@ -122,12 +122,13 @@ test('a phone factor challenge counts against its user; an authenticator challen
   assert.deepEqual(await sends.recipients({ kind: 'challenge', factor }, Buffer.alloc(0), { sub: user }), [`user:${user}`])
   assert.deepEqual(await sends.recipients({ kind: 'challenge', factor: user }, Buffer.alloc(0), { sub: user }), [])
   assert.deepEqual(await sends.recipients({ kind: 'reauthenticate' }, Buffer.alloc(0), null), [])
-  // A user's budget is counted only once GoTrue accepted the request.
+  // Counted as it arrives, so a parallel burst cannot all pass; GoTrue
+  // refusing a forged token gives the count back (forwardSend).
   const first = await sends.take([`user:${user}`], '203.0.113.7')
   assert.equal(first.refused, undefined)
-  assert.equal((await sends.take([`user:${user}`], '203.0.113.7')).refused, undefined, 'not counted before GoTrue answers')
-  await sends.settle(first.settle)
   assert.equal((await sends.take([`user:${user}`], '203.0.113.7')).refused.name, 'recipient')
+  await sends.release(first.taken)
+  assert.equal((await sends.take([`user:${user}`], '203.0.113.7')).refused, undefined)
   assert.deepEqual(await sends.recipients({ kind: 'body', user: true }, Buffer.from('{"email":"new@example.com"}'), { sub: user }), ['email:new@example.com', `user:${user}`])
   assert.deepEqual(await sends.recipients({ kind: 'body', user: true }, Buffer.from('{"password":"x"}'), { sub: user }), [])
 })
@@ -180,6 +181,8 @@ function memorySeen(users = { 'ann@example.com': user }) {
           fresh_trusted: has(args[1], args[4], true) && has(args[2], args[4], true), fresh: has(args[1], args[4]) && has(args[2], args[4]) }] }
       }
       if (sql.startsWith('DELETE FROM gregale_auth.attempt_budgets')) { markers.delete(args[0].toString('hex')); return { rows: [] } }
+      if (sql.startsWith('DELETE FROM gregale_auth.sign_in_seen')) { rows.delete(args[0].toString('hex')); return { rows: [] } }
+      if (sql.startsWith('UPDATE gregale_auth.sign_in_seen')) { const row = rows.get(args[0].toString('hex')); if (row) row.trusted = false; return { rows: [] } }
       if (sql.includes('INSERT INTO gregale_auth.attempt_budgets')) {
         const fresh = !markers.has(args[0].toString('hex'))
         markers.add(args[0].toString('hex'))
@@ -251,7 +254,26 @@ test('two refreshes from a new network still grant no trust', async () => {
   assert.equal(await security.trusted('email:ann@example.com', '198.51.100.66'), false)
 })
 
-test('a failed alert leaves the day open for the next sign-in', async () => {
+test('plus tags and Gmail dots reach one inbox and share its budget', () => {
+  assert.equal(inbox('email:v.ic.tim+1@gmail.com'), 'email:victim@gmail.com')
+  assert.equal(inbox('email:victim@googlemail.com'), 'email:victim@gmail.com')
+  assert.equal(inbox('email:a.b+x@example.com'), 'email:a.b@example.com')
+  assert.equal(inbox('email:+x@example.com'), 'email:+x@example.com')
+  assert.equal(inbox('phone:15550100'), 'phone:15550100')
+})
+
+test('a refreshed session from an unrecorded network alerts once, not daily', async () => {
+  const pool = memorySeen(), mailer = memoryMailer()
+  const security = createSignInSecurity({ pool, mailer, app: 'Shop', templates: async () => ({}), log: () => {} })
+  const home = { userId: user, email: 'ann@example.com', address: '203.0.113.7', userAgent: 'Firefox (Mac)' }
+  await security.record(home)
+  const refresh = { ...home, address: '198.51.100.66', userAgent: 'Chrome (Windows)', trust: 'known' }
+  assert.equal(await security.record(refresh), true)
+  assert.equal(await security.record(refresh), false)
+  assert.equal(mailer.sent.length, 1)
+})
+
+test('a failed alert lets the next sign-in from that device try again', async () => {
   const pool = memorySeen()
   let failing = true
   const sent = []
@@ -259,7 +281,8 @@ test('a failed alert leaves the day open for the next sign-in', async () => {
   const security = createSignInSecurity({ pool, mailer, app: 'Shop', templates: async () => ({}), log: () => {} })
   const home = { userId: user, email: 'ann@example.com', address: '203.0.113.7', userAgent: 'Firefox (Mac)' }
   await security.record(home)
-  await assert.rejects(security.record({ ...home, address: '198.51.100.1', userAgent: 'Lynx' }), /timeout/)
+  assert.equal(await security.record({ ...home, address: '198.51.100.1', userAgent: 'Lynx' }), false, 'a failed alert does not fail the sign-in')
+  assert.equal(await security.trusted('email:ann@example.com', '198.51.100.1'), true, 'trust does not wait on email')
   failing = false
   assert.equal(await security.record({ ...home, address: '198.51.100.2', userAgent: 'Lynx' }), true)
   assert.equal(sent.length, 1)
@@ -273,6 +296,7 @@ test('sign-ins an app server completes are not the person\'s device', async t =>
   assert.ok(serverAgent('Go-http-client/1.1'))
   assert.ok(!serverAgent('Mozilla/5.0 (iPhone) Safari/604.1'))
   assert.ok(!serverAgent('okhttp/4.12.0 MyApp'))
+  assert.ok(!serverAgent('okhttp/4.9.2'), 'Android and React Native apps')
   const recorded = []
   const { base } = await harness(t, { signIns: { trusted: async () => false, record: async entry => { recorded.push(entry) } } })
   await post(base, '/token?grant_type=pkce', { refresh_token: 'r' }, '203.0.113.7', { 'User-Agent': 'node' })

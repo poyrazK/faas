@@ -147,8 +147,10 @@ writes nothing (a stolen refresh token gains nothing) but may alert;
 sign-ins from server user agents (HTTP libraries, none) are not recorded;
 a success gives back its account-budget count; user-keyed message budgets
 (re-authentication, phone challenges, email/phone change) are checked
-before and counted after GoTrue accepts; an alert is sent before records
-are written and gives its day marker back if the send fails; a redirect-only
+counted on arrival and given back when GoTrue refuses; email budgets key
+on the inbox (no +tag, Gmail without dots); records are written before the
+alert, one alert per device kind per `AuthNewDeviceDays`, and a failed send
+gives its marker back and rolls back only the device record; a redirect-only
 sign-in neither alerts nor counts as seen; impersonated tokens (`act`) are
 not recorded; one alert per device kind and day is claimed in
 `attempt_budgets`. The CAPTCHA exception, and a trusted network's pass of

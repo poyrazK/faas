@@ -18,9 +18,10 @@ import { normalizePhone } from './sms.mjs'
 // request is counted before GoTrue
 // sees it, so a parallel burst cannot all pass, and given back when GoTrue
 // refuses it (an error status) or never answers: then nothing was sent. A
-// signed-in user's budget is keyed by a token the front has not verified,
-// so it is only checked before and counted once GoTrue accepted the
-// request: a forged token spends nobody's budget.
+// signed-in user's budget is keyed by a token the front has not verified;
+// GoTrue refuses a forged one and its count is given back, so it holds a
+// budget only while in flight. An email budget is keyed by the inbox, so
+// plus-addressing and Gmail's dots do not each get a fresh budget.
 
 // messageBudgets are the budgets for the owner's settings (securityConfig).
 export function messageBudgets(security) {
@@ -72,6 +73,18 @@ export function bodyRecipients(raw) {
   return recipients
 }
 
+// inbox is the mailbox an email recipient reaches: without a +tag, and
+// without dots for Gmail, which ignores them.
+export function inbox(recipient) {
+  if (!recipient.startsWith('email:')) return recipient
+  const address = recipient.slice('email:'.length), at = address.lastIndexOf('@')
+  if (at < 1) return recipient
+  let local = address.slice(0, at).split('+')[0]
+  const domain = address.slice(at + 1)
+  if (domain === 'gmail.com' || domain === 'googlemail.com') local = local.replaceAll('.', '')
+  return `email:${local || address.slice(0, at)}@${domain === 'googlemail.com' ? 'gmail.com' : domain}`
+}
+
 // createSends counts one request against the network and each recipient.
 // take returns the entries it counted, for release when GoTrue refuses the
 // request, or, when that overspent a budget, the budget's name, the count
@@ -93,15 +106,9 @@ export function createSends({ attempts, pool, budgets, trusted = null }) {
       return factor?.factor_type === 'phone' ? [`user:${user}`] : []
     },
     async take(recipients, address) {
-      if (recipients.length === 0) return { taken: [], settle: [] }
-      const entry = recipient => ({ name: 'recipient', recipient, key: budgetKey('message-recipient', recipient), budget: budgets.recipient })
-      const settle = recipients.filter(recipient => recipient.startsWith('user:')).map(entry)
-      for (const pending of settle) {
-        const wait = await attempts.check([pending])
-        if (wait > 0) return { refused: { name: 'recipient', budget: pending.budget, count: pending.budget.limit, wait } }
-      }
+      if (recipients.length === 0) return { taken: [] }
       const entries = [...(budgets.network ? [{ name: 'network', key: budgetKey('message-network', addressBucket(address)), budget: budgets.network }] : []),
-        ...recipients.filter(recipient => !recipient.startsWith('user:')).map(entry)]
+        ...recipients.map(recipient => ({ name: 'recipient', recipient, key: budgetKey('message-recipient', inbox(recipient)), budget: budgets.recipient }))]
       const taken = []
       try {
         for (const entry of entries) {
@@ -109,8 +116,9 @@ export function createSends({ attempts, pool, budgets, trusted = null }) {
           taken.push(entry)
           // A trusted network passes a spent recipient budget, up to a
           // ceiling, so it cannot be used to send without end.
+          if (wait === 0) continue
           const passes = entry.recipient && trusted && count <= entry.budget.limit * limits.trustedBudgetMultiplier && await trusted(entry.recipient, address)
-          if (wait > 0 && !passes) {
+          if (!passes) {
             await attempts.release(taken)
             return { refused: { name: entry.name, budget: entry.budget, count: count - 1, wait } }
           }
@@ -119,10 +127,8 @@ export function createSends({ attempts, pool, budgets, trusted = null }) {
         if (taken.length) await attempts.release(taken).catch(() => {})
         throw err
       }
-      return { taken, settle }
+      return { taken }
     },
     release: taken => taken.length ? attempts.release(taken) : Promise.resolve(),
-    // settle counts a signed-in user's budget once GoTrue accepted the request.
-    settle: pending => pending.length ? attempts.fail(pending) : Promise.resolve(),
   }
 }

@@ -58,7 +58,7 @@ const impersonated = payload => typeof payload?.act?.sub === 'string' && payload
 // alert).
 export function serverAgent(userAgent) {
   const ua = String(userAgent ?? '').trim()
-  return ua === '' || /^(node|undici|node-fetch|axios|got|deno|bun|python|aiohttp|httpx|go-http-client|curl|wget|java|apache-httpclient|okhttp\/[0-9.]+$|ruby|faraday|guzzlehttp|php|rust|reqwest|dart:io|supabase-js-node)\b/i.test(ua)
+  return ua === '' || /^(node|undici|node-fetch|axios|got|deno|bun|python|aiohttp|httpx|go-http-client|curl|wget|java|apache-httpclient|ruby|faraday|guzzlehttp|php|rust|reqwest|dart:io|supabase-js-node)\b/i.test(ua)
 }
 
 // sessionFromAnswer reads who signed in from GoTrue's token answer.
@@ -120,7 +120,8 @@ export function createSignInSecurity({ pool, mailer = null, alerts = true, app, 
     // network trusted), which trusts only a network the account is trusted
     // on, or one where a redirect handed this device a session, and is
     // otherwise not recorded. Only trusted records count as seen when
-    // deciding to alert.
+    // deciding to alert. A failed alert is logged, never thrown: the
+    // sign-in is still recorded.
     async record({ userId, email, address, userAgent, alert = true, trust = true }) {
       const network = networkKey(userId, address), device = deviceKey(userId, userAgent)
       const { rows: [seen] } = await pool.query(`SELECT
@@ -135,27 +136,38 @@ export function createSignInSecurity({ pool, mailer = null, alerts = true, app, 
             AND coalesce(bool_or(key = $3 AND last_seen > now() - make_interval(secs => $5)), false) AS fresh
         FROM gregale_auth.sign_in_seen WHERE user_id = $1`, [userId, network, device, limits.newDeviceDays, limits.signInSeenRefreshSeconds])
       const trusted = trust === true || (trust === 'known' && (seen.network_seen || (seen.network_recorded && seen.device_recorded)))
-      // The alert goes first: a failed send records nothing, so the next
-      // sign-in from this device alerts again.
-      const alerted = alert && alerts && mailer && email && seen.known && !seen.network_seen && !seen.device_seen ? await this.alert({ userId, email, address, userAgent }) : false
-      if (!(trust === 'known' && !trusted) && !(trusted ? seen.fresh_trusted : seen.fresh)) {
+      const written = !(trust === 'known' && !trusted) && !(trusted ? seen.fresh_trusted : seen.fresh)
+      if (written) {
         // A record is refreshed hourly, or at once when a trusted sign-in
         // follows untrusted ones; trust is never taken back.
         await pool.query(`INSERT INTO gregale_auth.sign_in_seen AS s (key, user_id, network, trusted) VALUES ($1, $3, $5, $6), ($2, $3, NULL, $6)
           ON CONFLICT (key) DO UPDATE SET last_seen = now(), trusted = s.trusted OR EXCLUDED.trusted
           WHERE s.last_seen < now() - make_interval(secs => $4) OR (EXCLUDED.trusted AND NOT s.trusted)`, [network, device, userId, limits.signInSeenRefreshSeconds, networkOnly(address), trusted])
       }
-      return alerted
+      if (!alert || !alerts || !mailer || !email || !seen.known || seen.network_seen || seen.device_seen) return false
+      try {
+        return await this.alert({ userId, email, address, userAgent })
+      } catch (err) {
+        // The network stays recorded (trust must not wait on email); the
+        // device is put back as it was, so the next sign-in from it alerts.
+        log(JSON.stringify({ level: 'error', event: 'new_device_alert_failed', user_id: userId }))
+        if (written) {
+          await pool.query(seen.device_recorded ? 'UPDATE gregale_auth.sign_in_seen SET trusted = false WHERE key = $1' : 'DELETE FROM gregale_auth.sign_in_seen WHERE key = $1', [device]).catch(() => {})
+        }
+        return false
+      }
     },
-    // alert sends the new-device email, once per device kind and day however
-    // many sign-ins race: the first to claim the day's marker (an
-    // attempt_budgets row, pruned with them) sends it, whatever the email
-    // provider deduplicates. A failed send gives the marker back.
+    // alert sends the new-device email once per device kind in
+    // limits.newDeviceDays, however many sign-ins race or refresh: the first
+    // to claim the marker (an attempt_budgets row, pruned with them) sends
+    // it, whatever the email provider deduplicates. A failed send gives the
+    // marker back and throws.
     async alert({ userId, email, address, userAgent }) {
       const at = now()
-      const marker = budgetKey('new-device-alert', userId, deviceKind(userAgent), at.toISOString().slice(0, 10))
-      const { rowCount } = await pool.query(`INSERT INTO gregale_auth.attempt_budgets (key, failures, window_ends_at)
-        VALUES ($1, 1, now() + interval '1 day') ON CONFLICT (key) DO NOTHING`, [marker])
+      const marker = budgetKey('new-device-alert', userId, deviceKind(userAgent))
+      const { rowCount } = await pool.query(`INSERT INTO gregale_auth.attempt_budgets AS b (key, failures, window_ends_at)
+        VALUES ($1, 1, now() + make_interval(days => $2))
+        ON CONFLICT (key) DO UPDATE SET failures = 1, window_ends_at = EXCLUDED.window_ends_at WHERE b.window_ends_at <= now()`, [marker, limits.newDeviceDays])
       if (rowCount === 0) return false
       try {
         const message = renderEmail(email, templateFor(await templates(), 'new_device'), {

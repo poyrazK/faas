@@ -518,7 +518,8 @@ stolen refresh token does not make its network trusted),
 and never when more than 20 accounts signed in from it in those 30 days,
 such as your own server signing users in. Sign-ins your server completes
 for a user (a code exchange or sign-in from Node, Python, Go, curl and
-similar clients, or with no user agent) are not recorded at all: they
+similar HTTP libraries, or with no user agent; Android's okhttp counts as a
+device) are not recorded at all: they
 neither trust a network nor alert. Signing in clears the address's count
 but leaves the account's failures, so it does not hand the guesser a fresh
 budget; a correct password is never counted as a failure. Failed
@@ -548,8 +549,9 @@ A spent budget answers `429` with `code` and `error_code`
 page's address, before GoTrue sends anything. A request GoTrue refuses is
 not counted, nor is one GoTrue never answered. An email or phone change
 also counts against the signed-in user, since GoTrue writes to the current
-address too; budgets keyed by the signed-in user count only once GoTrue
-accepted the request, so a forged token spends nobody's. So that a stranger asking
+address too; a forged token's count is given back when GoTrue refuses it.
+An email address's budget is its inbox's: `ann+1@example.com` shares
+`ann@example.com`'s, and Gmail addresses ignore dots. So that a stranger asking
 for someone's links cannot keep them from signing in, a request from a
 network that account trusts (see above) passes a spent recipient budget,
 up to four times the budget. The network budget is off by default
@@ -566,8 +568,8 @@ password if it was not them. A first sign-in, or the first after 90 days
 away, sends nothing, and so does a sign-in only an email link's redirect
 showed (link scanners follow those); a refreshed session from a new network
 and device alerts, since a stolen refresh token looks like that. At most
-one alert goes out per device and day; if sending fails, the next sign-in
-from that device tries again. Sessions support staff open as a
+one alert goes out per device in 90 days; if sending fails, the sign-in is
+still recorded and the next sign-in from that device tries again. Sessions support staff open as a
 user are never recorded. The device is what
 the client says it is, so someone who copies the person's browser and
 system from a new network gets no alert; the alert is a signal, not a
