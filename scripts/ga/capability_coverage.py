@@ -464,6 +464,9 @@ INFRA_RULES = [
     r"^edge-overload$",
     # ADR-20261103163954 §4: Cloudflare's ranges skip those connection limits.
     r"^edge-proxy-cidrs$",
+    # ADR-20261127170000: vmmd closes port 80 on the entry addresses when the
+    # edge runs no HTTP redirect listener.
+    r"^public-entry-http$",
 ]
 
 

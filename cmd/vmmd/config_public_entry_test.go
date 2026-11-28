@@ -19,9 +19,9 @@ func TestLoadConfigPublicEntryAddrsOpenOnly443(t *testing.T) {
 	}
 	rendered := runtimeHostPolicy(cfg.ComputeNode, netip.MustParsePrefix(cfg.ComputeNode.HostBridgeCIDR), false).Render()
 	for _, want := range []string{
-		`ip daddr 203.0.113.10 tcp dport 443 accept comment "public entry"`,
-		`ip6 daddr 2001:db8::10 tcp dport 443 accept comment "public entry"`,
-		`ip daddr 203.0.113.10 drop comment "public entry carries 443 only"`,
+		`ip daddr 203.0.113.10 tcp dport { 80, 443 } accept comment "public entry"`,
+		`ip6 daddr 2001:db8::10 tcp dport { 80, 443 } accept comment "public entry"`,
+		`ip daddr 203.0.113.10 drop comment "public entry carries 80 and 443 only"`,
 		"tcp dport 22 accept",
 	} {
 		if !strings.Contains(rendered, want) {
@@ -44,7 +44,7 @@ func TestLoadConfigPublicEntryAddrsWinOverCloudflareSources(t *testing.T) {
 		t.Fatalf("LoadConfig: %v", err)
 	}
 	rendered := runtimeHostPolicy(cfg.ComputeNode, netip.MustParsePrefix(cfg.ComputeNode.HostBridgeCIDR), false).Render()
-	if !strings.Contains(rendered, `ip daddr 203.0.113.10 tcp dport 443 accept comment "public entry"`) || strings.Contains(rendered, "gateway via Cloudflare") {
+	if !strings.Contains(rendered, `ip daddr 203.0.113.10 tcp dport { 80, 443 } accept comment "public entry"`) || strings.Contains(rendered, "gateway via Cloudflare") {
 		t.Fatalf("runtime policy did not put the entry rules first:\n%s", rendered)
 	}
 }

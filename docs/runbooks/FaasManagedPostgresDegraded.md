@@ -21,7 +21,7 @@ The `/metrics` listener exposes these low-cardinality families:
 | `apid_managed_postgres_reconcile_duration_seconds{resource,operation}` | Lifecycle attempt latency. |
 | `apid_managed_postgres_usage_collection_sweeps_total{outcome}` | Complete, degraded, failed, or disabled usage sweeps. |
 | `apid_managed_postgres_usage_last_success_timestamp_seconds` | Freshness of the latest complete usage sweep. |
-| `apid_managed_postgres_usage_collection_databases{state}` | Counts from the latest usage sweep, including `state="included_in_source"` for restore descendants covered by the source aggregate. |
+| `apid_managed_postgres_usage_collection_databases{state}` | Counts from the latest usage sweep, including `state="included_in_source"` for restore descendants covered by the source aggregate and `state="settled_unreported"` for deleted databases whose final hour the provider never reported (settled at zero; see below). |
 | `apid_managed_postgres_usage_policy_enabled` | Whether usage guardrails are enabled. |
 | `apid_managed_postgres_provisioning_enabled` | Current evaluated staging rollout gate. |
 | `apid_managed_postgres_canary_admission_total{outcome}` | Canary allow/deny decisions. |
@@ -45,6 +45,13 @@ credential, connection URL, or provider error text.
 4. For stale usage, confirm the collector can reach the provider and that the
    complete provider window has closed. New reservations intentionally fail
    closed until `usage_last_success_timestamp_seconds` advances.
+   A deleted database's final hour that the provider reports nothing for is
+   settled at zero once another database on the same backend has a report for
+   that hour, or, when none exists there, three hours after it closed. Until
+   then the database is deferred. A rising
+   `apid_managed_postgres_usage_collection_databases_total{outcome="settled_unreported"}`
+   is expected after deletions; one without deletions means the provider
+   stopped reporting projects and needs a look.
 5. If the provider is unavailable, leave provisioning disabled and drain
    known resources through the normal reconciler. Never delete catalog rows as
    a shortcut; account deletion requires provider-confirmed tombstones.

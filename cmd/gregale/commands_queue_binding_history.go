@@ -38,6 +38,12 @@ func cmdQueueBindingList(client queueBindingListClient, args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(rows))
 	}
+	if len(rows) == 0 {
+		// An empty list printed nothing, which read as a broken command
+		// (prod hunt r63).
+		_, _ = fmt.Fprintf(osStdout, "No queue bindings for %s. Add one with `gregale queue bindings create %s --name NAME --queue-name QUEUE`.\n", pos[0], pos[0])
+		return 0
+	}
 	for _, row := range rows {
 		retirement := ""
 		if row.RetiredAt != nil {

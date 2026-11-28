@@ -28,12 +28,15 @@ func TestUsageRequiresCompleteConsumptionCoverage(t *testing.T) {
 		periods []map[string]any
 		cursor  string
 		wantErr bool
-		compute int64
+		// notReported is a project with no timeframe at all, the one gap the
+		// usage collector may settle for a deleted database's final window.
+		notReported bool
+		compute     int64
 	}{
 		{name: "normal project cursor", periods: []map[string]any{usagePeriod(from, usageFrame(from, middle, metric), usageFrame(middle, to, metric))}, cursor: "quiet-river-123", compute: 6},
 		{name: "omitted zero meters", periods: []map[string]any{usagePeriod(from, usageFrame(from, to))}},
-		{name: "no periods", wantErr: true},
-		{name: "no timeframes", periods: []map[string]any{usagePeriod(from)}, wantErr: true},
+		{name: "no periods", wantErr: true, notReported: true},
+		{name: "no timeframes", periods: []map[string]any{usagePeriod(from)}, wantErr: true, notReported: true},
 		{name: "missing boundaries", periods: []map[string]any{usagePeriod(from, map[string]any{"metrics": []map[string]any{metric}})}, wantErr: true},
 		{name: "missing last hour", periods: []map[string]any{usagePeriod(from, usageFrame(from, middle, metric))}, wantErr: true},
 		{name: "missing first hour", periods: []map[string]any{usagePeriod(from, usageFrame(middle, to, metric))}, wantErr: true},
@@ -60,6 +63,9 @@ func TestUsageRequiresCompleteConsumptionCoverage(t *testing.T) {
 			if test.wantErr {
 				if !errors.Is(err, managedpostgres.ErrUnavailable) {
 					t.Fatalf("incomplete or duplicate consumption accepted: %+v, %v", usage, err)
+				}
+				if got := errors.Is(err, managedpostgres.ErrUsageNotReported); got != test.notReported {
+					t.Fatalf("not reported = %v, want %v (%v)", got, test.notReported, err)
 				}
 				return
 			}

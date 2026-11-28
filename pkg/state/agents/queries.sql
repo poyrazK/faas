@@ -713,6 +713,7 @@ WITH session AS (
    WHERE f.forked_from IN (SELECT session_id FROM capture) AND f.fork_capture_id IS NULL AND f.state='queued'
 )
 UPDATE sandbox_sessions sb SET state='paused', paused_at=now(), pause_requested_at=NULL, fork_requested_at=NULL, durability='node',
+  resume_requested_at=CASE WHEN sqlc.arg(resume_after)::boolean AND sb.close_requested_at IS NULL THEN now() ELSE sb.resume_requested_at END,
   node_id=NULL, instance_id=NULL, lease_token=NULL, lease_owner=NULL, lease_expires_at=NULL,
   expires_at=now()+make_interval(secs=>sqlc.arg(retention_seconds)::double precision), updated_at=now()
  WHERE sb.id IN (SELECT session_id FROM capture);
@@ -819,7 +820,9 @@ UPDATE sandbox_sessions SET state='queued', lease_token=NULL, lease_expires_at=N
 -- A persistent session with a volume whose replica stopped renewing lost
 -- its VM, not its files: it goes back to paused without a capture and
 -- resumes cold from its volume (ADR-20261122132055 §4), kept for its plan's
--- paused retention. Run before FailExpiredLiveSandboxSessions.
+-- paused retention. A running one's VM waits on its node for a reattach
+-- until grace_seconds past its lease (§7), as in FailExpiredLiveSandboxSessions.
+-- Run before FailExpiredLiveSandboxSessions.
 UPDATE sandbox_sessions sb SET state='paused', paused_at=now(), pause_requested_at=NULL, resume_requested_at=NULL,
   durability=NULL, node_id=NULL, instance_id=NULL, lease_token=NULL, lease_owner=NULL, lease_expires_at=NULL,
   expires_at=now()+make_interval(days=>(sqlc.arg(retention_days)::integer[])[array_position(sqlc.arg(plans)::text[], a.plan)]),
@@ -828,6 +831,8 @@ UPDATE sandbox_sessions sb SET state='paused', paused_at=now(), pause_requested_
  WHERE a.id=sb.account_id
    AND coalesce((sqlc.arg(retention_days)::integer[])[array_position(sqlc.arg(plans)::text[], a.plan)], 0) > 0
    AND sb.kind='persistent' AND sb.state IN ('ready','frozen','pausing') AND sb.lease_expires_at < now()
+   AND NOT (sb.state IN ('ready','frozen') AND sb.node_id IS NOT NULL
+     AND sb.lease_expires_at > now()-make_interval(secs=>sqlc.arg(grace_seconds)::double precision))
    AND EXISTS (SELECT 1 FROM sandbox_volumes v WHERE v.session_id=sb.id);
 
 -- name: PauseLostSandboxSession :execrows
@@ -843,10 +848,25 @@ UPDATE sandbox_sessions sb SET state='paused', paused_at=now(), pause_requested_
 
 -- name: FailExpiredLiveSandboxSessions :execrows
 -- A live session whose replica stopped renewing has lost its VM with the
--- replica's stream; it is never booted again.
+-- replica's stream; it is never booted again. A running persistent
+-- session's VM waits on its node for a reattach until grace_seconds past
+-- its lease (ADR-20261122132055 §7).
 UPDATE sandbox_sessions SET state='failed', outcome_code='lease_lost',
   outcome_message='agentd lost the session; its VM ended with it', lease_token=NULL, lease_expires_at=NULL, closed_at=now(), updated_at=now()
- WHERE state IN ('ready','frozen','pausing') AND lease_expires_at < now();
+ WHERE state IN ('ready','frozen','pausing') AND lease_expires_at < now()
+   AND NOT (kind='persistent' AND state IN ('ready','frozen') AND node_id IS NOT NULL
+     AND lease_expires_at > now()-make_interval(secs=>sqlc.arg(grace_seconds)::double precision));
+
+-- name: ClaimDetachedSandboxSession :one
+-- A running persistent session whose replica stopped renewing, within the
+-- reattach grace: a replica takes it over and reattaches to its VM.
+UPDATE sandbox_sessions SET lease_token=sqlc.arg(lease_token)::text, lease_owner=sqlc.arg(lease_owner)::text,
+  lease_expires_at=now()+make_interval(secs=>sqlc.arg(ttl_seconds)::double precision), updated_at=now()
+ WHERE id=(SELECT d.id FROM sandbox_sessions d
+   WHERE d.kind='persistent' AND d.state IN ('ready','frozen') AND d.node_id IS NOT NULL AND d.instance_id IS NOT NULL
+     AND d.lease_expires_at < now() AND d.lease_expires_at > now()-make_interval(secs=>sqlc.arg(grace_seconds)::double precision)
+   ORDER BY d.lease_expires_at LIMIT 1 FOR UPDATE SKIP LOCKED)
+RETURNING id::text AS id, state, coalesce(node_id, '')::text AS node_id, coalesce(instance_id, '')::text AS instance_id;
 
 -- name: ReturnExpiredResumingSandboxSessions :execrows
 -- A resume whose replica stopped renewing ended with its stream before the

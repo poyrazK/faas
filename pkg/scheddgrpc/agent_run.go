@@ -148,6 +148,9 @@ func agentRunStatus(err error) error {
 		// A sandbox session whose persisted workspace could not be unpacked
 		// (ADR-20261027090013 step 7): retrying cannot help it.
 		return status.Error(codes.DataLoss, problem.Detail)
+	case errors.Is(err, sched.ErrSandboxNotDetached):
+		// ADR-20261122132055 §7: the session's VM is gone; agentd ends it.
+		return status.Error(codes.NotFound, "the session's VM is no longer running on its node")
 	case errors.Is(err, errAgentRunNotProceeded):
 		return status.Error(codes.Aborted, "the run was cancelled before it booted")
 	case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):

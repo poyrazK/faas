@@ -26,7 +26,8 @@ const (
 // the CLI printed only "Not found: no such API route" (#5709).
 func printHTTPLogsUnavailable() int {
 	PrintUsage(osStderr, "HTTP request logs (--source http, or --status, --route, --request, --trace, --limit, --all) are part of the production debugger, which is not enabled for this account; run 'gregale logs <app>' for runtime logs", "logs")
-	return 2
+	// Exit 2 means authentication; this is a usage refusal (prod hunt r66).
+	return 1
 }
 
 // logsHTTPOnlyFlagsSet lists the HTTP-request-only flags the caller passed;

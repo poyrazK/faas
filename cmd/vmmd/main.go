@@ -2666,6 +2666,11 @@ heartbeat:
 	// we don't want to drop before its replacement lease is acquired.
 	stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	// ADR-20261122132055 §7: sandbox sessions are not adopted; their owners
+	// pause persistent ones (kept on this node) and end the others while
+	// vmmd still serves their streams.
+	//nolint:contextcheck // the caller ctx is already done; evacuation is shutdown work.
+	impl.EvacuateSandboxes(context.WithoutCancel(ctx), vmmdgrpc.SandboxEvacuateWait, log)
 	if cfg.AdoptRunningVMs && adoptionReport != nil {
 		// The caller ctx is already done; the notice is shutdown work.
 		announceRestart(context.WithoutCancel(ctx), store, adoptionReport.NodeID, log)

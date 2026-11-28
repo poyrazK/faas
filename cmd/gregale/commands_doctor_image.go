@@ -40,6 +40,9 @@ type doctorImageFlags struct {
 	// healthPath is the readiness path --boot probes instead of /.
 	healthPath string
 	app        string
+	// deploy is set by `deploy --local-image --boot`: the app may not exist
+	// yet, ramMB comes from --size, and fixes name deploy's flags.
+	deploy bool
 }
 
 func registerDoctorImageFlags(fs *flag.FlagSet) *doctorImageFlags {
@@ -149,7 +152,7 @@ func runDoctorImageCommand(flags *doctorImageFlags, inspector doctorImageInspect
 	}
 	report := runDoctorImageChecksWithLocal(ctx, flags.image, auth, inspector, readLocalDockerImage)
 	if flags.boot {
-		addDoctorBootChecks(&report, flags)
+		_ = addDoctorBootChecks(context.WithoutCancel(ctx), &report, flags) // not bound by the registry inspection timeout
 	}
 	if asJSON {
 		if err := writeJSON(report); err != nil {
@@ -227,17 +230,19 @@ func doctorImageTailChecks(cfg oci.ImageConfig) []doctorCheck {
 // addDoctorBootChecks runs the image locally and replaces the skipped
 // startup-and-port check with what the run found. It boots even when registry
 // metadata could not be read from the registry or the local Docker store;
-// PORT is then the default serving port.
-func addDoctorBootChecks(report *doctorReport, flags *doctorImageFlags) {
+// PORT is then the default serving port. It reports whether Ctrl-C
+// interrupted the boot, which a caller about to act on the result must treat
+// as a failure.
+func addDoctorBootChecks(parent context.Context, report *doctorReport, flags *doctorImageFlags) (interrupted bool) {
 	port := api.DefaultAppPort
 	if report.Image != nil && report.Image.ServingPort > 0 {
 		port = report.Image.ServingPort
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(parent, os.Interrupt)
 	defer stop()
-	app := doctorBootLookupApp(ctx, flags.app)
+	app := doctorBootLookupApp(ctx, flags.app, flags.deploy)
 	memoryMB, memorySource := doctorBootMemory(ctx, flags, app)
-	opts := doctorBootOptions{image: flags.image, port: port, envFile: flags.envFile, memoryMB: memoryMB, memorySource: memorySource, healthPath: flags.healthPath, probeHost: app.host}
+	opts := doctorBootOptions{image: flags.image, port: port, envFile: flags.envFile, memoryMB: memoryMB, memorySource: memorySource, healthPath: flags.healthPath, probeHost: app.host, deploy: flags.deploy}
 	if report.Image != nil {
 		opts.imageHealthcheck = doctorBootImageHealthcheck(report.Image.Healthcheck)
 	}
@@ -252,6 +257,7 @@ func addDoctorBootChecks(report *doctorReport, flags *doctorImageFlags) {
 	if report.Image != nil {
 		report.Image.Booted = true
 	}
+	return ctx.Err() != nil
 }
 
 func doctorImageAccessError(err error) doctorCheck {

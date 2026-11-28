@@ -23,7 +23,7 @@ func TestHostPolicyPeerEntryHairpin(t *testing.T) {
 	// The DNATed call lands on the input chain's bridge accept, before the
 	// entry address's per-source backstop.
 	accept := strings.Index(out, fmt.Sprintf("iifname %q tcp dport { ", p.BridgeName))
-	backstop := strings.Index(out, "ip daddr 203.0.113.10 tcp dport 443 ct state new add")
+	backstop := strings.Index(out, "ip daddr 203.0.113.10 tcp dport { 80, 443 } ct state new add")
 	if accept < 0 || backstop < 0 || accept > backstop {
 		t.Fatalf("bridge hairpin accept must precede the entry backstop:\n%s", out)
 	}

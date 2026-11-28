@@ -175,13 +175,13 @@ func TestLogsNamesTheFlagThatChoseHTTPLogs(t *testing.T) {
 	_, stderr, restore := main.SwapIO(t)
 	code := main.Run([]string{"logs", "h14-py", "--grep", "healthz", "--limit", "3"})
 	restore()
-	if code != 2 || !strings.Contains(stderr(), "--limit applies only to HTTP request logs") || !strings.Contains(stderr(), "drop --limit to read runtime logs") {
+	if code != 1 || !strings.Contains(stderr(), "--limit applies only to HTTP request logs") || !strings.Contains(stderr(), "drop --limit to read runtime logs") {
 		t.Fatalf("exit=%d stderr=%q", code, stderr())
 	}
 	_, stderr, restore = main.SwapIO(t)
 	code = main.Run([]string{"logs", "h14-py", "--source", "http", "--grep", "healthz"})
 	restore()
-	if code != 2 || !strings.Contains(stderr(), "HTTP log queries cannot be combined") {
+	if code != 1 || !strings.Contains(stderr(), "HTTP log queries cannot be combined") {
 		t.Fatalf("explicit --source http: exit=%d stderr=%q", code, stderr())
 	}
 }
