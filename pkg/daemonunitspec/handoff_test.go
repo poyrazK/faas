@@ -4,11 +4,12 @@ package daemonunitspec
 
 import "testing"
 
-// The daemons that hand off on reload are the four HTTP daemons; their units
+// The daemons that hand off on reload are the HTTP daemons; their units
 // accept sd_notify only from the main process, so an old generation cannot
 // speak for the unit after its successor took over.
 func TestHandoffDaemonsReloadByHandoff(t *testing.T) {
-	want := map[string]bool{"gatewayd-public": true, "gatewayd-internal": true, "apid": true, "realtimed": true}
+	want := map[string]bool{"gatewayd-public": true, "gatewayd-internal": true, "apid": true, "realtimed": true,
+		"outboundd": true} // ADR-20261128150000
 	for _, e := range append(append([]Entry(nil), Registry...), OptionalRegistry...) {
 		u := e.Unit()
 		got := HandsOffOnReload(e.Name)

@@ -104,7 +104,7 @@
 <p id="key-error" class="danger" role="alert"></p>
 <p>Create a key with <code>gregale auth admin-key create {{.Data.Slug}}</code>. This page sends it only to <code>{{.Data.AuthOrigin}}</code> and keeps it in this browser tab until you close the tab or choose Forget key. User records go from your Auth app to this browser and never through Gregale.</p></section>
 <section id="workspace" hidden>
-<nav aria-label="Views"><button type="button" data-tab="users" aria-pressed="true">Users</button><button type="button" data-tab="orgs" aria-pressed="false">Organizations</button><button type="button" data-tab="activity" aria-pressed="false">Activity</button><button type="button" data-tab="sso" aria-pressed="false">SSO</button><button type="button" data-tab="signups" aria-pressed="false">Sign-ups</button><button type="button" data-tab="emails" aria-pressed="false">Emails</button><button type="button" id="forget">Forget key</button></nav>
+<nav aria-label="Views"><button type="button" data-tab="users" aria-pressed="true">Users</button><button type="button" data-tab="orgs" aria-pressed="false">Organizations</button><button type="button" data-tab="activity" aria-pressed="false">Activity</button><button type="button" data-tab="security" aria-pressed="false">Security</button><button type="button" data-tab="sso" aria-pressed="false">SSO</button><button type="button" data-tab="signups" aria-pressed="false">Sign-ups</button><button type="button" data-tab="emails" aria-pressed="false">Emails</button><button type="button" id="forget">Forget key</button></nav>
 <form id="search" role="search"><label for="query" class="muted">Search</label><input type="search" id="query" maxlength="200"><button type="submit">Search</button><button type="button" id="export" hidden>Export CSV</button></form>
 <p id="status" role="status" aria-live="polite"></p>
 <table id="list"><thead></thead><tbody></tbody></table>
@@ -161,6 +161,14 @@
     factor_in_progress: 'MFA enrolment started', factor_unenrolled: 'MFA removed', verification_attempted: 'MFA verified', identity_unlinked: 'Identity unlinked',
   }
   const actionLabel = action => actions[action] || action || '—'
+  // What the sign-in protection did (the Auth app's security events).
+  const securityKinds = {
+    password_failed: 'Wrong password', code_failed: 'Wrong second-step code', held: 'Held', captcha_pass: 'Passed a hold with a CAPTCHA',
+    trusted_pass: 'Passed a hold from a trusted network', message_limited: 'Message limit reached', new_device_alert: 'New-device email sent',
+  }
+  const budgetLabels = { password_address: 'wrong passwords from one address', password_account: 'wrong passwords for the account', second_step: 'wrong second-step codes', message_recipient: 'messages to one recipient', message_network: 'messages from one network' }
+  const securityDetail = detail => [detail?.budget && (budgetLabels[detail.budget] || detail.budget), detail?.scope && ('per ' + detail.scope), detail?.limit && ('limit ' + detail.limit),
+    detail?.until && ('until ' + when(detail.until)), detail?.device].filter(Boolean).join(' · ') || '—'
   const say = text => { $('status').textContent = text }
 
   function lock(message) {
@@ -225,6 +233,32 @@
     })
   }
 
+  function securityRows(entries, withUser) {
+    return entries.map(entry => {
+      const row = el('tr')
+      row.append(el('td', when(entry.last_at)), el('td', (securityKinds[entry.kind] || entry.kind) + (entry.count > 1 ? ' ×' + entry.count : '')), el('td', entry.network || '—'))
+      if (withUser) {
+        const cell = el('td')
+        if (entry.user_id) cell.append(button(entry.email || entry.phone || entry.user_id, () => showUser(entry.user_id)))
+        else cell.textContent = 'No such account'
+        row.append(cell)
+      }
+      row.append(el('td', securityDetail(entry.detail)))
+      return row
+    })
+  }
+
+  // securityQuery reads the Security tab's search: a kind such as held or
+  // its label, or a network such as 203.0.113.0/24; anything else is null
+  // (nothing can match).
+  function securityQuery(text) {
+    if (!text) return {}
+    const wanted = text.toLowerCase()
+    const kind = Object.keys(securityKinds).find(name => name === wanted || securityKinds[name].toLowerCase() === wanted)
+    if (kind) return { kind }
+    return /^[0-9a-f.:/]+$/i.test(text) && /[.:]/.test(text) ? { network: wanted } : null
+  }
+
   async function load() {
     $('detail').hidden = true
     say('Loading…')
@@ -249,6 +283,13 @@
         setTable(['Time', 'Event', 'User'], activityRows(data.entries, true))
         pager(null, data.more)
         say(data.entries.length ? '' : 'No activity matches.')
+      } else if (tab === 'security') {
+        const filter = securityQuery(search)
+        if (!filter) { setTable([], []); pager(null, false); say('No security events match. Search for a kind such as held, or a network such as 203.0.113.0/24.'); return }
+        const data = await fetchView('/admin/v1/security-events?' + new URLSearchParams({ page: String(page), per_page: String(perPage), ...filter }))
+        setTable(['Last', 'Event', 'Network', 'User', 'Detail'], securityRows(data.entries, true))
+        pager(null, data.more)
+        say(data.entries.length ? '' : 'No security events match.')
       } else if (tab === 'signups') {
         // Who may sign up while sign-up is by invitation or waitlist.
         const data = await fetchView('/admin/v1/signups?' + qs)
@@ -328,10 +369,13 @@
   async function showUser(id) {
     const panel = $('detail')
     try {
-      const [{ user, organizations, active_sessions: sessions }, recent] = await Promise.all([
+      const [{ user, organizations, active_sessions: sessions, holds = [] }, recent, security] = await Promise.all([
         call('GET', '/admin/v1/users/' + encodeURIComponent(id)),
         call('GET', '/admin/v1/activity?' + new URLSearchParams({ user: id, per_page: '10' })),
+        // Auth apps that predate security events answer 404; show none.
+        call('GET', '/admin/v1/security-events?' + new URLSearchParams({ user: id, per_page: '10' })).catch(() => ({ entries: [] })),
       ])
+      const held = holds.map(hold => el('p', 'Held: ' + (budgetLabels[hold.budget] || hold.budget) + (hold.network ? ' from ' + hold.network : '') + ', until ' + when(hold.until) + '.', { class: 'danger' }))
       const result = el('p', '', { role: 'status' })
       const act = async (label, method, path, body, done) => {
         result.textContent = label + '…'
@@ -365,6 +409,7 @@
       }
       panel.replaceChildren(
         el('h2', user.email || user.phone || user.id),
+        ...held,
         facts([['User ID', user.id], ['Sign-in methods', user.providers.join(', ') || '—'], ['Created', when(user.created_at)], ['Last sign-in', when(user.last_sign_in_at)],
           ['Email confirmed', when(user.email_confirmed_at)], ['Banned until', banned(user) ? when(user.banned_until) : '—'], ['Active sessions', sessions]]),
         actions, result,
@@ -372,6 +417,7 @@
         ...(impersonationOn ? [el('h3', 'Open as this user'), await impersonationPanel(user)] : []),
         el('h3', 'Organizations'), organizations.length ? memberships : el('p', 'Not a member of any organization.', { class: 'muted' }),
         el('h3', 'Recent activity'), recent.entries.length ? activityTable(recent.entries) : el('p', 'No recorded activity.', { class: 'muted' }),
+        el('h3', 'Security events'), security.entries.length ? securityTable(security.entries) : el('p', 'No security events.', { class: 'muted' }),
         button('Close', () => { panel.hidden = true }),
       )
       panel.hidden = false
@@ -448,6 +494,14 @@
     table.append(el('tr'))
     for (const heading of ['Time', 'Event']) table.rows[0].append(el('th', heading, { scope: 'col' }))
     table.append(...activityRows(entries, false))
+    return table
+  }
+
+  function securityTable(entries) {
+    const table = el('table')
+    table.append(el('tr'))
+    for (const heading of ['Last', 'Event', 'Network', 'Detail']) table.rows[0].append(el('th', heading, { scope: 'col' }))
+    table.append(...securityRows(entries, false))
     return table
   }
 
@@ -646,7 +700,7 @@
       for (const other of document.querySelectorAll('[data-tab]')) other.setAttribute('aria-pressed', String(other === tabButton))
       $('export').hidden = tab !== 'activity'
       $('search').hidden = tab === 'sso' || tab === 'emails'
-      $('query').placeholder = { users: 'Email or name', orgs: 'Slug or name', activity: 'Email, or an event such as login', sso: '', emails: '' }[tab]
+      $('query').placeholder = { users: 'Email or name', orgs: 'Slug or name', activity: 'Email, or an event such as login', security: 'A kind such as held, or a network', sso: '', emails: '' }[tab]
       load()
     })
   }

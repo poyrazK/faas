@@ -23,6 +23,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/orgseats"
 	"github.com/onebox-faas/faas/pkg/authz"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -152,16 +153,20 @@ func (s *server) loadMutableOrgByMembership(ctx context.Context, w http.Response
 // enforcePendingInvitationCap applies the per-plan
 // OrgPendingInvitationsMax limit on POST /v1/orgs/{slug}/members.
 // Free + unknown plans have OrgPendingInvitationsMax == 0 by plan
-// policy — the abuse-floor tier cannot host shared orgs. The
-// `limit <= 0` early-return keeps Free + unknown plans quiet
-// (plan-policy closure, not cap arithmetic). Returns true when the
+// policy — the abuse-floor tier cannot seat members, so those plans
+// are refused with org_plan seat guidance instead of minting
+// invitations no one can accept. Returns true when the
 // cap allows the new invitation; on exceed, writes the 403 Problem
 // and returns false. On Store failure, writes a 500 Problem and
 // returns false.
 func (s *server) enforcePendingInvitationCap(ctx context.Context, w http.ResponseWriter, org state.Org) bool {
 	limit := org.Plan.OrgPendingInvitationsMax()
-	if limit <= 0 {
-		return true
+	if !orgseats.HasSeats(org) {
+		// A plan with no seats (Free, or an unknown plan) can never seat an
+		// invitee: every accept would fail with org_member_cap_exceeded.
+		// Refuse here and name the upgrade (ADR-20261127200000).
+		api.WriteProblem(w, orgseats.NoSeatsProblem(org))
+		return false
 	}
 	pending, err := s.store.CountPendingOrgInvitations(ctx, org.ID)
 	if err != nil {

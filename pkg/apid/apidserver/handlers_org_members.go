@@ -80,17 +80,23 @@ func (s *server) listOrgMembers(w http.ResponseWriter, r *http.Request, _ state.
 		}
 	}
 	names := s.displayNames(r.Context(), ids)
+	// One batch read for every member's email instead of one
+	// AccountByID per row. A failed read leaves emails blank, as a
+	// failed per-row read did.
+	accounts, err := s.store.AccountsByIDs(r.Context(), ids)
+	if err != nil {
+		s.log.Warn("org_members.accounts", "err", err)
+	}
 	for _, row := range rows {
 		if row.RemovedAt != nil {
 			continue // Filter at the API boundary; removed rows stay in DB for audit.
 		}
-		// TODO(perf, PR-6+): memberToRow issues AccountByID per
-		// row, which is N+1. For a 50-member org the read costs
-		// 51 round-trips. Replace with a Store.ListOrgMembersWithEmail
-		// that JOINs org_memberships.account_id = accounts.id in
-		// a single query. Acceptable for PR 5 (small orgs); flag
-		// here so PR 6 picks it up alongside the api_keys cut-over.
-		member := s.memberToRow(r.Context(), row)
+		member := api.OrgMemberRow{
+			AccountID: row.AccountID,
+			Email:     accounts[row.AccountID].Email,
+			Role:      string(row.Role),
+			JoinedAt:  row.JoinedAt,
+		}
 		member.DisplayName = names[row.AccountID]
 		out.Members = append(out.Members, api.OrgMemberResponseFromRow(member))
 	}

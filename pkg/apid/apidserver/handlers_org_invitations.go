@@ -31,6 +31,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/orgseats"
 	"github.com/onebox-faas/faas/pkg/authz"
 	"github.com/onebox-faas/faas/pkg/cursor"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -241,10 +242,7 @@ func (s *server) acceptInvitation(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, api.ErrOrgAlreadyMember(existingRole))
 		return
 	case errors.Is(err, state.ErrOrgMemberCapExceeded):
-		// The store reads the live cap; the dashboard can render
-		// "the plan caps this org at N members" via the seat_usage
-		// endpoint if the customer needs the numeric details.
-		api.WriteProblem(w, api.ErrOrgMemberCapExceeded(0, 0))
+		api.WriteProblem(w, orgseats.MemberCapProblem(r.Context(), s.store, hash[:]))
 		return
 	case err != nil:
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
