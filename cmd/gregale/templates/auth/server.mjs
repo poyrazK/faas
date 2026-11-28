@@ -330,7 +330,7 @@ async function guardAttempt({ req, res, path, upstreamPort, body, oauth, attempt
   // Security events name the account by its sign-in subject, or the user a
   // second step's token names (securitylog.mjs).
   const address = clientAddress(req), who = kind === 'password' ? { subject } : { userId: bearer?.sub }
-  const alike = [subject ?? bearer?.sub ?? null, networkLabel(address)]
+  const alike = [subject ?? (typeof bearer?.sub === 'string' ? bearer.sub.toLowerCase() : null), networkLabel(address)]
   let captchaWaived = false
   try {
     for (const entry of entries) {
@@ -372,7 +372,7 @@ async function guardAttempt({ req, res, path, upstreamPort, body, oauth, attempt
     } catch (err) {
       logFailure('attempt_budget_failed')(err)
     }
-    if (captchaWaived && answer?.error_code !== 'captcha_failed') securityLog?.record('captcha_pass', { ...who, address, alike, detail: { budget: 'password_account' } })
+    if (captchaWaived && status < 500 && answer && typeof answer === 'object' && answer.error_code !== 'captcha_failed') securityLog?.record('captcha_pass', { ...who, address, alike, detail: { budget: 'password_account' } })
     if (result === 'failure') securityLog?.record(kind === 'password' ? 'password_failed' : 'code_failed', { ...who, address, alike })
     if (status === 200) signedIn(req, sessionFromAnswer(answer))
   }
@@ -613,7 +613,8 @@ export function start(env = process.env) {
   for (const signal of ['SIGTERM', 'SIGINT']) {
     process.on(signal, () => {
       child.kill(signal)
-      server.close(() => process.exit(0))
+      // Security events still queued get a moment to be written.
+      server.close(() => Promise.race([securityLog.settled(), new Promise(resolve => setTimeout(resolve, 2000))]).finally(() => process.exit(0)))
     })
   }
   server.listen(Number(env.PORT ?? 8080))

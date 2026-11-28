@@ -199,11 +199,14 @@ and an unknown account leaves it empty. Rows go `AUTH_SECURITY_LOG_DAYS`
 (`AuthSecurityLogDaysDefault` 30, up to `AuthSecurityLogMaxDays`) after their
 last event, on the request-driven prune schedule, and with their user.
 Writes are fire-and-forget: a failed write is logged
-(`security_event_failed`), never fails the request, and at most
-`AuthSecurityEventsInFlight` (1) run at once per instance; further events are
-dropped and counted (`security_events_dropped`, at most once a minute), so
-recording takes at most one of the front's two pool connections and never
-waits on its own row locks during an attack. Owners read
+(`security_event_failed`), never fails the request: one writer per instance
+drains an in-memory queue where alike events merge into one row's count,
+so recording takes at most one of the front's two pool connections and never
+waits on its own row locks; past `AuthSecurityEventsQueued` waiting rows
+events are dropped and counted (`security_events_dropped`, at most once a
+minute). Shutdown waits up to two seconds for the queue. A row keeps the
+first address's digest; network filters accept any spelling and compare
+the compressed label. Owners read
 them with `GET /admin/v1/security-events` (`users:read`; filters user, kind,
 network), `gregale auth activity --security` and the dashboard's Security
 tab; `GET /admin/v1/users/<id>` adds `holds`, the user's spent budgets whose

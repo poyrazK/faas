@@ -608,8 +608,9 @@ Alike events share one entry with a count: wrong passwords for one account
 from one network in one minute, or every attempt one spent budget refused
 for one account from one network until it reopened. `captcha_pass` is
 recorded only when GoTrue did not refuse the CAPTCHA. An entry names the network (an IPv4 /24 or IPv6 /48),
-never the address; requests from one address share a digest, so you can
-tell one source from many. A wrong password for an address no account has
+never the address, and keeps a digest of the first address it saw (the
+same address always gives the same digest); it does not count how many
+addresses in the network took part. A wrong password for an address no account has
 is recorded without a user.
 
 On the dashboard's **Security** tab, search for a kind such as `held` or a
@@ -634,10 +635,11 @@ gregale auth config shop-auth --security-log-days 90   # 1-365, or default
 ```
 
 Recording never slows or fails a sign-in: if the database cannot take an
-entry, the Auth app logs `security_event_failed` and carries on, and while
-one entry is being written another is dropped rather than queued (the app
-logs `security_events_dropped` with how many, at most once a minute). Under
-a heavy attack counts are therefore at least, not exactly, what happened. Address
+entry, the Auth app logs `security_event_failed` and carries on. Entries
+are written one at a time from a queue in which alike events merge into
+one count; if more than 1,000 different entries are waiting, new ones are
+dropped and the app logs `security_events_dropped` with how many, at most
+once a minute. Address
 digests are keyed from the app's JWT secret, so rotating that secret
 starts new digests.
 

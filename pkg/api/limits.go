@@ -18550,11 +18550,12 @@ const (
 	// never addresses, and live in the owner's own database.
 	AuthSecurityLogDaysDefault = 30
 	AuthSecurityLogMaxDays     = 365
-	// AuthSecurityEventsInFlight bounds the security-event writes an Auth app
-	// instance runs at once; past it events are dropped (and the count
-	// logged), so recording never takes more of the front's database pool
-	// during an attack.
-	AuthSecurityEventsInFlight = 1
+	// AuthSecurityEventsQueued bounds the security-event rows an Auth app
+	// instance holds waiting for its one writer; alike events merge into a
+	// waiting row's count, and past the bound events are dropped (and the
+	// count logged), so recording neither grows memory nor takes more than
+	// one of the front's database connections during an attack.
+	AuthSecurityEventsQueued = 1000
 	// AuthAnonymousRetentionMaxDays bounds how long idle anonymous users may
 	// be kept before the Auth app deletes them, when the owner sets a limit.
 	AuthAnonymousRetentionMaxDays = 3650

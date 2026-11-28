@@ -5,7 +5,7 @@ import { once } from 'node:events'
 import { createServer } from '../server.mjs'
 import { budgetKey } from '../attempts.mjs'
 import { limits, securityConfig } from '../config.mjs'
-import { activeHolds, addressDigester, createSecurityLog, networkLabel, securityEvents, securityKinds } from '../securitylog.mjs'
+import { activeHolds, addressDigester, createSecurityLog, networkFilter, networkLabel, securityEvents, securityKinds } from '../securitylog.mjs'
 import { createSends, messageBudgets } from '../sends.mjs'
 import { requiredScope } from '../admin.mjs'
 
@@ -74,6 +74,12 @@ test('names a request\'s network, never its address', () => {
   assert.equal(networkLabel('::ffff:203.0.113.7'), '203.0.113.0/24')
   assert.equal(networkLabel('2001:db8:1:2:3:4:5:6'), '2001:db8:1::/48')
   assert.equal(networkLabel('[2001:DB8:1::9]'), '2001:db8:1::/48')
+  assert.equal(networkLabel('2001:db8::1'), '2001:db8::/48', 'a zero third group is compressed')
+  assert.equal(networkLabel('2001::5'), '2001::/48')
+  assert.equal(networkFilter('2001:db8:0::/48'), '2001:db8::/48')
+  assert.equal(networkFilter('2001:DB8:0:0:0:0:0:0/48'), '2001:db8::/48')
+  assert.equal(networkFilter('203.0.113.0/24'), '203.0.113.0/24')
+  assert.equal(networkFilter('203.0.113.77'), '203.0.113.0/24')
   assert.equal(networkLabel(''), null)
   assert.equal(networkLabel('not an address'), null)
 })
@@ -179,22 +185,42 @@ test('recording writes one row per alike events and never fails a request', asyn
   assert.equal(logged[0].sqlstate, '57P01')
 })
 
-test('recording past its writes in flight drops events and reports them', async () => {
+test('waiting alike events merge into one write, and a full queue drops and reports', async () => {
   let release
   const blocked = new Promise(resolve => { release = resolve })
   const calls = [], logged = []
   let clock = 0
-  const pool = { query: async () => { calls.push(1); await blocked; return { rowCount: 1 } } }
+  const pool = { query: async (sql, args) => { calls.push(args); await blocked; return { rowCount: 1 } } }
   const log = createSecurityLog({ pool, secret: 'x'.repeat(32), log: line => logged.push(JSON.parse(line)), now: () => clock })
-  const first = log.record('password_failed', { userId: user })
-  for (let i = 0; i < 5; i++) await log.record('password_failed', { userId: user })
-  assert.equal(calls.length, limits.securityEventsInFlight)
+  const alike = [user, '203.0.113.0/24']
+  const first = log.record('password_failed', { userId: user, alike: ['first'] })
+  await Promise.resolve()
+  const merged = []
+  for (let i = 0; i < 5; i++) merged.push(log.record('password_failed', { userId: user, alike }))
+  for (let i = 0; i < limits.securityEventsQueued; i++) log.record('password_failed', { userId: user, alike: [String(i)] })
+  assert.equal(calls.length, 1, 'one writer')
   clock = 61000
   release()
   await first
-  // The first drop is reported at once, the rest a minute later together.
-  assert.deepEqual(logged.map(line => line.count), [1, 4])
-  assert.equal(logged[0].event, 'security_events_dropped')
+  await Promise.all(merged)
+  await log.settled()
+  const write = calls.find(args => args[7] && args[10] === 5)
+  assert.ok(write, 'five alike events became one write with count 5')
+  // The first write, the merged row, and the distinct rows that fit beside it.
+  assert.equal(calls.length, 1 + 1 + limits.securityEventsQueued - 1)
+  assert.deepEqual(logged.map(line => [line.event, line.count]), [['security_events_dropped', 1]])
+})
+
+test('a CAPTCHA pass and its wrong password are both recorded', async t => {
+  const rows = []
+  const pool = { query: async (sql, args) => { rows.push(args[0]); return { rowCount: 1 } } }
+  const securityLog = createSecurityLog({ pool, secret: 'x'.repeat(32) })
+  const base = await harness(t, { attempts: memoryAttempts(), securityLog, captcha: true })
+  for (let i = 0; i < limits.passwordFailuresPerAccount + 1; i++) await post(base, '/token?grant_type=password', { email: 'ann@example.com', password: 'wrong' }, `198.51.${Math.floor(i / 5)}.${i % 5 + 1}`)
+  await settle()
+  await securityLog.settled()
+  assert.ok(rows.includes('captcha_pass'))
+  assert.equal(rows.filter(kind => kind === 'password_failed').length, limits.passwordFailuresPerAccount + 1)
 })
 
 test('the admin API pages security events and checks its filters', async () => {
@@ -202,7 +228,8 @@ test('the admin API pages security events and checks its filters', async () => {
   const query = async (sql, args) => { seen = { sql, args }; return [{ id: '2' }, { id: '1' }] }
   const page = await securityEvents(query, new URLSearchParams({ per_page: '1', kind: 'held', user: user.toUpperCase(), network: '203.0.113.0/24' }))
   assert.deepEqual(page, { entries: [{ id: '2' }], more: true, page: 1, per_page: 1 })
-  assert.deepEqual(seen.args, [user.toUpperCase(), 'held', '203.0.113.0/24', 2, 0])
+  assert.deepEqual(seen.args, [user, 'held', '203.0.113.0/24', 2, 0])
+  assert.match(seen.sql, /e\.user_id = \$1::uuid/, 'the user filter can use its index')
   for (const bad of [{ kind: 'nope' }, { user: 'x' }, { network: "1'; DROP" }, { per_page: '0' }, { page: '0' }]) {
     await assert.rejects(securityEvents(query, new URLSearchParams(bad)), JSON.stringify(bad))
   }
