@@ -111,11 +111,37 @@ func TestDeployLocalImageBootFailureStopsBeforeSave(t *testing.T) {
 	}
 }
 
-func TestDeployLocalImageBootRefusesNonHTTPApps(t *testing.T) {
+func TestDeployLocalImageBootChecksWorkersWithoutHTTP(t *testing.T) {
+	for _, mode := range []string{"worker", "job"} {
+		t.Run(mode, func(t *testing.T) {
+			localImageRepo(t)
+			stub := newLocalImageStub(t)
+			docker := bootDeployDocker(t) // running, and no HTTP answer
+			code, stderr := deployCapturingStderr(t, "--name", "demo", "--app", "--no-wait", "--local-image", "acme/web:dev", "--boot", "--execution-mode", mode)
+			if code != 0 {
+				t.Fatalf("code=%d: %s", code, stderr)
+			}
+			stub.checkUploaded(t, "acme/web:dev")
+			if run := dockerCallIndexOf(docker.calls(t), "run "); run < 0 || strings.Contains(docker.calls(t)[run], "--publish") {
+				t.Fatalf("docker calls %q", docker.calls(t))
+			}
+		})
+	}
+	t.Run("crashing worker", func(t *testing.T) {
+		localImageRepo(t)
+		stub := newLocalImageStub(t)
+		docker := bootDeployDocker(t)
+		docker.write(t, "state", "false 1 false")
+		code, stderr := deployCapturingStderr(t, "--name", "demo", "--app", "--no-wait", "--local-image", "acme/web:dev", "--boot", "--execution-mode", "worker")
+		if code == 0 || stub.opts != nil || !strings.Contains(stderr, "A worker must keep running") {
+			t.Fatalf("code=%d uploaded=%v stderr=%s", code, stub.opts != nil, stderr)
+		}
+	})
+}
+
+func TestDeployLocalImageBootRefusesGRPCHealth(t *testing.T) {
 	for name, extra := range map[string][]string{
-		"worker": {"--execution-mode", "worker"},
-		"job":    {"--execution-mode", "job"},
-		"grpc":   {"--healthcheck-grpc"},
+		"grpc": {"--healthcheck-grpc"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			localImageRepo(t)

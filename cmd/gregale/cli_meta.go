@@ -2948,6 +2948,7 @@ var cliCommands = []cliCommand{
 			{Name: "env-file", Value: "FILE", Short: "with --boot, pass KEY=VALUE lines from this file to the container (docker env-file format)"},
 			{Name: "ram", Value: "MB", Short: "with --boot, the container's memory limit (default: --app's RAM, else your plan's default for a new app; no swap)"},
 			{Name: "healthcheck-path", Value: "PATH", Short: "with --boot, probe this readiness path instead of / and require 2xx, as Gregale does"},
+			{Name: "execution-mode", Value: "MODE", Short: "with --boot, the app's lifecycle mode (request|service|worker|job): a worker must keep running and a job exit 0, with no HTTP check"},
 			{Name: "strict", Short: "exit 1 on warn (default: exit 0 on warn)"},
 			{Name: "json", Short: "machine output (default: human prose)"},
 		},

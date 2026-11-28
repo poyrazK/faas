@@ -4098,10 +4098,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// the deploy: the image can be gigabytes. --boot runs first, so a
 		// broken image is neither saved nor uploaded.
 		if *bootLocalImage {
-			if err := deployBootModeProblem(*executionMode, healthcheck); err != nil {
+			if err := deployBootModeProblem(healthcheck); err != nil {
 				return printErr("Invalid flags", err)
 			}
-			if code := runDeployBootCheck(ctx, deployBootFlags{image: localImage.sourceName, app: slug, healthPath: *healthcheckPath, envFile: *bootEnvFile, ramMB: deployBootRAMMB(*profile)}); code != 0 {
+			if code := runDeployBootCheck(ctx, deployBootFlags{image: localImage.sourceName, app: slug, healthPath: *healthcheckPath, envFile: *bootEnvFile, ramMB: deployBootRAMMB(*profile), mode: *executionMode}); code != 0 {
 				return code
 			}
 		}

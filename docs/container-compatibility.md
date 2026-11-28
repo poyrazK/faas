@@ -48,8 +48,9 @@ port, an out-of-memory kill or a failing health check stops the deploy with the
 findings, and nothing is uploaded; warnings are printed and the deploy goes on.
 `--boot-env-file FILE` passes variables the app needs to start to the local
 container only; set them on the app with `gregale env` or `gregale secrets` for
-the deployment. The check needs HTTP on `$PORT`, so `--boot` is refused for
-workers, jobs and `--healthcheck-grpc` deploys, and with `--create-only`.
+the deployment. A worker or job (`--execution-mode`, or `gregale.yaml`) is
+checked without HTTP, as described below. `--boot` is refused for
+`--healthcheck-grpc` deploys and with `--create-only`.
 Pressing Ctrl-C during the check stops the deploy.
 
 ## Boot the image locally before deploying
@@ -69,6 +70,13 @@ started. When nothing answers, it reads the container's listening sockets and
 names the mistake, such as a server bound to `127.0.0.1` or to a port other
 than `$PORT`; that diagnosis needs `cat` in the image. Pass the variables the
 app needs to start with `--env-file` (docker env-file format).
+
+A worker or job serves no HTTP. Pass `--execution-mode worker` or
+`--execution-mode job` and the boot publishes no port and judges the process
+as Gregale does when it first boots a deployment: a process still running after
+10 seconds is a working worker, a job that exited 0 has completed, and any
+other exit is a startup failure. A worker that exits 0 is a warning, since it
+would stop instead of working; a job still running after 10 seconds passes.
 
 Pass `--healthcheck-path /healthz` (the path you deploy with) to probe the
 app's readiness route instead of `/`. Gregale routes to an instance only once

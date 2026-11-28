@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -43,6 +44,9 @@ type doctorImageFlags struct {
 	// deploy is set by `deploy --local-image --boot`: the app may not exist
 	// yet, ramMB comes from --size, and fixes name deploy's flags.
 	deploy bool
+	// executionMode is the app's lifecycle mode; a worker or job is checked
+	// to keep running or exit 0 instead of serving HTTP.
+	executionMode string
 }
 
 func registerDoctorImageFlags(fs *flag.FlagSet) *doctorImageFlags {
@@ -55,6 +59,7 @@ func registerDoctorImageFlags(fs *flag.FlagSet) *doctorImageFlags {
 	fs.StringVar(&f.envFile, "env-file", "", "with --boot, pass KEY=VALUE lines from this file to the container, docker env-file format")
 	fs.IntVar(&f.ramMB, "ram", 0, "with --boot, memory limit in MB (default: --app's RAM, else your plan's default for a new app)")
 	fs.StringVar(&f.healthPath, "healthcheck-path", "", "with --boot, probe this readiness path instead of / and require 2xx, as Gregale does (for example /healthz)")
+	fs.StringVar(&f.executionMode, "execution-mode", "", "with --boot, the app's lifecycle mode: request|service|worker|job; a worker must keep running and a job exit 0, with no HTTP")
 	return f
 }
 
@@ -85,6 +90,12 @@ func (f *doctorImageFlags) validate(fs *flag.FlagSet) error {
 	}
 	if visited["healthcheck-path"] && (!f.boot || !strings.HasPrefix(f.healthPath, "/") || strings.ContainsFunc(f.healthPath, func(r rune) bool { return r <= ' ' || r == 0x7f })) {
 		return errors.New("--healthcheck-path requires --boot and an HTTP path that starts with / and has no spaces")
+	}
+	if visited["execution-mode"] && (!f.boot || !slices.Contains(doctorBootModes, f.executionMode)) {
+		return errors.New("--execution-mode requires --boot and one of request, service, worker or job")
+	}
+	if doctorBootNoListener(f.executionMode) && visited["healthcheck-path"] {
+		return fmt.Errorf("--healthcheck-path probes HTTP, which a %s does not serve", f.executionMode)
 	}
 	// Docker itself refuses a limit below its minimum, with its own message.
 	if visited["ram"] && (!f.boot || f.ramMB <= 0) {
@@ -242,7 +253,7 @@ func addDoctorBootChecks(parent context.Context, report *doctorReport, flags *do
 	defer stop()
 	app := doctorBootLookupApp(ctx, flags.app, flags.deploy)
 	memoryMB, memorySource := doctorBootMemory(ctx, flags, app)
-	opts := doctorBootOptions{image: flags.image, port: port, envFile: flags.envFile, memoryMB: memoryMB, memorySource: memorySource, healthPath: flags.healthPath, probeHost: app.host, deploy: flags.deploy}
+	opts := doctorBootOptions{image: flags.image, port: port, envFile: flags.envFile, memoryMB: memoryMB, memorySource: memorySource, healthPath: flags.healthPath, probeHost: app.host, deploy: flags.deploy, mode: strings.TrimSpace(flags.executionMode)}
 	if report.Image != nil {
 		opts.imageHealthcheck = doctorBootImageHealthcheck(report.Image.Healthcheck)
 	}
