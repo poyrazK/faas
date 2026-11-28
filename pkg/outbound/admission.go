@@ -446,6 +446,23 @@ type Decision struct {
 	// call's policy revision, or nil when the caller must ask the cooldown
 	// backend (ADR-1120).
 	ProviderGate *ProviderCooldownDecision
+	// AIBudgetLeft is what the AI budgets leave for this call when its own
+	// reservation refused it (a reason ending in ReasonReservationSuffix).
+	// A call that names no output ceiling is retried with one that fits
+	// (ADR-20261128190000).
+	AIBudgetLeft *AIBudgetLeft
+}
+
+// AIBudgetLeft is the room the AI budgets leave after settled usage and the
+// calls in flight; -1 means no limit of that kind applies.
+type AIBudgetLeft struct {
+	Tokens         int64
+	CostMillicents int64
+}
+
+// fits reports whether a reservation fits the room left.
+func (l AIBudgetLeft) fits(reserve aiReservation) bool {
+	return (l.Tokens < 0 || reserve.tokens <= l.Tokens) && (l.CostMillicents < 0 || reserve.cost <= l.CostMillicents)
 }
 
 // Backend is the shared state boundary. Implementations must fail closed on

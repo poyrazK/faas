@@ -19,8 +19,12 @@ account during the preview; contact support to have it turned on for yours.
   `max_tokens` (and an app with no output-token ceiling) reserves the
   longest response its model can return, or 32,768 output tokens for a model
   Gregale has no price for, so concurrent calls cannot run past a cost cap.
-  Set `max_tokens` to reserve less; per-minute token limits still count
-  4,096 output tokens for such a call.
+  When that does not fit the budget left, Gregale sets the largest
+  `max_tokens` (`max_completion_tokens`, `maxOutputTokens`) that does, at
+  least 256, and names it in `X-Gregale-AI-Output-Capped`; an answer that
+  reaches it ends with `finish_reason: "length"`. A `max_tokens` you set is
+  never changed. Set `max_tokens` to reserve less; per-minute token limits
+  still count 4,096 output tokens for a call that sets none.
 - **Guardrails.** Per-app requests and tokens per minute, model allow-lists and
   output-token ceilings.
 - **Content guardrails.** Redact or block e-mail addresses, payment card
@@ -382,7 +386,7 @@ end user (`X-Gregale-AI-User`) has their own answers;
 | --- | --- |
 | `403 outbound_ai_model_unpriced` | A cost cap applies to the call and its model has no price, so the cap could not count it. Add the model to the integration's price list (`gregale ai prices`), or let such calls through outside the cost caps with `--allow-unmetered on`. |
 | `429 outbound_budget_exhausted` | A token or cost cap is spent; `Retry-After` says when it resets. When calls in flight hold the rest of the budget, `Retry-After` is a few seconds. Trace limits (`trace_call_limit`, `trace_cost_limit`, `trace_tool_loop`) never reset: start a new trace. `X-Gregale-Outbound-Rejection` names the cap. |
-| `429 outbound_ai_reservation_exceeds_budget` | The budget is not spent, but this call's reservation does not fit what is left. A call reserves its output ceiling for every answer it asks for (`n`, `best_of`, `candidateCount`), or its model's longest response when it names none, and its model's context window when it continues stored context (`previous_response_id`, a conversation, cached content, an uploaded file). Set a smaller `max_tokens` or fewer answers; there is no `Retry-After`, as the same call would be refused until the cap resets. |
+| `429 outbound_ai_reservation_exceeds_budget` | The budget is not spent, but this call's reservation does not fit what is left. A call reserves its output ceiling for every answer it asks for (`n`, `best_of`, `candidateCount`), or its model's longest response when it names none, and its model's context window when it continues stored context (`previous_response_id`, a conversation, cached content, an uploaded file). A call that names no output ceiling is given one that fits instead (see Hard caps), so this answers one that named its own or whose budget left covers fewer than 256 output tokens. Set a smaller `max_tokens` or fewer answers; there is no `Retry-After`, as the same call would be refused until the cap resets. |
 | `429 outbound_rate_limited` | A rate, concurrency, requests-per-minute or tokens-per-minute limit was reached; retry after `Retry-After`. |
 | `429 outbound_provider_cooldown` | The provider is cooling down after failing calls or asked the gateway to wait; retry after `Retry-After`. |
 | `404 outbound_ai_call_not_found` | Feedback named a call that is not in the integration's request log, or that another app made. |

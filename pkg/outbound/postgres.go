@@ -171,7 +171,7 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 		state.tokens = float64(spec.Burst)
 	}
 	reserve := aiReservationFromSpec(spec)
-	reason, retry := admissionRejection(utcNow, today, ttl, spec, state, admissionLimits{
+	reason, retry, left := admissionRejection(utcNow, today, ttl, spec, state, admissionLimits{
 		daily: dailyRequestLimit, bindingDaily: bindingDailyRequestLimit, ai: aiBudgetLimits{
 			dailyTokens: positiveLimit(policy.dailyAITokenLimit), bindingTokens: positiveLimit(policy.bindingAITokenLimit),
 			dailyCost: positiveLimit(policy.dailyAICostLimit), monthlyCost: positiveLimit(policy.monthlyAICostLimit),
@@ -195,7 +195,7 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 		if err := tx.Commit(ctx); err != nil {
 			return Decision{}, err
 		}
-		return Decision{RetryAfter: retry, Reason: reason, RequestTimeout: ttl}, nil
+		return Decision{RetryAfter: retry, Reason: reason, RequestTimeout: ttl, AIBudgetLeft: left}, nil
 	}
 	write.state.tokens--
 	write.state.dailyRequestCount++
@@ -506,9 +506,10 @@ type admissionLimits struct {
 }
 
 // admissionRejection returns the first limit that refuses the call and when
-// to retry, or an empty reason when the call is admitted.
+// to retry, or an empty reason when the call is admitted. A refusal by the
+// call's own AI reservation also returns the room the AI budgets leave.
 func admissionRejection(utcNow, today time.Time, ttl time.Duration, spec AdmissionSpec, state lockedAdmission,
-	limits admissionLimits, userLimited bool, policy admissionPolicy, reserve aiReservation, bound bool) (string, time.Duration) {
+	limits admissionLimits, userLimited bool, policy admissionPolicy, reserve aiReservation, bound bool) (string, time.Duration, *AIBudgetLeft) {
 	untilTomorrow := max(today.Add(24*time.Hour).Sub(utcNow), time.Millisecond)
 	switch {
 	case state.inFlight >= spec.MaxInFlight:
@@ -516,13 +517,13 @@ func admissionRejection(utcNow, today time.Time, ttl time.Duration, spec Admissi
 		if now := utcNow; state.earliestExpiry.After(now) && state.earliestExpiry.Sub(now) < retry {
 			retry = state.earliestExpiry.Sub(now)
 		}
-		return ReasonConcurrency, max(retry, time.Millisecond)
+		return ReasonConcurrency, max(retry, time.Millisecond), nil
 	case state.tokens < 1:
-		return ReasonRate, max(time.Duration((1-state.tokens)/spec.RatePerSecond*float64(time.Second)), time.Millisecond)
+		return ReasonRate, max(time.Duration((1-state.tokens)/spec.RatePerSecond*float64(time.Second)), time.Millisecond), nil
 	case limits.daily != nil && state.dailyRequestCount >= *limits.daily:
-		return ReasonDailyLimit, untilTomorrow
+		return ReasonDailyLimit, untilTomorrow, nil
 	case limits.bindingDaily != nil && state.bindingDailyRequestCount >= *limits.bindingDaily:
-		return ReasonDailyLimit, untilTomorrow
+		return ReasonDailyLimit, untilTomorrow, nil
 	}
 	// Tokens and cost settle after each response (ADR-988, ADR-990); live
 	// reservations make the stored limits hard caps (ADR-991).
@@ -531,7 +532,7 @@ func admissionRejection(utcNow, today time.Time, ttl time.Duration, spec Admissi
 		// ADR-994: the end user's settled day and live reservations.
 		ai.userTokens, ai.userCost = positiveLimit(policy.userTokenLimit), positiveLimit(policy.userCostLimit)
 	}
-	if reason, retry, limited := aiBudgetExhausted(utcNow, aiBudgetState{
+	if reason, retry, left, limited := aiBudgetFit(utcNow, aiBudgetState{
 		dailyTokens: state.dailyAITokenCount, bindingTokens: state.bindingAITokenCount,
 		dailyCost: state.dailyAICost, monthlyCost: state.monthlyAICost,
 		inflightTokens: state.inflightTokens, inflightBindingTokens: state.inflightBindingTokens, inflightCost: state.inflightCost,
@@ -539,18 +540,18 @@ func admissionRejection(utcNow, today time.Time, ttl time.Duration, spec Admissi
 		inflightUserTokens: state.user.inflightUserTokens, inflightUserCost: state.user.inflightUserCost,
 		userUntracked: state.user.userUntracked,
 	}, ai, reserve); limited {
-		return reason, retry
+		return reason, retry, left
 	}
 	if reason, retry, limited := aiTagBudgetExhausted(utcNow, state.tags, reserve); limited {
-		return reason, retry
+		return reason, retry, nil
 	}
 	if bound {
 		if reason, retry, limited := aiMinuteExhausted(utcNow, state.minute, limits.bindingRequestsPerMinute,
 			limits.bindingTokensPerMinute, reserve); limited {
-			return reason, retry
+			return reason, retry, nil
 		}
 	}
-	return "", 0
+	return "", 0, nil
 }
 
 // admissionLease is the lease a granted admission inserts.

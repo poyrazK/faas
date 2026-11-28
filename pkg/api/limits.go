@@ -3660,6 +3660,11 @@ const (
 	// Admission-time reservations (ADR-991): the output reserve when a call
 	// names no output ceiling, and the bytes per estimated input token.
 	OutboundAIDefaultOutputReserveTokens int64 = 4096
+	// OutboundAIBudgetOutputCapMinTokens is the smallest output ceiling the
+	// gateway writes into a call that names none when its model's longest
+	// response does not fit the budget left (ADR-20261128190000). Below it
+	// the call is refused: an answer cut that short is rarely useful.
+	OutboundAIBudgetOutputCapMinTokens int64 = 256
 	// A generation call that names no output ceiling reserves its model's
 	// longest response from the price catalog for its cost, or this for a
 	// model the catalog does not know (cost-control review 2026-11-19, N17).

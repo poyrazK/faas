@@ -104,12 +104,19 @@ func aiReservationFromSpec(spec AdmissionSpec) aiReservation {
 // reservation would pass it (ADR-991), so a limit is a hard cap for the
 // gateway's estimate.
 func aiBudgetExhausted(utcNow time.Time, state aiBudgetState, limits aiBudgetLimits, reserve aiReservation) (string, time.Duration, bool) {
+	reason, retry, _, limited := aiBudgetFit(utcNow, state, limits, reserve)
+	return reason, retry, limited
+}
+
+// aiBudgetFit is aiBudgetExhausted that also reports, for a refusal caused
+// by the call's own reservation, the room every AI budget leaves.
+func aiBudgetFit(utcNow time.Time, state aiBudgetState, limits aiBudgetLimits, reserve aiReservation) (string, time.Duration, *AIBudgetLeft, bool) {
 	nextDay := time.Date(utcNow.Year(), utcNow.Month(), utcNow.Day()+1, 0, 0, 0, 0, time.UTC)
 	nextMonth := time.Date(utcNow.Year(), utcNow.Month()+1, 1, 0, 0, 0, 0, time.UTC)
 	if state.userUntracked && (limits.userTokens != nil || limits.userCost != nil) {
 		// ADR-996: an end user the cap cannot track cannot be limited, so
 		// with per-user limits set it is refused rather than let through.
-		return ReasonUserTrackingFull, retryUntil(utcNow, nextDay), true
+		return ReasonUserTrackingFull, retryUntil(utcNow, nextDay), nil, true
 	}
 	checks := []struct {
 		limit            *int64
@@ -130,19 +137,42 @@ func aiBudgetExhausted(utcNow time.Time, state aiBudgetState, limits aiBudgetLim
 		}
 		switch {
 		case check.used >= *check.limit:
-			return check.reason, retryUntil(utcNow, check.resets), true
+			return check.reason, retryUntil(utcNow, check.resets), nil, true
 		case check.used+check.call > *check.limit:
 			// The budget is not spent, but this call's own reservation does
 			// not fit what is left: a smaller output ceiling would (prod
 			// hunt 2026-11-28: a call naming no max_tokens was told the
 			// budget was exhausted, retry in 15 h, at 9% used).
-			return check.reason + ReasonReservationSuffix, retryUntil(utcNow, check.resets), true
+			left := aiBudgetRoom(state, limits)
+			return check.reason + ReasonReservationSuffix, retryUntil(utcNow, check.resets), &left, true
 		case check.used+check.held+check.call > *check.limit:
 			// Calls in flight hold the rest; it frees as they settle.
-			return check.reason, aiBudgetHeldRetry, true
+			return check.reason, aiBudgetHeldRetry, nil, true
 		}
 	}
-	return "", 0, false
+	return "", 0, nil, false
+}
+
+// aiBudgetRoom is what every AI budget leaves after settled usage and the
+// calls in flight, the smallest of each kind; -1 when none of a kind applies.
+func aiBudgetRoom(state aiBudgetState, limits aiBudgetLimits) AIBudgetLeft {
+	left := AIBudgetLeft{Tokens: -1, CostMillicents: -1}
+	room := func(current *int64, limit *int64, used, held int64) {
+		if limit == nil {
+			return
+		}
+		r := max(*limit-used-held, 0)
+		if *current < 0 || r < *current {
+			*current = r
+		}
+	}
+	room(&left.Tokens, limits.dailyTokens, state.dailyTokens, state.inflightTokens)
+	room(&left.Tokens, limits.bindingTokens, state.bindingTokens, state.inflightBindingTokens)
+	room(&left.Tokens, limits.userTokens, state.userTokens, state.inflightUserTokens)
+	room(&left.CostMillicents, limits.dailyCost, state.dailyCost, state.inflightCost)
+	room(&left.CostMillicents, limits.monthlyCost, state.monthlyCost, state.inflightCost)
+	room(&left.CostMillicents, limits.userCost, state.userCost, state.inflightUserCost)
+	return left
 }
 
 // ReasonReservationSuffix marks a budget refusal caused by the call's own
