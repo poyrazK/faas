@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -86,9 +87,32 @@ func TestSyncExternalOAuthGatewayPolicy(t *testing.T) {
 			if tc.mode == mcphosting.AuthOpen {
 				cfg.Auth = mcphosting.AuthConfig{Mode: tc.mode}
 			}
-			main.SyncExternalOAuthGatewayPolicy(context.Background(), main.NewClient(server.URL, "key"), ".", "my-mcp", cfg, tc.token, tc.audit)
+			// The deploy's verification deadline may be spent by promotion;
+			// the sync still runs. A path with a space is quoted in the fix.
+			spent, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+			defer cancel()
+			checks := main.SyncExternalOAuthGatewayPolicy(spent, main.NewClient(server.URL, "key"), "./my server", "my-mcp", cfg, tc.token, tc.audit)
 			if writes != tc.writes {
 				t.Fatalf("writes = %d, want %d", writes, tc.writes)
+			}
+			// The deploy receipt's gateway_token_checks.
+			switch {
+			case tc.mode == mcphosting.AuthOpen:
+				if checks != nil {
+					t.Fatalf("open server reported %+v", checks)
+				}
+			case tc.writes > 0:
+				if checks == nil || checks.Status != "on" || checks.RuleID != "policy" {
+					t.Fatalf("checks = %+v, want on", checks)
+				}
+			case tc.audit != nil && tc.audit.AuthPlacement == "guest-only":
+				if checks == nil || checks.Status != "skipped" {
+					t.Fatalf("checks = %+v, want skipped", checks)
+				}
+			default:
+				if checks == nil || checks.Status != "failed" || len(checks.FixCommands) != 1 || checks.FixCommands[0] != "gregale mcp policy --path './my server' --name my-mcp" {
+					t.Fatalf("checks = %+v, want failed with a fix command", checks)
+				}
 			}
 			if tc.writes > 0 {
 				var action api.EdgeRuleJWTAction

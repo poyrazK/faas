@@ -39,32 +39,47 @@ func mcpVerificationCredential(mode string) string {
 // (algorithm, issuer, audience, scopes), so it cannot start refusing the
 // server's callers. --access-audit guest-only keeps the gateway out, and a
 // reviewed --access-audit-algorithms list is the one stored.
-func syncExternalOAuthGatewayPolicy(ctx context.Context, c *Client, path, slug string, cfg mcphosting.Config, token string, audit *mcpAccessAuditOptions) {
+func syncExternalOAuthGatewayPolicy(ctx context.Context, c *Client, path, slug string, cfg mcphosting.Config, token string, audit *mcpAccessAuditOptions) *mcpGatewayTokenChecks {
 	if cfg.Auth.Mode != mcphosting.AuthExternalOAuth {
-		return
+		return nil
 	}
+	// The deploy's verification deadline may be nearly spent by promotion;
+	// the policy write gets its own short budget.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+	defer cancel()
 	if audit != nil && audit.AuthPlacement == "guest-only" {
 		fmt.Fprintf(os.Stderr, "Gateway leaves token checks to the server (--access-audit guest-only); its OAuth callers cannot become customers\n")
-		return
+		return &mcpGatewayTokenChecks{Status: "skipped", Reason: "--access-audit guest-only"}
 	}
 	algorithms := []string{"RS256", "ES256"}
 	if audit != nil && len(audit.Algorithms) != 0 {
 		algorithms = audit.Algorithms
 	}
-	warn := func(err error) {
+	warn := func(err error) *mcpGatewayTokenChecks {
+		fix := "gregale mcp policy --path " + quoteCLIArg(path) + " --name " + quoteCLIArg(slug)
 		fmt.Fprintf(os.Stderr, "warning: Gregale does not check this server's tokens (%v); callers are served but cannot become customers. "+
-			"Fix it, then run `gregale mcp policy --path %s --name %s`\n", err, path, slug)
+			"Fix it, then run `%s`\n", err, fix)
+		return &mcpGatewayTokenChecks{Status: "failed", Reason: err.Error(), FixCommands: []string{fix}}
 	}
 	if err := mcpTokenFitsGatewayPolicy(token, mcpExpectedGatewayAction(cfg, algorithms, c.BaseURL()), cfg.Auth.Scopes); err != nil {
-		warn(fmt.Errorf("the deploy token would not pass the gateway policy: %w", err))
-		return
+		return warn(fmt.Errorf("the deploy token would not pass the gateway policy: %w", err))
 	}
 	rule, err := applyMCPGatewayPolicy(ctx, c, slug, cfg, algorithms)
 	if err != nil {
-		warn(err)
-		return
+		return warn(err)
 	}
 	fmt.Fprintf(os.Stderr, "Gateway checks OAuth tokens for %s (edge rule %s)\n", slug, rule.ID)
+	return &mcpGatewayTokenChecks{Status: "on", RuleID: rule.ID}
+}
+
+// mcpGatewayTokenChecks is the deploy receipt's gateway_token_checks: whether
+// the gateway now checks an external-oauth server's tokens, so agents reading
+// --json see a failure and its fix (ADR-20261123230000).
+type mcpGatewayTokenChecks struct {
+	Status      string   `json:"status"` // on, skipped or failed
+	RuleID      string   `json:"rule_id,omitempty"`
+	Reason      string   `json:"reason,omitempty"`
+	FixCommands []string `json:"fix_commands,omitempty"`
 }
 
 // mcpTokenFitsGatewayPolicy reports why token, which the server accepted,
