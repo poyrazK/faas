@@ -4073,7 +4073,7 @@ spinner) and PR #51 (the closeout batch):
   `pkg/state/memstore.go:585,602`. Metal regression in
   `pkg/netns/allowlist_metal_test.go::TestMetalAllowlistRuleInstalled`.
   Per spec §7 the feature is gated to **Pro / Scale** plans.
-- **ADR-119 per-app static outbound IP (BYOIP, Scale-only, single-node v1)** —
+- **ADR-119 per-app static outbound IP (Scale-only; multi-node per ADR-20261128090000)** —
   `migrations/00303_apps_static_egress_ip.sql` adds a nullable
   `static_egress_ip INET` + `static_egress_ip_set_at TIMESTAMPTZ` to
   `apps`, with a `family(INET)=4` CHECK (IPv6 deferred) and a partial
@@ -4096,6 +4096,16 @@ spinner) and PR #51 (the closeout batch):
   `gregale app <slug> static-egress-ip {show|set <ip>|clear}`. Metal
   acceptance gates in `pkg/netns/static_egress_ip_metal_test.go`
   (nft syntax check + `ifconfig.me` round-trip from inside the netns).
+  **Amended by ADR-20261128090000 (multi-node):** addresses live in the
+  `static_egress_addresses` inventory (one compute node each, assigned to an
+  account), managed hot with `gregalectl static-egress-ips list|set|remove`
+  (`/v1/admin/ops/static-egress-ips`); vmmd loads its node's rows on
+  `static_egress_addresses_changed` + every 5 s; schedd places a pinned
+  production deployment only on the address's node (`static_egress_node`
+  blocker) and live migration refuses to move it; vmmd restart adoption keeps
+  pinned guests; a downgrade leaves the pin inactive; included in Scale.
+  Packet flow: `pkg/netns/static_egress_packet_metal_test.go`. The TOML bundle
+  stays as a legacy, placement-free grant.
 
 **Observability & dashboards (PR #156):**
 

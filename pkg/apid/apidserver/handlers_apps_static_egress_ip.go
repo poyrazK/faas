@@ -1,5 +1,6 @@
 // handlers_apps_static_egress_ip.go — apid handlers for ADR-119
-// (static outbound IP per app, Scale-only, BYOIP, single-node v1).
+// (static outbound IP per app, Scale-only). Addresses come from the
+// operator inventory (ADR-20261128090000).
 //
 // Routes (registered in cmd/apid/server.go::handler with the standard
 // customer-scoped auth chain — see the mount block):
@@ -69,7 +70,23 @@ func (s *server) getAppStaticEgressIP(w http.ResponseWriter, r *http.Request, ac
 		return
 	}
 	limits, _ := api.LimitsFor(acct.Plan)
-	writeJSON(w, http.StatusOK, appStaticEgressIPResponse(app, limits))
+	out := appStaticEgressIPResponse(app, limits)
+	out.AvailableIPs = s.staticEgressAvailableIPs(r, acct)
+	writeJSON(w, http.StatusOK, out)
+}
+
+// staticEgressAvailableIPs lists the inventory addresses assigned to acct.
+// A read failure answers an empty list: the pin itself is still shown.
+func (s *server) staticEgressAvailableIPs(r *http.Request, acct state.Account) []netip.Addr {
+	inventory, ok := s.store.(state.StaticEgressAddressStore)
+	if !ok {
+		return []netip.Addr{}
+	}
+	ips, err := inventory.StaticEgressAddressesForAccount(r.Context(), acct.ID)
+	if err != nil || ips == nil {
+		return []netip.Addr{}
+	}
+	return ips
 }
 
 // setAppStaticEgressIP pins a customer-supplied IPv4 to the app's
@@ -154,10 +171,7 @@ func (s *server) setAppStaticEgressIP(w http.ResponseWriter, r *http.Request, ac
 		// control-plane binary (CLAUDE.md component ownership).
 		newIP = &ip
 	}
-	updated, err := s.store.UpdateApp(r.Context(), app.ID, state.UpdateAppParams{
-		StaticEgressIP:    newIP,
-		SetStaticEgressIP: true,
-	})
+	updated, err := s.pinStaticEgressIP(r, app.ID, newIP)
 	if err != nil {
 		// Cross-app unique-index violation on apps_static_egress_ip_key
 		// → 403 quota, mirroring the per-account egress-allowlist
@@ -165,8 +179,8 @@ func (s *server) setAppStaticEgressIP(w http.ResponseWriter, r *http.Request, ac
 		// sentinel) AND the index name in the error string so a
 		// unique violation from any future column doesn't false-
 		// positive.
-		if errors.Is(err, state.ErrConflict) && strings.Contains(err.Error(), "apps_static_egress_ip_key") {
-			api.WriteProblem(w, api.ErrPlanStaticEgressIPQuota(acct.Plan, limits.StaticEgressIPsPerApp, 1, "another app on this account already pins that IP"))
+		if isStaticEgressPinConflict(err) {
+			api.WriteProblem(w, api.ErrPlanStaticEgressIPQuota(acct.Plan, limits.StaticEgressIPsPerApp, 1, "another app already pins that IP; clear its pin first"))
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("could not update static egress IP"))
@@ -200,6 +214,30 @@ func (s *server) setAppStaticEgressIP(w http.ResponseWriter, r *http.Request, ac
 	}
 	s.audit.Emit(r.Context(), "app.static_egress_ip_set", &acct.ID, auditPayload)
 	writeJSON(w, http.StatusOK, appStaticEgressIPResponse(updated, limits))
+}
+
+func isStaticEgressPinConflict(err error) bool {
+	return errors.Is(err, state.ErrConflict) && strings.Contains(err.Error(), "apps_static_egress_ip_key")
+}
+
+// pinStaticEgressIP writes the pin. A deleted app keeps its row, and so its
+// pin, through the restore grace; when only such an app holds the address,
+// its pin is released and the write retried once.
+func (s *server) pinStaticEgressIP(r *http.Request, appID string, ip *netip.Addr) (state.App, error) {
+	params := state.UpdateAppParams{StaticEgressIP: ip, SetStaticEgressIP: true}
+	updated, err := s.store.UpdateApp(r.Context(), appID, params)
+	if ip == nil || !isStaticEgressPinConflict(err) {
+		return updated, err
+	}
+	inventory, ok := s.store.(state.StaticEgressAddressStore)
+	if !ok {
+		return updated, err
+	}
+	released, rerr := inventory.ReleaseDeletedAppStaticEgressPins(r.Context(), *ip)
+	if rerr != nil || released == 0 {
+		return updated, err
+	}
+	return s.store.UpdateApp(r.Context(), appID, params)
 }
 
 // clearAppStaticEgressIP drops the per-app static egress IP pin.
@@ -254,9 +292,11 @@ func (s *server) clearAppStaticEgressIP(w http.ResponseWriter, r *http.Request, 
 // render the upsell without round-tripping the plan table.
 func appStaticEgressIPResponse(app state.App, limits api.Limits) api.AppStaticEgressIPResponse {
 	out := api.AppStaticEgressIPResponse{
-		IP:          app.StaticEgressIP,
-		PlanCap:     limits.StaticEgressIPsPerApp,
-		PlanAllowed: limits.StaticEgressIPAllowed,
+		IP:           app.StaticEgressIP,
+		PlanCap:      limits.StaticEgressIPsPerApp,
+		PlanAllowed:  limits.StaticEgressIPAllowed,
+		Active:       app.StaticEgressIP != nil && limits.StaticEgressIPAllowed,
+		AvailableIPs: []netip.Addr{},
 	}
 	if app.StaticEgressIPSetAt != nil {
 		// Defensive copy: the SetAt is a *time.Time on the App

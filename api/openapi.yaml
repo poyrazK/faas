@@ -141460,7 +141460,7 @@ components:
         can render "you can use 1 static IP per app" without the CLI
         round-tripping the plan table.
       type: object
-      required: [ip, set_at, plan_cap, plan_allowed]
+      required: [ip, set_at, plan_cap, plan_allowed, active, available_ips]
       properties:
         ip:
           type: [string, "null"]
@@ -141491,6 +141491,23 @@ components:
             (Plan.StaticEgressIPAllowed). `true` for Scale; `false`
             for Free / Hobby / Pro so the CLI can render the upsell.
           example: true
+        active:
+          type: boolean
+          description: |
+            Whether the pin takes effect (ADR-20261128090000): `true`
+            when an IP is pinned and the plan allows static egress.
+            A pin kept after a downgrade is inactive; the app leaves
+            through shared egress until the account upgrades.
+          example: true
+        available_ips:
+          type: array
+          description: |
+            The static egress addresses assigned to the account; only
+            these can be pinned. Empty until Gregale support assigns one.
+          items:
+            type: string
+            format: ipv4
+          example: [203.0.113.42]
 
     SetAppStaticEgressIPRequest:
       description: |

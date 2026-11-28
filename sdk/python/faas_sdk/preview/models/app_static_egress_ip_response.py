@@ -40,6 +40,16 @@ class AppStaticEgressIPResponse:
     (Plan.StaticEgressIPAllowed). `true` for Scale; `false`
     for Free / Hobby / Pro so the CLI can render the upsell.
     """
+    active: bool
+    """Whether the pin takes effect (ADR-20261128090000): `true`
+    when an IP is pinned and the plan allows static egress.
+    A pin kept after a downgrade is inactive; the app leaves
+    through shared egress until the account upgrades.
+    """
+    available_ips: list[str]
+    """The static egress addresses assigned to the account; only
+    these can be pinned. Empty until Gregale support assigns one.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -56,6 +66,10 @@ class AppStaticEgressIPResponse:
 
         plan_allowed = self.plan_allowed
 
+        active = self.active
+
+        available_ips = self.available_ips
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -64,6 +78,8 @@ class AppStaticEgressIPResponse:
                 "set_at": set_at,
                 "plan_cap": plan_cap,
                 "plan_allowed": plan_allowed,
+                "active": active,
+                "available_ips": available_ips,
             }
         )
 
@@ -99,11 +115,17 @@ class AppStaticEgressIPResponse:
 
         plan_allowed = d.pop("plan_allowed")
 
+        active = d.pop("active")
+
+        available_ips = cast(list[str], d.pop("available_ips"))
+
         app_static_egress_ip_response = cls(
             ip=ip,
             set_at=set_at,
             plan_cap=plan_cap,
             plan_allowed=plan_allowed,
+            active=active,
+            available_ips=available_ips,
         )
 
         app_static_egress_ip_response.additional_properties = d

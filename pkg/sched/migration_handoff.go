@@ -308,6 +308,15 @@ func (h *MigrationHarness) MigrateOne(ctx context.Context, instanceID, fromNodeI
 		h.metrics.LiveMigrationDecisions("peer_failure").Inc()
 		return fmt.Errorf("sched: migrate one: load app spec: deployment id is empty")
 	}
+	// ADR-20261128090000: a pinned static egress address is routed to its
+	// own node; the instance parks rather than moving where it cannot send.
+	if allowed, err := staticEgressAllowsDestination(leaseCtx, h.store, appSpec.AccountID, appSpec.StaticEgressIP, h.newOwnerNodeID); err != nil || !allowed {
+		h.metrics.LiveMigrationDecisions("no_eligibility").Inc()
+		if err != nil {
+			return fmt.Errorf("sched: migrate one: static egress destination: %w", err)
+		}
+		return ErrStaticEgressNodeOnly
+	}
 
 	_, wireSupportsAdmission := h.vmm.(migrationAdoptionRetirer)
 	if appSpec.migrationRuntime != nil {

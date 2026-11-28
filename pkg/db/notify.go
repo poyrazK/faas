@@ -832,6 +832,10 @@ const (
 	// gains a fan-out event. Its payload is empty: vmmd's replica worker
 	// wakes and rereads its cursor, and keeps a slow tick for retries.
 	NotifySnapshotFanout = "snapshot_fanout"
+	// NotifyStaticEgressAddresses is sent by apid after an operator changes
+	// the static egress address inventory (ADR-20261128090000). vmmd rereads
+	// its node's rows; its periodic refresh covers a missed notice.
+	NotifyStaticEgressAddresses = "static_egress_addresses_changed"
 	// NotifyAppTaskChanged is a durable terminal-state handoff. Release tasks
 	// use it to resume deployment priming only after their command succeeds;
 	// manual tasks currently have no daemon-side consumer.

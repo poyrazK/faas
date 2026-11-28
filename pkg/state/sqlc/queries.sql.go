@@ -16612,6 +16612,18 @@ func (q *Queries) DeleteStageWorkflowScheduleCursor(ctx context.Context, db DBTX
 	return err
 }
 
+const deleteStaticEgressAddress = `-- name: DeleteStaticEgressAddress :execrows
+DELETE FROM static_egress_addresses WHERE ip = $1::inet
+`
+
+func (q *Queries) DeleteStaticEgressAddress(ctx context.Context, db DBTX, ip netip.Addr) (int64, error) {
+	result, err := db.Exec(ctx, deleteStaticEgressAddress, ip)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteStaticEgressProvisioningSource = `-- name: DeleteStaticEgressProvisioningSource :exec
 DELETE FROM static_egress_provisioning_grants
 WHERE source_id = $1::text
@@ -31202,6 +31214,41 @@ func (q *Queries) GetStageWorkflowScheduleCursor(ctx context.Context, db DBTX, a
 	return i, err
 }
 
+const getStaticEgressAddress = `-- name: GetStaticEgressAddress :one
+SELECT a.ip, a.node_id, n.name AS node_name, a.account_id, a.note, a.created_at, a.updated_at,
+       coalesce((SELECT p.id::text FROM apps p WHERE p.static_egress_ip = a.ip AND p.status <> 'deleted' LIMIT 1), '')::text AS pinned_app_id
+FROM static_egress_addresses a
+JOIN compute_nodes n ON n.id = a.node_id
+WHERE a.ip = $1::inet
+`
+
+type GetStaticEgressAddressRow struct {
+	Ip          netip.Addr
+	NodeID      pgtype.UUID
+	NodeName    string
+	AccountID   pgtype.UUID
+	Note        string
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+	PinnedAppID string
+}
+
+func (q *Queries) GetStaticEgressAddress(ctx context.Context, db DBTX, ip netip.Addr) (GetStaticEgressAddressRow, error) {
+	row := db.QueryRow(ctx, getStaticEgressAddress, ip)
+	var i GetStaticEgressAddressRow
+	err := row.Scan(
+		&i.Ip,
+		&i.NodeID,
+		&i.NodeName,
+		&i.AccountID,
+		&i.Note,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.PinnedAppID,
+	)
+	return i, err
+}
+
 const getStoredWorkflowFailurePolicy = `-- name: GetStoredWorkflowFailurePolicy :one
 SELECT jsonb_build_object('policy',jsonb_build_object('version',coalesce(p.version,0),'enabled',coalesce(p.enabled,false),
  'failure_threshold',coalesce(p.failure_threshold,3),'min_completed_runs',coalesce(p.min_completed_runs,5),'window_seconds',coalesce(p.window_seconds,300)),
@@ -40439,6 +40486,28 @@ func (q *Queries) InsertSourceBuildRootfs(ctx context.Context, db DBTX, arg Inse
 	return i, err
 }
 
+const insertStaticEgressAddress = `-- name: InsertStaticEgressAddress :exec
+INSERT INTO static_egress_addresses (ip, node_id, account_id, note)
+VALUES ($1::inet, $2::uuid, $3::uuid, $4::text)
+`
+
+type InsertStaticEgressAddressParams struct {
+	Ip        netip.Addr
+	NodeID    pgtype.UUID
+	AccountID pgtype.UUID
+	Note      string
+}
+
+func (q *Queries) InsertStaticEgressAddress(ctx context.Context, db DBTX, arg InsertStaticEgressAddressParams) error {
+	_, err := db.Exec(ctx, insertStaticEgressAddress,
+		arg.Ip,
+		arg.NodeID,
+		arg.AccountID,
+		arg.Note,
+	)
+	return err
+}
+
 const insertStaticEgressProvisioningGrant = `-- name: InsertStaticEgressProvisioningGrant :exec
 INSERT INTO static_egress_provisioning_grants(source_id, account_id, customer_ip)
 VALUES($1, $2, $3)
@@ -48059,6 +48128,38 @@ func (q *Queries) ListAppsWithRecentTelemetry(ctx context.Context, db DBTX, doll
 			return nil, err
 		}
 		items = append(items, app_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAssignedStaticEgressAddressesForNode = `-- name: ListAssignedStaticEgressAddressesForNode :many
+SELECT ip, account_id::text AS account_id
+FROM static_egress_addresses
+WHERE node_id = $1::uuid AND account_id IS NOT NULL
+ORDER BY ip
+`
+
+type ListAssignedStaticEgressAddressesForNodeRow struct {
+	Ip        netip.Addr
+	AccountID string
+}
+
+func (q *Queries) ListAssignedStaticEgressAddressesForNode(ctx context.Context, db DBTX, nodeID pgtype.UUID) ([]ListAssignedStaticEgressAddressesForNodeRow, error) {
+	rows, err := db.Query(ctx, listAssignedStaticEgressAddressesForNode, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAssignedStaticEgressAddressesForNodeRow{}
+	for rows.Next() {
+		var i ListAssignedStaticEgressAddressesForNodeRow
+		if err := rows.Scan(&i.Ip, &i.AccountID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -58955,6 +59056,80 @@ func (q *Queries) ListStageWorkflowScheduleCandidates(ctx context.Context, db DB
 	return items, nil
 }
 
+const listStaticEgressAddresses = `-- name: ListStaticEgressAddresses :many
+SELECT a.ip, a.node_id, n.name AS node_name, a.account_id, a.note, a.created_at, a.updated_at,
+       coalesce((SELECT p.id::text FROM apps p WHERE p.static_egress_ip = a.ip AND p.status <> 'deleted' LIMIT 1), '')::text AS pinned_app_id
+FROM static_egress_addresses a
+JOIN compute_nodes n ON n.id = a.node_id
+ORDER BY a.ip
+`
+
+type ListStaticEgressAddressesRow struct {
+	Ip          netip.Addr
+	NodeID      pgtype.UUID
+	NodeName    string
+	AccountID   pgtype.UUID
+	Note        string
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+	PinnedAppID string
+}
+
+func (q *Queries) ListStaticEgressAddresses(ctx context.Context, db DBTX) ([]ListStaticEgressAddressesRow, error) {
+	rows, err := db.Query(ctx, listStaticEgressAddresses)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListStaticEgressAddressesRow{}
+	for rows.Next() {
+		var i ListStaticEgressAddressesRow
+		if err := rows.Scan(
+			&i.Ip,
+			&i.NodeID,
+			&i.NodeName,
+			&i.AccountID,
+			&i.Note,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.PinnedAppID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStaticEgressAddressesForAccount = `-- name: ListStaticEgressAddressesForAccount :many
+SELECT ip FROM static_egress_addresses
+WHERE account_id = $1::uuid
+ORDER BY ip
+`
+
+func (q *Queries) ListStaticEgressAddressesForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]netip.Addr, error) {
+	rows, err := db.Query(ctx, listStaticEgressAddressesForAccount, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []netip.Addr{}
+	for rows.Next() {
+		var ip netip.Addr
+		if err := rows.Scan(&ip); err != nil {
+			return nil, err
+		}
+		items = append(items, ip)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listStoredWorkflowFailurePauses = `-- name: ListStoredWorkflowFailurePauses :many
 SELECT name FROM stored_workflow_failure_guards WHERE app_id=$1 AND paused_at IS NOT NULL ORDER BY name
 `
@@ -60331,6 +60506,24 @@ func (q *Queries) ListWorkflowScheduleOccurrences(ctx context.Context, db DBTX, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const liveAppPinningStaticEgressIP = `-- name: LiveAppPinningStaticEgressIP :one
+SELECT id::text AS app_id, account_id::text AS account_id FROM apps
+WHERE static_egress_ip = $1::inet AND status <> 'deleted'
+LIMIT 1
+`
+
+type LiveAppPinningStaticEgressIPRow struct {
+	AppID     string
+	AccountID string
+}
+
+func (q *Queries) LiveAppPinningStaticEgressIP(ctx context.Context, db DBTX, ip netip.Addr) (LiveAppPinningStaticEgressIPRow, error) {
+	row := db.QueryRow(ctx, liveAppPinningStaticEgressIP, ip)
+	var i LiveAppPinningStaticEgressIPRow
+	err := row.Scan(&i.AppID, &i.AccountID)
+	return i, err
 }
 
 const liveEnvironmentWorkloadDeploymentsForServing = `-- name: LiveEnvironmentWorkloadDeploymentsForServing :many
@@ -82173,6 +82366,9 @@ SELECT EXISTS (
     UNION ALL
     SELECT 1 FROM static_egress_provisioning_grants AS owned
     WHERE owned.account_id = $1::uuid AND owned.customer_ip = $2::inet
+    UNION ALL
+    SELECT 1 FROM static_egress_addresses AS inventory
+    WHERE inventory.account_id = $1::uuid AND inventory.ip = $2::inet
 )
 `
 
@@ -102912,6 +103108,21 @@ func (q *Queries) ReleaseDatabaseStandby(ctx context.Context, db DBTX, arg Relea
 	return result.RowsAffected(), nil
 }
 
+const releaseDeletedAppStaticEgressPins = `-- name: ReleaseDeletedAppStaticEgressPins :execrows
+UPDATE apps SET static_egress_ip = NULL, static_egress_ip_set_at = NULL
+WHERE static_egress_ip = $1::inet AND status = 'deleted'
+`
+
+// A deleted app keeps its row through the restore grace; it must not keep an
+// address that the unique pin index would then deny to every other app.
+func (q *Queries) ReleaseDeletedAppStaticEgressPins(ctx context.Context, db DBTX, ip netip.Addr) (int64, error) {
+	result, err := db.Exec(ctx, releaseDeletedAppStaticEgressPins, ip)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const releaseDetachedPrivateNetworkServiceAddress = `-- name: ReleaseDetachedPrivateNetworkServiceAddress :exec
 DELETE FROM private_network_addresses a WHERE a.account_id=$1 AND a.network_id=$2
  AND a.owner_type='app' AND a.owner_id=$3
@@ -113527,6 +113738,36 @@ func (q *Queries) StartDeferredWebhookFire(ctx context.Context, db DBTX, id pgty
 	return result.RowsAffected(), nil
 }
 
+const staticEgressAddressNodeIDs = `-- name: StaticEgressAddressNodeIDs :many
+SELECT node_id::text AS node_id FROM static_egress_addresses
+WHERE ip = $1::inet AND account_id = $2::uuid
+`
+
+type StaticEgressAddressNodeIDsParams struct {
+	Ip        netip.Addr
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) StaticEgressAddressNodeIDs(ctx context.Context, db DBTX, arg StaticEgressAddressNodeIDsParams) ([]string, error) {
+	rows, err := db.Query(ctx, staticEgressAddressNodeIDs, arg.Ip, arg.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var node_id string
+		if err := rows.Scan(&node_id); err != nil {
+			return nil, err
+		}
+		items = append(items, node_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const stopEnvironmentQualificationInstance = `-- name: StopEnvironmentQualificationInstance :one
 UPDATE instances i SET state=CASE WHEN i.state IN ('parked','stopped','failed','evicting_account_deleting') THEN i.state ELSE 'stopped' END,
 terminal_at=e.retired_at FROM environment_qualification_executions e
@@ -117030,6 +117271,35 @@ func (q *Queries) UpdateSpansSummary(ctx context.Context, db DBTX, arg UpdateSpa
 		arg.Column5,
 		arg.Column6,
 		arg.Column7,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const updateStaticEgressAddress = `-- name: UpdateStaticEgressAddress :execrows
+UPDATE static_egress_addresses
+SET node_id = $1::uuid,
+    account_id = $2::uuid,
+    note = $3::text,
+    updated_at = now()
+WHERE ip = $4::inet
+`
+
+type UpdateStaticEgressAddressParams struct {
+	NodeID    pgtype.UUID
+	AccountID pgtype.UUID
+	Note      string
+	Ip        netip.Addr
+}
+
+func (q *Queries) UpdateStaticEgressAddress(ctx context.Context, db DBTX, arg UpdateStaticEgressAddressParams) (int64, error) {
+	result, err := db.Exec(ctx, updateStaticEgressAddress,
+		arg.NodeID,
+		arg.AccountID,
+		arg.Note,
+		arg.Ip,
 	)
 	if err != nil {
 		return 0, err

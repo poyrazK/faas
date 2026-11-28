@@ -30529,7 +30529,65 @@ SELECT EXISTS (
     UNION ALL
     SELECT 1 FROM static_egress_provisioning_grants AS owned
     WHERE owned.account_id = sqlc.arg(account_id)::uuid AND owned.customer_ip = sqlc.arg(customer_ip)::inet
+    UNION ALL
+    SELECT 1 FROM static_egress_addresses AS inventory
+    WHERE inventory.account_id = sqlc.arg(account_id)::uuid AND inventory.ip = sqlc.arg(customer_ip)::inet
 );
+
+-- name: ListStaticEgressAddresses :many
+SELECT a.ip, a.node_id, n.name AS node_name, a.account_id, a.note, a.created_at, a.updated_at,
+       coalesce((SELECT p.id::text FROM apps p WHERE p.static_egress_ip = a.ip AND p.status <> 'deleted' LIMIT 1), '')::text AS pinned_app_id
+FROM static_egress_addresses a
+JOIN compute_nodes n ON n.id = a.node_id
+ORDER BY a.ip;
+
+-- name: GetStaticEgressAddress :one
+SELECT a.ip, a.node_id, n.name AS node_name, a.account_id, a.note, a.created_at, a.updated_at,
+       coalesce((SELECT p.id::text FROM apps p WHERE p.static_egress_ip = a.ip AND p.status <> 'deleted' LIMIT 1), '')::text AS pinned_app_id
+FROM static_egress_addresses a
+JOIN compute_nodes n ON n.id = a.node_id
+WHERE a.ip = sqlc.arg(ip)::inet;
+
+-- name: ListAssignedStaticEgressAddressesForNode :many
+SELECT ip, account_id::text AS account_id
+FROM static_egress_addresses
+WHERE node_id = sqlc.arg(node_id)::uuid AND account_id IS NOT NULL
+ORDER BY ip;
+
+-- name: ListStaticEgressAddressesForAccount :many
+SELECT ip FROM static_egress_addresses
+WHERE account_id = sqlc.arg(account_id)::uuid
+ORDER BY ip;
+
+-- name: StaticEgressAddressNodeIDs :many
+SELECT node_id::text AS node_id FROM static_egress_addresses
+WHERE ip = sqlc.arg(ip)::inet AND account_id = sqlc.arg(account_id)::uuid;
+
+-- name: InsertStaticEgressAddress :exec
+INSERT INTO static_egress_addresses (ip, node_id, account_id, note)
+VALUES (sqlc.arg(ip)::inet, sqlc.arg(node_id)::uuid, sqlc.narg(account_id)::uuid, sqlc.arg(note)::text);
+
+-- name: UpdateStaticEgressAddress :execrows
+UPDATE static_egress_addresses
+SET node_id = sqlc.arg(node_id)::uuid,
+    account_id = sqlc.narg(account_id)::uuid,
+    note = sqlc.arg(note)::text,
+    updated_at = now()
+WHERE ip = sqlc.arg(ip)::inet;
+
+-- name: DeleteStaticEgressAddress :execrows
+DELETE FROM static_egress_addresses WHERE ip = sqlc.arg(ip)::inet;
+
+-- name: LiveAppPinningStaticEgressIP :one
+SELECT id::text AS app_id, account_id::text AS account_id FROM apps
+WHERE static_egress_ip = sqlc.arg(ip)::inet AND status <> 'deleted'
+LIMIT 1;
+
+-- name: ReleaseDeletedAppStaticEgressPins :execrows
+-- A deleted app keeps its row through the restore grace; it must not keep an
+-- address that the unique pin index would then deny to every other app.
+UPDATE apps SET static_egress_ip = NULL, static_egress_ip_set_at = NULL
+WHERE static_egress_ip = sqlc.arg(ip)::inet AND status = 'deleted';
 
 -- name: ListPrivateNetworkAttachmentPage :many
 SELECT id, account_id, app_id, network_id, region,

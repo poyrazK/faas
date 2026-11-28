@@ -7140,8 +7140,8 @@ func ErrAppStaticEgressIPInvalid(ip string, reason string) *Problem {
 // copy directs the customer to the host operator.
 func ErrStaticEgressIPNotProvisioned(ip string) *Problem {
 	return NewProblem(http.StatusNotFound, CodeStaticEgressIPNotProvisioned,
-		"Static egress IP not provisioned on this host",
-		fmt.Sprintf("static_egress_ip=%q is not in the operator bundle; ask the host operator to provision it on the host's AS before pinning.", ip)).
+		"Static egress IP not assigned to this account",
+		fmt.Sprintf("static_egress_ip=%q is not a static egress address assigned to this account; `gregale app APP static-egress-ip show` lists the addresses you can pin, and support assigns new ones.", ip)).
 		WithDocs(docsBase + "/static-egress-ip")
 }
 

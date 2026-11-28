@@ -1,5 +1,6 @@
 # ADR-184 · Operator-managed reserved public IP inventory
 
+- **Superseded for static egress** by [ADR-20261128090000](20261128090000-static-egress-address-inventory-and-placement.md) (2026-11-28): no consumer was ever wired to these leases; static egress uses the operator inventory instead.
 - **Status:** accepted control-plane follow-up to ADR-171
 - **Date:** 2026-09-19
 - **Decision:** keep a durable, provider-neutral inventory of operator-provisioned public addresses and atomically claim an available inventory row into one account-scoped reserved-IP lease.

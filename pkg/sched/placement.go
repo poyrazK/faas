@@ -178,6 +178,7 @@ func chooseAmongNodes(nodes []state.ComputeNode, usedMB map[string]int64, usedVC
 		warmFit                             *state.ComputeNode
 		snapshotF                           []state.ComputeNode
 		refusedRAM, refusedVCPU, refusedCPU bool
+		refusedStaticEgress                 bool
 	)
 	for i := range nodes {
 		n := nodes[i]
@@ -200,6 +201,12 @@ func chooseAmongNodes(nodes []state.ComputeNode, usedMB map[string]int64, usedVC
 			continue
 		}
 		if containsNodeID(r.ExcludeNodeIDs, n.ID) {
+			continue
+		}
+		// ADR-20261128090000: a pinned static egress address is routed to
+		// one node, so the app may run only where the address is.
+		if r.StaticEgressPinned && !containsNodeID(r.StaticEgressNodeIDs, n.ID) {
+			refusedStaticEgress = true
 			continue
 		}
 		if n.AdmissionCeilingMB <= 0 {
@@ -331,6 +338,9 @@ func chooseAmongNodes(nodes []state.ComputeNode, usedMB map[string]int64, usedVC
 		}
 		if refusedCPU {
 			blockers = append(blockers, resourceBlocker("node_cpu", "cpu_millicores", int64(r.CPUMillicores)))
+		}
+		if refusedStaticEgress {
+			blockers = append(blockers, api.WorkerAdmissionBlocker{Code: "static_egress_node"})
 		}
 		if len(blockers) == 0 {
 			blockers = append(blockers, api.WorkerAdmissionBlocker{Code: "no_admitting_nodes"})

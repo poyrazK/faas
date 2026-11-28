@@ -1493,3 +1493,9 @@ var InvocationErrorText = invocationErrorText
 func (e *Engine) XWithWorkloadS3Env(app state.App, env []fcvm.APIEnvEntry) []fcvm.APIEnvEntry {
 	return e.withWorkloadS3Env(app, env)
 }
+
+// StaticEgressNodesForTest exposes the static egress placement lookup
+// (ADR-20261128090000).
+func StaticEgressNodesForTest(ctx context.Context, store state.Store, accountID, ip string) (bool, []string, error) {
+	return staticEgressNodes(ctx, store, accountID, ip)
+}

@@ -3792,7 +3792,7 @@ See [Static egress IP](static-egress-ip.md).
 
 ### `static_egress_ip_not_provisioned`
 
-HTTP 404 Not Found · Static egress IP not provisioned on this host
+HTTP 404 Not Found · Static egress IP not assigned to this account
 
 See [Static egress IP](static-egress-ip.md).
 

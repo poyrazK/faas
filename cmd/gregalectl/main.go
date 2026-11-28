@@ -68,6 +68,7 @@ Commands:
   support-access  Customer-granted support access (request|grants|status|deploy|retry|cancel|rollback|restart)
   billing      Operator billing catalog, credits, refunds, Postgres accounting, reconciliation, and webhook diagnostics
   config       Inspect and safely change hot runtime configuration (list|show|history|set|rollback)
+  static-egress-ips  Static egress address inventory: node routing and account assignment (list|set|remove)
   audit        Correlate operator intents and events by trace ID (audit trace)
   builds       Authenticated recovery for stuck builds (builds sweep-stuck)
   ci           Internal CI planning and metadata (compute disabled)
@@ -255,6 +256,9 @@ func run(args []string) int {
 		// Runtime configuration reads and hot-only mutations through
 		// apid. The CLI refuses apply modes that require a rollout.
 		return cmdConfigDispatch(args[1:])
+	case dispatchStaticEgress:
+		// ADR-20261128090000: the static egress address inventory.
+		return cmdStaticEgressDispatch(args[1:])
 	case dispatchFlags:
 		// ADR-1700 platform flags: per-account release gates, written
 		// through the hot runtime-configuration path with a version check.

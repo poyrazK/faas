@@ -103,11 +103,15 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		return ResolvedAppTaskRuntime{}, withAppTaskStage("placement", ErrAppTaskNotOwner)
 	}
 	limits := api.MustLimitsFor(acct.Plan)
-	placement, err := e.choosePlacementLocked(ctx, Request{
+	placementRequest, err := e.withStaticEgressPlacement(ctx, Request{
 		AppID: app.ID, Plan: acct.Plan, RAMMB: app.RAMMB, VCPU: appVCPUs(app),
 		CPUMillicores: appCPUBookingMillicores(app), MaxConcurrency: app.MaxConcurrency,
 		PreferredNodeID: app.NodeID,
-	})
+	}, acct.ID, deploymentStaticEgressIP(app, dep, acct.Plan))
+	if err != nil {
+		return ResolvedAppTaskRuntime{}, withAppTaskStage("placement", err)
+	}
+	placement, err := e.choosePlacementLocked(ctx, placementRequest)
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, withAppTaskStage("placement", err)
 	}
@@ -191,7 +195,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		EgressRevision:      app.EgressAllowlistRevision,
 		PrivateNetworkCIDRs: privateNetwork.CIDRs, PrivateNetworkAllowedCIDRs: privateNetwork.AllowedCIDRs,
 		PrivateNetworkFirewallRules: privateNetwork.FirewallRules, PrivateNetworkID: privateNetwork.NetworkID,
-		PrivateNetworkAddress: privateNetwork.Address, StaticEgressIP: deploymentStaticEgressIP(app, dep),
+		PrivateNetworkAddress: privateNetwork.Address, StaticEgressIP: deploymentStaticEgressIP(app, dep, acct.Plan),
 		Port: deploymentRuntimePort(dep), HealthcheckPath: healthcheckPath,
 		HealthcheckGRPC:        healthcheckGRPC,
 		HealthcheckGRPCService: healthcheckGRPCService,

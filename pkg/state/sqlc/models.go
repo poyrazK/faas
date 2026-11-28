@@ -17831,6 +17831,15 @@ type StageWorkflowScheduleCursor struct {
 	UpdatedAt       pgtype.Timestamptz
 }
 
+type StaticEgressAddress struct {
+	Ip        netip.Addr
+	NodeID    pgtype.UUID
+	AccountID pgtype.UUID
+	Note      string
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
 type StaticEgressProvisioningGrant struct {
 	SourceID   string
 	AccountID  pgtype.UUID
