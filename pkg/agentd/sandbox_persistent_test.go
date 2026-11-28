@@ -22,8 +22,13 @@ import (
 
 func queuePersistent(t *testing.T, s *agentstore.Store, runFor time.Duration) string {
 	t.Helper()
+	return queuePersistentVolume(t, s, runFor, 10)
+}
+
+func queuePersistentVolume(t *testing.T, s *agentstore.Store, runFor time.Duration, volumeGB int) string {
+	t.Helper()
 	sb, err := s.CreateSandbox(context.Background(), agentstore.SandboxAdmission{AccountID: account, Kind: agentstore.SandboxPersistent,
-		Preset: "codex", RAMMB: 2048, VCPU: 2, VolumeGB: 10, NetworkMode: "registries", IdleTimeoutSec: 600,
+		Preset: "codex", RAMMB: 2048, VCPU: 2, VolumeGB: volumeGB, NetworkMode: "registries", IdleTimeoutSec: 600,
 		ExpiresAt: time.Now().Add(runFor), QueuedMax: 100, PersistentMax: 10})
 	if err != nil {
 		t.Fatal(err)

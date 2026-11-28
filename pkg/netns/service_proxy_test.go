@@ -51,6 +51,38 @@ func TestNftCommandsAdmitGuestServiceProxyOnlyOnHostBridge(t *testing.T) {
 	}
 }
 
+// A service name the caller may not reach resolves to the bridge address, so
+// a client dialling it on a non-proxy port (redis on 6379) must be refused at
+// once, not left to time out on the lateral-movement drop. The reset follows
+// every bridge accept and precedes the drop.
+func TestNftCommandsResetOtherBridgeTCPPorts(t *testing.T) {
+	bridge := "10.100.0.1"
+	config := NewConfigWithBridge("instance-1", "fc-instance-1", "veth-host", "veth-peer",
+		netip.MustParseAddr("10.100.0.7"), netip.MustParseAddr(bridge))
+	config.ServiceProxyHTTPS = true
+	config.RehearsalRunID = "run-1"
+	config.EnvironmentBranchContained = true
+	var joined []string
+	for _, command := range config.NftCommands() {
+		joined = append(joined, strings.Join(command, " "))
+	}
+	reset := "add rule ip faas forward iifname tap0 ip daddr " + bridge + " meta l4proto tcp reject with tcp reset"
+	resetIndex, lastBridgeAccept, lateralIndex := -1, -1, -1
+	for i, line := range joined {
+		switch {
+		case strings.HasSuffix(line, reset):
+			resetIndex = i
+		case strings.Contains(line, "ip faas forward") && strings.Contains(line, "ip daddr "+bridge+" ") && strings.HasSuffix(line, " accept"):
+			lastBridgeAccept = i
+		case lateralIndex == -1 && strings.Contains(line, "ip daddr 10.0.0.0/8") && strings.Contains(line, " drop"):
+			lateralIndex = i
+		}
+	}
+	if resetIndex == -1 || lastBridgeAccept == -1 || lateralIndex == -1 || resetIndex < lastBridgeAccept || resetIndex > lateralIndex {
+		t.Fatalf("reset index=%d last bridge accept=%d lateral drop=%d; want accepts, then reset, then drop", resetIndex, lastBridgeAccept, lateralIndex)
+	}
+}
+
 func TestServiceProxyHTTPSFirewallIsOptIn(t *testing.T) {
 	config := NewConfigWithBridge("instance-1", "fc-instance-1", "veth-host", "veth-peer", netip.MustParseAddr("10.100.0.7"), netip.MustParseAddr("10.100.0.1"))
 	want := []string{"iifname", "tap0", "ip", "daddr", "10.100.0.1", "tcp", "dport", strconv.Itoa(ServiceProxyHTTPSPort), "accept"}

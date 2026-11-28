@@ -202,9 +202,10 @@ const (
 )
 
 // SnapshotBudgetFor returns the wall-clock budget for one instance's
-// snapshot capture. ramMB <= 0 (unknown row) falls back to the flat
+// snapshot memory capture. ramMB <= 0 (unknown row) falls back to the flat
 // SnapshotTimeout so a missing value never yields a zero deadline,
-// which would cancel the RPC instantly.
+// which would cancel the RPC instantly. A capture that also publishes the
+// instance's private drive gets SnapshotCaptureBudget instead.
 func SnapshotBudgetFor(ramMB int) time.Duration {
 	if ramMB <= 0 {
 		return SnapshotTimeout
@@ -7092,6 +7093,13 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) (primeEr
 	if allowed, err := e.releaseAllowsPrime(ctx, dep); err != nil || !allowed {
 		return err
 	}
+	// A branch's workloads stay dark until its data is ready: they read
+	// their binding URLs at boot. That holds for the deployments the branch
+	// made and for a pull request's build into its scope (ADR-20261113121342).
+	// The branch data reconciler primes them once the data is ready.
+	if ready, err := e.environmentBranchDataReady(ctx, dep.ID); err != nil || !ready {
+		return err
+	}
 	app, err = state.ResolveAppForDeployment(ctx, e.store, app, dep)
 	if err != nil {
 		return fmt.Errorf("sched: prime: load workload settings: %w", err)
@@ -7135,13 +7143,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) (primeEr
 			return err
 		}
 		if lazy {
-			// The branch's database copies must exist first: the workload reads
-			// its binding URLs at boot. The branch data reconciler primes the
-			// deployment again once they do.
-			ready, err := e.environmentBranchDataReady(ctx, dep.ID)
-			if err != nil || !ready {
-				return err
-			}
+			// Its branch's data is ready (checked above).
 			if err := e.verifyPrimeLayer(ctx, appID, primeLayer); err != nil {
 				return err
 			}
@@ -7566,12 +7568,23 @@ func (e *Engine) markPrimeFailed(ctx context.Context, deploymentID string, cause
 	problem := api.ErrDeployFailed(cause.Error())
 	code := api.CodeDeployFailed
 	var upstream *api.Problem
+	var captureTimeout *snapshotCaptureTimeoutError
+	var observed any
 	capacity := customerCapacityProblem(cause)
 	if capacity != nil {
 		problem, code = capacity, capacity.Code
 	} else if errors.As(cause, &upstream) && upstream != nil && upstream.Code != "" {
 		problem = upstream
 		code = upstream.Code
+	} else if errors.As(cause, &captureTimeout) {
+		// The app booted and passed its health check; the capture after it
+		// ran out of its own budget. Naming the cold-boot budget here sent
+		// customers to raise startup_deadline_s (production-us 2026-11-27).
+		problem = api.NewProblem(422, api.CodeStageSnapshotPrepareTimeout,
+			"snapshot capture exceeded its budget",
+			fmt.Sprintf("startup_phase=snapshot_capture: the app passed its health check; capturing its first snapshot exceeded the %s capture budget", captureTimeout.budget))
+		code = problem.Code
+		observed = whycopy.SnapshotCaptureTimeout{Budget: captureTimeout.budget}
 	} else if errors.Is(cause, context.DeadlineExceeded) || status.Code(cause) == codes.DeadlineExceeded {
 		// The outer scheduler RPC budget can expire before vmmd has time to
 		// return its more specific guest-startup or handler-readiness Problem.
@@ -7592,7 +7605,6 @@ func (e *Engine) markPrimeFailed(ctx context.Context, deploymentID string, cause
 			fmt.Sprintf("startup_phase=scheduler_timeout: snapshot prime exceeded the %s cold-boot RPC budget", e.primeColdBootBudget(startupDeadlineS)))
 		code = problem.Code
 	}
-	var observed any
 	serviceConflict, isServiceConflict := e.projectServiceModeConflict(markCtx, dep.AppID, code, cause)
 	if isServiceConflict {
 		observed = serviceConflict
@@ -9232,7 +9244,9 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 		})
 	}
 
-	snapBudget := SnapshotBudgetFor(ins.RAMMB)
+	// The capture publishes the guest's memory and its private drive, a
+	// clone of the app layer (SnapshotCaptureBudget).
+	snapBudget := SnapshotCaptureBudget(ins.RAMMB, dep.RootfsBytes)
 	snapCtx, snapCancel := context.WithTimeout(ctx, snapBudget)
 	snapStart := time.Now()
 	var b SnapshotBytes
@@ -9249,6 +9263,9 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 	}
 	if reused != nil {
 		storageKey = reused.StorageKey
+	}
+	if captureBudgetExpired(ctx, snapCtx, err) {
+		err = &snapshotCaptureTimeoutError{budget: snapBudget, err: err}
 	}
 	snapCancel()
 	snapDuration := time.Since(snapStart)
@@ -9276,12 +9293,13 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 	// from a stalled vmmd call during triage.
 	if snapMS := snapDuration.Milliseconds(); err != nil || snapMS > snapBudget.Milliseconds()/2 {
 		e.log.Warn("sched: snapshot capture timing",
-			"instance", ins.ID, "ram_mb", ins.RAMMB,
+			"instance", ins.ID, "ram_mb", ins.RAMMB, "layer_bytes", dep.RootfsBytes,
 			"snapshot_ms", snapMS, "budget_ms", snapBudget.Milliseconds(),
 			"err", err)
 	}
-	// A transient capture error keeps the prime's retry (dispatchPrime);
-	// any other platform capture failure activates without a snapshot,
+	// A transient capture error keeps the prime's retry (dispatchPrime)
+	// until its last attempt; any other platform capture failure, and a
+	// transient one on the last attempt, activates without a snapshot,
 	// except a managed cache's handoff, which fails so the running cache
 	// keeps serving (isManagedCacheHandoff). On the last attempt a transient
 	// error activates too: uc1127-umami booted healthy twice on 2026-11-27,

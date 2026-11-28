@@ -3,6 +3,7 @@ package state
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	canarycatalog "github.com/onebox-faas/faas/pkg/api/canary"
@@ -124,7 +125,7 @@ func retryDeploymentInput(src Deployment, now time.Time, legacyServiceMode ...bo
 		OverrideMainDependsOn:  append(json.RawMessage(nil), src.OverrideMainDependsOn...),
 		Sidecars:               append(json.RawMessage(nil), src.Sidecars...),
 		Workflows:              append(json.RawMessage(nil), src.Workflows...),
-		FullRootfsAllowAuto:    src.FullRootfsAllowAuto,
+		FullRootfsAllowAuto:    retryFullRootfsAllowAuto(src),
 		FullRootfsOverride:     fullRootfsOverride,
 		MinInstances:           src.MinInstances,
 		TrafficPercent:         trafficPercent,
@@ -160,6 +161,19 @@ func retryDeploymentInput(src Deployment, now time.Time, legacyServiceMode ...bo
 
 // deploymentCanaryPreset resolves the ladder a deployment row recorded: a
 // catalog preset by name, or its persisted custom stages.
+// legacyFreeFullRootfsRefusal is the failure text imaged wrote while Free
+// deployments defaulted full_rootfs_allow_auto to false (before the ADR-147
+// amendment of 2026-11-28).
+const legacyFreeFullRootfsRefusal = "plan free does not auto-dispatch to full-rootfs"
+
+// retryFullRootfsAllowAuto keeps the failed deployment's full-rootfs choice,
+// except for a Free deployment that the old default refused: its stored false
+// was the plan default, not a customer opt-out, so the retry takes the current
+// default and deploys the image. Explicit false was a no-op on Free then.
+func retryFullRootfsAllowAuto(src Deployment) bool {
+	return src.FullRootfsAllowAuto || strings.Contains(src.Error, legacyFreeFullRootfsRefusal)
+}
+
 func deploymentCanaryPreset(src Deployment, name string) (canarycatalog.Preset, error) {
 	if name != "custom" {
 		preset, ok := canarycatalog.LookupPreset(name)

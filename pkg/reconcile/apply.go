@@ -327,6 +327,7 @@ func (s *Service) applyUpdate(
 	manifest.Uses = a.Workload.Uses.Clone()
 	manifest.Ports = portsWithInternal(manifest.Ports, a.Workload.InternalPorts)
 	manifest.BuildDockerfile = a.Workload.Dockerfile
+	manifest.BuildComposeContext = composeBuildContext(a.Workload)
 	manifest.DockerfileBuild = a.Workload.DockerfileBuild.Clone()
 	manifest.BuildGoCommand = a.Workload.GoCommand
 	releaseScanWorkerMode(&manifest, a.App.WorkloadClass, a.Workload)
@@ -417,9 +418,10 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 			// whatever they store.
 			PreAuthRateLimit: api.DefaultPreAuthRateLimit(plan),
 
-			BuildDockerfile: w.Dockerfile,
-			DockerfileBuild: w.DockerfileBuild.Clone(),
-			BuildGoCommand:  w.GoCommand,
+			BuildDockerfile:     w.Dockerfile,
+			BuildComposeContext: composeBuildContext(w),
+			DockerfileBuild:     w.DockerfileBuild.Clone(),
+			BuildGoCommand:      w.GoCommand,
 		},
 		RequireAuthn:           plan.RequireAuthnDefault(),
 		PublicAuthMode:         plan.PublicAuthModeDefault(),
@@ -478,11 +480,18 @@ func ApplyScannedWorkloadToApp(app state.App, w reposcan.Workload, available map
 	app.Manifest.Uses = w.Uses.Clone()
 	app.Manifest.Ports = portsWithInternal(app.Manifest.Ports, w.InternalPorts)
 	app.Manifest.BuildDockerfile = w.Dockerfile
+	app.Manifest.BuildComposeContext = composeBuildContext(w)
 	app.Manifest.DockerfileBuild = w.DockerfileBuild.Clone()
 	app.Manifest.BuildGoCommand = w.GoCommand
 	applyProjectImage(&app.Manifest, w)
 	applyComposeResources(&app, w)
 	return app
+}
+
+// composeBuildContext reports a Compose service built from source: its
+// RootDir is its build context (state.AppManifest.BuildComposeContext).
+func composeBuildContext(w reposcan.Workload) bool {
+	return w.DetectedBy.Detector == reposcan.DetectorCompose && w.Image == ""
 }
 
 func applyProjectImage(manifest *state.AppManifest, w reposcan.Workload) {

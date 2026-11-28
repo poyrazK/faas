@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const redisUsage = "usage: gregale redis <list|create|get|bind|unbind|resize|update|restart|delete>"
+const redisUsage = "usage: gregale redis <list|create|get|bind|unbind|cli|resize|update|restart|delete>"
 
 func cmdRedis(args []string) int {
 	if len(args) == 0 {
@@ -32,6 +32,8 @@ func cmdRedis(args []string) int {
 		return cmdRedisBind(args[1:])
 	case "unbind":
 		return cmdRedisUnbind(args[1:])
+	case "cli":
+		return cmdRedisCLI(args[1:])
 	case "resize":
 		return cmdRedisResize(args[1:])
 	case "update":
@@ -126,6 +128,9 @@ func cmdRedisGet(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "Name:      %s\nEngine:    %s\nHost:      %s:%d\nMemory:    %d MB\nEviction:  %s\nIdle park: %ds\nStatus:    %s\n",
 		cache.Name, cache.Engine, cache.Host, cache.Port, cache.MemoryMB, cache.EvictionPolicy, cache.IdleTimeoutS, cache.Status)
+	if len(cache.BoundApps) > 0 {
+		_, _ = fmt.Fprintf(osStdout, "Bound to:  %s\n", strings.Join(cache.BoundApps, ", "))
+	}
 	return 0
 }
 

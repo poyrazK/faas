@@ -203,21 +203,21 @@ func (w *Watchdog) sweepBucket(ctx context.Context, now time.Time, st state.Stat
 				continue
 			}
 		}
-		// SNAPSHOTTING rows get a memory-scaled reprieve. The sweep
+		// SNAPSHOTTING rows get a size-scaled reprieve. The sweep
 		// query uses one flat SnapshotSweepBudget (20s) so it stays a
 		// single cheap index scan, but the engine gives each capture
-		// SnapshotBudgetFor(ram) — 45s at Scale's 1024 MB. Without this
-		// exemption the watchdog would kill a Scale snapshot at 20s
-		// while it is legitimately still writing, turning a working
-		// park into a FAILED instance and losing the snapshot.
-		// Mirrors the WAKING exemption above.
+		// SnapshotCaptureBudget(ram, layer) — 75s at 1024 MB before its
+		// app layer. Without this exemption the watchdog would kill such
+		// a snapshot at 20s while it is legitimately still writing,
+		// turning a working park into a FAILED instance and losing the
+		// snapshot. Mirrors the WAKING exemption above.
 		// Anchored on ParkedAt, not StartedAt: for a SNAPSHOTTING row
 		// StartedAt is when the VM booted (possibly hours earlier),
 		// which would make the reprieve expire instantly on any
 		// long-lived instance. ParkedAt is when the capture began and
 		// is the same anchor the sweep query ages on.
 		if st == state.StateSnapshotting && !ins.ParkedAt.IsZero() {
-			if now.Sub(ins.ParkedAt) < SnapshotBudgetFor(ins.RAMMB) {
+			if age := now.Sub(ins.ParkedAt); age < SnapshotBudgetFor(ins.RAMMB) || age < w.snapshotCaptureBudget(ctx, ins) {
 				continue
 			}
 		}

@@ -213,6 +213,9 @@ func executeAppTaskCommand(ctx context.Context, req apptaskproto.Request, manife
 	if isServiceBindingSmokeCommand(req) {
 		return executeServiceBindingSmokeCommand(ctx, req, manifest, secrets, apiEnv, stdout)
 	}
+	if isRedisCLICommand(req) {
+		return executeRedisCLICommand(ctx, req, stdout)
+	}
 	cmd, credential, failure := prepareAppTaskCommand(req, manifest, secrets, apiEnv)
 	if failure != nil {
 		return *failure, nil

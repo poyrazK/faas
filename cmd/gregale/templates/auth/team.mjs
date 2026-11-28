@@ -68,7 +68,7 @@ async function apply(client, org, request, invitations, before) {
   return { ...fields, delivered: Boolean(invitations.mailer), before_role: '', after_role: fields.role, ...(invitations.mailer ? {} : { token }) }
 }
 
-async function confirm(run, org, body, invitations) {
+async function confirm(run, org, body, invitations, impersonator = null) {
   const request = normalize(body)
   return run(async client => {
     const before = await state(client, org)
@@ -81,7 +81,8 @@ async function confirm(run, org, body, invitations) {
     if (before.snapshot !== request.expected_snapshot) throw new TeamError(409, 'team_review_changed')
     const result = await apply(client, org, request, invitations, before)
     // A manual invitation token is returned once, never retained in its audit.
-    const { token, ...evidence } = result
+    const { token, ...fields } = result
+    const evidence = impersonator ? { ...fields, impersonated_by: impersonator } : fields
     const { rows: [stored] } = await client.query('SELECT gregale_auth.team_record_action($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb) AS action', [org, request.id, before.actor_role, request.action, fingerprint, JSON.stringify(request), JSON.stringify(evidence)])
     return [200, { receipt: safeReceipt(stored.action), replayed: false, ...(token ? { token } : {}) }]
   })
@@ -97,12 +98,18 @@ function cursor(raw, org) {
   } catch { throw new TeamError(400, 'invalid_team_cursor') }
 }
 
-export async function routeTeam({ run, method, parts, body, invitations = {}, query = new URLSearchParams() }) {
+export async function routeTeam({ run, method, parts, body, invitations = {}, query = new URLSearchParams(), impersonator = null }) {
   const org = parts[1]
   if (!uuid(org)) fail('invalid_id')
   if (parts[2] === 'team' && parts.length === 3 && method === 'GET') return [200, await run(client => state(client, org))]
   if (parts[2] !== 'team-actions') throw new TeamError(404, 'not_found')
-  if (parts.length === 3 && method === 'POST') return confirm(run, org, body, invitations)
+  if (parts.length === 3 && method === 'POST') {
+    // An impersonated session may remove access but not grant it: a role or
+    // invitation it made would outlive its cap (impersonation.mjs). What it
+    // does is recorded with the operator's admin key.
+    if (impersonator && (body?.action === 'invite' || body?.action === 'set_role')) throw new TeamError(403, 'impersonation_restricted')
+    return confirm(run, org, body, invitations, impersonator)
+  }
   if (parts.length === 4 && method === 'GET') {
     if (!uuid(parts[3])) fail('invalid_id')
     return run(async client => {

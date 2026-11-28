@@ -71,6 +71,8 @@ var (
 	ErrEnvironmentBranchBucketLimit     = errEnvironmentBranchBucketLimit
 	EnvironmentBranchDataInProgress     = environmentBranchDataInProgress
 	EnvironmentBranchDataInProgressWait = environmentBranchDataInProgressDelay
+	EnvironmentBranchDataInProgressFrom = environmentBranchDataInProgressSince
+	CopyStarted                         = copyStarted
 )
 
 func (r *server) WakeEnvironmentBranchData() { r.wakeEnvironmentBranchData() }

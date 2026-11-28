@@ -189,4 +189,44 @@ func TestEnvironmentBranchPRDataFollowsPreviews(t *testing.T) {
 	if reset, err := store.ProjectEnvironmentBranchBySlug(ctx, acct.ID, project.ID, "pr-8"); err != nil || reset.PullRequestNumber != 8 {
 		t.Fatalf("pr-8 after reset = %+v, %v; want pull request 8", reset, err)
 	}
+
+	// A build with nothing new to bind leaves the branch's data alone.
+	if err := srv.PullRequestBranchBuild(ctx, app, "pr-8", 8); err != nil {
+		t.Fatal(err)
+	}
+	if kept, err := store.ProjectEnvironmentBranchBySlug(ctx, acct.ID, project.ID, "pr-8"); err != nil || kept.DataState != state.EnvironmentBranchDataReady {
+		t.Fatalf("pr-8 after a build = %+v, %v; want its data ready", kept, err)
+	}
+	// A binding production makes after the branch's data was copied reaches
+	// the branch with the pull request's next build (prod 2026-11-28: a
+	// migration binding never reached the release command of the PR's build).
+	if _, err := bindings.Create(ctx, managedpostgres.CreateBindingRequest{AccountID: acct.ID, DatabaseID: orders.ID, AppID: app.ID,
+		Scope: "production", EnvironmentKey: "REPORTS_DATABASE_URL", Access: managedpostgres.CredentialReadWrite}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.PullRequestBranchBuild(ctx, app, "pr-8", 8); err != nil {
+		t.Fatal(err)
+	}
+	if reopened, err := store.ProjectEnvironmentBranchBySlug(ctx, acct.ID, project.ID, "pr-8"); err != nil || reopened.DataState != state.EnvironmentBranchDataPending || reopened.DataAttempts != 0 {
+		t.Fatalf("pr-8 after a build with a new production binding = %+v, %v; want its data pending with fresh attempts", reopened, err)
+	}
+	for pass := range 3 {
+		if err := srv.ReconcileEnvironmentBranchData(ctx, time.Now().UTC().Add(time.Duration(pass+1)*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if ready, err := store.ProjectEnvironmentBranchBySlug(ctx, acct.ID, project.ID, "pr-8"); err != nil || ready.DataState != state.EnvironmentBranchDataReady {
+		t.Fatalf("pr-8 after reconcile = %+v, %v; want its data ready", ready, err)
+	}
+	same, err := service.PreviewDatabases(ctx, acct.ID, project.ID, 8)
+	if err != nil || len(same) != 1 || same[0].ID != again[0].ID {
+		t.Fatalf("pr-8 preview databases after the new binding = %+v, %v; want the same empty database", same, err)
+	}
+	keys := map[string]bool{}
+	for _, binding := range scoped(t, same[0].ID, "pr-8") {
+		keys[binding.EnvironmentKey] = true
+	}
+	if len(keys) != 2 || !keys["DATABASE_URL"] || !keys["REPORTS_DATABASE_URL"] {
+		t.Fatalf("pr-8 binds %v; want DATABASE_URL and REPORTS_DATABASE_URL", keys)
+	}
 }
