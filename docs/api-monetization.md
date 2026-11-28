@@ -939,17 +939,20 @@ it:
 gregale consumers signup-set my-mcp --display-name "Search tools" --plans free,pro --free-plan free --oauth-consumers
 ```
 
-Gregale must check the tokens itself to know who is calling. With
-`oauth-proxy` it does. A server made with `--auth external-oauth` checks
-tokens in its own code, so also hand that check to Gregale, from the
-server's source directory:
+Gregale must check the tokens itself to know who is calling.
+`gregale mcp server deploy` sets that up: it prints `Gateway checks OAuth
+tokens`, and `gregale edge rule list my-mcp` shows the `jwt` rule it adds.
+Until the rule exists, turning on `signup-set --oauth-consumers` is refused
+with `409 mcp_gateway_policy_missing`. The deploy adds the rule only when
+its `--token-env` token would pass it (signed RS256 or ES256, or your
+`--access-audit-algorithms`, with the server's issuer, audience and
+scopes), and never with `--access-audit guest-only`. If the deploy warns
+instead, for example because another `jwt` rule covers the server, fix that
+and run, from the server's source directory:
 
 ```bash
 gregale mcp policy --path . --name my-mcp
 ```
-
-Without it, callers are served but never become customers and are not
-metered. `gregale edge rule list my-mcp` shows the `jwt` rule it adds.
 
 - **Who they are.** A customer is the token's issuer and subject: the same
   person signing in again is the same consumer. The token's `email`, when it

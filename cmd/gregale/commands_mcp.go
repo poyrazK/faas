@@ -1087,9 +1087,14 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	verificationCtx, cancel := context.WithTimeout(ctx, time.Duration(o.timeout)*time.Second)
 	defer cancel()
 	if o.publicationID != "" {
-		return finishPrivateMCPDeploy(verificationCtx, c, o, cfg, candidate.ID, pinReceipt)
+		code = finishPrivateMCPDeploy(verificationCtx, c, o, cfg, candidate.ID, pinReceipt)
+	} else {
+		code = finishMCPDeployWithSmoke(verificationCtx, c, o.slug, candidate.ID, cfg, token, roles, audit, smoke, pinReceipt)
 	}
-	return finishMCPDeployWithSmoke(verificationCtx, c, o.slug, candidate.ID, cfg, token, roles, audit, smoke, pinReceipt)
+	if code == 0 {
+		syncExternalOAuthGatewayPolicy(ctx, c, o.path, o.slug, cfg, token, audit)
+	}
+	return code
 }
 
 func validateMCPDeploySecretsFile(path string) error {
