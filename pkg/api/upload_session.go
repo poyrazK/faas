@@ -62,6 +62,10 @@ type UploadDeployOptions struct {
 	// ImageName is the local image's repository tag: informational, and
 	// checked against the stateful-image denylist. Image archives only.
 	ImageName string `json:"image_name,omitempty"`
+	// ReuseImageBase marks an image archive that leaves out layers the app's
+	// image base holds; apid rebuilds the full archive at commit
+	// (ADR-20261127120000 amendment 1). It requires SourceFormat.
+	ReuseImageBase bool `json:"reuse_image_base,omitempty"`
 }
 
 // UploadStartRequest is the JSON body of POST /v1/uploads. total_size

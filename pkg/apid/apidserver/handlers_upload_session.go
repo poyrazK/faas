@@ -597,7 +597,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	// from here on so the session-app authorization below shares it; the
 	// outcome is recorded idempotently (H9-127), so a client that stops
 	// waiting recovers the deployment on its retry.
-	ctx, cancel := reqbudget.Detached(r.Context(), uploadCommitProcessTimeout(row.TotalSize))
+	ctx, cancel := reqbudget.Detached(r.Context(), uploadCommitProcessTimeout(uploadCommitWorkBytes(row)))
 	defer cancel()
 	r = r.WithContext(ctx)
 	// Membership, role and organization status are checked again at commit:
@@ -761,6 +761,16 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 
 	var tree uploadedSourceTree
 	var imageSummary *ociarchive.Summary
+	if imageArchive && opts.ReuseImageBase {
+		// A thin upload left out layers the app's image base holds: rebuild
+		// the full archive in place before inspecting it.
+		fullBytes, prob := s.rebuildImageUpload(r.Context(), app, row.PartPath, limits)
+		if prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+		row.ReceivedBytes = fullBytes
+	}
 	if imageArchive {
 		summary, prob := imageupload.Inspect(row.PartPath)
 		if prob != nil {
@@ -895,6 +905,9 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	manifestCommitted = true
+	if imageSummary != nil {
+		s.saveImageBase(r.Context(), app, row.PartPath, *imageSummary)
+	}
 	// The deployment now exists. Recording which deployment this upload
 	// produced must not depend on the caller still waiting: on production-us
 	// the request deadline expired inside Enqueue's tail, the outcome write

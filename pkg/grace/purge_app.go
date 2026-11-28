@@ -87,6 +87,7 @@ func (g *Grace) purgeExpired(ctx context.Context, app state.App, now time.Time, 
 	if artifactErr != nil {
 		return retained, artifactErr
 	}
+	g.deleteImageBase(ctx, app.ID)
 	if err := g.p.Store.DeleteAppPermanently(ctx, app.ID); err != nil {
 		g.purgeRefused(ctx, app, err, now)
 		return 0, err

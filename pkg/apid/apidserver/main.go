@@ -1080,7 +1080,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 			Notif: func(ctx context.Context, ch, payload string) error {
 				return srv.notif.Notify(ctx, ch, payload)
 			},
-			Audit: srv.audit, // issue #755 / PR-5.5: emit account.deleted from the sweep
+			Audit:      srv.audit, // issue #755 / PR-5.5: emit account.deleted from the sweep
+			ImageBases: srvImageBases{srv: srv, ctx: ctx},
 		})
 		srv.purgeDeletedApp = graceLoop.PurgeApp
 		go func() { _ = graceLoop.Run(ctx) }()

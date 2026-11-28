@@ -1883,6 +1883,14 @@ func (c *Client) GetApp(ctx context.Context, slug string) (AppResponse, error) {
 	return out, err
 }
 
+// GetAppImageBase returns the app's image base: the layers a local-image
+// redeploy may leave out of its upload (ADR-20261127120000 amendment 1).
+func (c *Client) GetAppImageBase(ctx context.Context, slug string) (ImageBase, error) {
+	var out ImageBase
+	err := c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(slug)+"/image-base", nil, &out)
+	return out, err
+}
+
 // GetAppsSlugPolicyStatus reports gateway application of app-cache changes,
 // traffic weights, and edge-rule changes. Edge rules have their own revision
 // sequence in the response. wait may be zero for a snapshot or up to 10

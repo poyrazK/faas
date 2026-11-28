@@ -4,13 +4,18 @@ package apidserver
 // rules live in pkg/apid/imageupload.
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/imageupload"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
+	"github.com/onebox-faas/faas/pkg/ociarchive"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // uploadSessionSizeCap refuses an image upload the release flag does not
@@ -93,4 +98,108 @@ func (s *server) resolveUploadedSourceTree(partPath string, acct state.Account, 
 		return uploadedSourceTree{}, prob
 	}
 	return tree, nil
+}
+
+// srvImageBases lets the grace sweep delete purged apps' image bases
+// through the server's store, opened on first use.
+type srvImageBases struct {
+	srv *server
+	ctx context.Context
+}
+
+func (b srvImageBases) Delete(ctx context.Context, appID string) error {
+	store, err := b.srv.imageBaseStore(b.ctx)
+	if err != nil {
+		return err
+	}
+	return store.Delete(ctx, appID)
+}
+
+// imageBaseStore opens the store of apps' image bases once
+// (ADR-20261127120000 amendment 1).
+func (s *server) imageBaseStore(ctx context.Context) (*imageupload.BaseStore, error) {
+	s.imageBasesOnce.Do(func() {
+		s.imageBases, s.imageBasesErr = imageupload.OpenBaseStore(context.WithoutCancel(ctx), spoolRoot())
+	})
+	return s.imageBases, s.imageBasesErr
+}
+
+// handleGetAppImageBase is GET /v1/apps/{slug}/image-base: the layers of the
+// app's latest uploaded image, which a redeploy may leave out of its upload.
+// It answers whoever may deploy the app, and the same 404 to anyone else.
+func (s *server) handleGetAppImageBase(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, err := s.store.AppBySlug(r.Context(), r.PathValue("slug"))
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			s.notFound(w, "no such app")
+			return
+		}
+		writeCustomerInternalProblem(w, r, s.log, "load app for image base",
+			"Gregale could not read this app.", "Retry; contact support if it continues.", err)
+		return
+	}
+	owner, prob := s.authorizeUploadApp(r, acct, app)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if !s.platformFlagEnabled(platformflags.LocalImageDeploys, owner) {
+		api.WriteProblem(w, api.ErrImageArchiveUnavailable())
+		return
+	}
+	base, err := s.readImageBase(r.Context(), app.ID)
+	if errors.Is(err, imageupload.ErrNoBase) {
+		api.WriteProblem(w, api.ErrNoImageBase(app.Slug))
+		return
+	}
+	if err != nil {
+		writeCustomerInternalProblem(w, r, s.log, "read image base",
+			"Gregale could not read the app's previous image.", "Deploy again; the CLI uploads the full image.", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, base)
+}
+
+func (s *server) readImageBase(ctx context.Context, appID string) (api.ImageBase, error) {
+	store, err := s.imageBaseStore(ctx)
+	if err != nil {
+		return api.ImageBase{}, err
+	}
+	return store.Summary(ctx, appID)
+}
+
+// rebuildImageUpload turns a thin image upload into the full archive from
+// the app's image base, in place, and returns its size.
+func (s *server) rebuildImageUpload(ctx context.Context, app state.App, partPath string, limits api.Limits) (int64, *api.Problem) {
+	store, err := s.imageBaseStore(ctx)
+	if err != nil {
+		s.log.Warn("image base store unavailable", "app", app.ID, "err", err)
+		return 0, api.ErrImageBaseChanged()
+	}
+	return store.RebuildProblem(ctx, app.ID, partPath, limits.ImageArchiveMaxBytes())
+}
+
+// saveImageBase keeps the accepted archive as the app's image base, in the
+// background and best effort: on failure the next upload sends every layer.
+func (s *server) saveImageBase(ctx context.Context, app state.App, partPath string, summary ociarchive.Summary) {
+	store, err := s.imageBaseStore(ctx)
+	if err != nil {
+		s.log.Warn("image base store unavailable", "app", app.ID, "err", err)
+		return
+	}
+	store.SaveAsync(ctx, app.ID, partPath, summary, func(err error) {
+		s.log.Warn("store image base failed", "app", app.ID, "err", err)
+	})
+}
+
+// uploadCommitWorkBytes is how many bytes a commit processes: a thin image
+// upload is rebuilt into an archive up to the largest plan's image cap.
+func uploadCommitWorkBytes(row sqlc.UploadSession) int64 {
+	var opts struct {
+		Reuse bool `json:"reuse_image_base"`
+	}
+	if json.Unmarshal(row.DeployOptions, &opts) == nil && opts.Reuse {
+		return max(row.TotalSize, api.MustLimitsFor(api.PlanScale).ImageArchiveMaxBytes())
+	}
+	return row.TotalSize
 }

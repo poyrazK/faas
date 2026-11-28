@@ -75,6 +75,26 @@ type Params struct {
 	// cascades. A failure retains the account and its ownership for the next tick.
 	BeforeAccountDelete func(context.Context, state.Account) error
 	Registry            prometheus.Registerer
+	// ImageBases removes a purged app's stored image base
+	// (ADR-20261127120000 amendment 1); optional.
+	ImageBases ImageBaseDeleter
+}
+
+// ImageBaseDeleter removes an app's stored image base.
+type ImageBaseDeleter interface {
+	Delete(ctx context.Context, appID string) error
+}
+
+// deleteImageBase removes an app's image base, best effort: it is a cache of
+// the app's last upload, and a leftover costs storage, not correctness.
+func (g *Grace) deleteImageBase(ctx context.Context, appID string) {
+	if g.p.ImageBases == nil {
+		return
+	}
+	if err := g.p.ImageBases.Delete(ctx, appID); err != nil {
+		g.metrics.failure("delete_image_base")
+		g.p.Log.Warn("grace: image base delete failed", "app", appID, "err", err)
+	}
 }
 
 // Grace is the 30-day deletion-grace timer. Owns the ticker + the
@@ -326,6 +346,7 @@ func (g *Grace) deleteAccountAppArtifacts(ctx context.Context, accountID string)
 				return fmt.Errorf("delete artifact of app %s: %w", app.ID, err)
 			}
 		}
+		g.deleteImageBase(ctx, app.ID)
 	}
 	return nil
 }

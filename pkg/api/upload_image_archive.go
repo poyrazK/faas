@@ -24,6 +24,9 @@ func (o UploadDeployOptions) ValidateSourceFormat() *Problem {
 		if o.ImageName != "" {
 			return invalidUploadOptions("image_name requires source_format " + UploadSourceFormatOCIImageArchive)
 		}
+		if o.ReuseImageBase {
+			return invalidUploadOptions("reuse_image_base requires source_format " + UploadSourceFormatOCIImageArchive)
+		}
 		return nil
 	case UploadSourceFormatOCIImageArchive:
 	default:
@@ -52,6 +55,38 @@ func (o UploadDeployOptions) ValidateSourceFormat() *Problem {
 
 func invalidUploadOptions(detail string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeValidation, "Invalid deploy_options", detail)
+}
+
+// ImageBase is GET /v1/apps/{app}/image-base: the app's latest uploaded
+// image, whose layers a redeploy may leave out of its upload
+// (ADR-20261127120000 amendment 1).
+type ImageBase struct {
+	ManifestDigest string           `json:"manifest_digest"`
+	Layers         []ImageBaseLayer `json:"layers"`
+}
+
+// ImageBaseLayer is one layer blob of an image base.
+type ImageBaseLayer struct {
+	Digest string `json:"digest"`
+	Size   int64  `json:"size"`
+}
+
+// CodeImageBaseChanged refuses a thin image upload whose left-out layers
+// the app's image base no longer holds.
+const CodeImageBaseChanged = "image_base_changed"
+
+// ErrImageBaseChanged refuses a thin upload the current base cannot fill:
+// another deploy replaced it, or it was never stored. Upload the full image.
+func ErrImageBaseChanged() *Problem {
+	return NewProblem(http.StatusConflict, CodeImageBaseChanged, "Image base changed",
+		"The upload left out layers the app's previous image held, and the app no longer has them (another deploy may have replaced it). Upload the full image.").
+		WithDocs(docsBase + "/container-compatibility")
+}
+
+// ErrNoImageBase answers GET image-base for an app with no stored base.
+func ErrNoImageBase(slug string) *Problem {
+	return NewProblem(http.StatusNotFound, CodeNotFound, "No image base",
+		fmt.Sprintf("app %q has no uploaded image to reuse layers from", slug))
 }
 
 // ErrImageArchiveUnavailable refuses an image archive upload while the

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/apid/devloop"
+	"github.com/onebox-faas/faas/pkg/apid/imageupload"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid"
@@ -325,6 +326,12 @@ type server struct {
 	// window the owner closed (POST /v1/deleted-apps/{id}/purge). Nil where
 	// no sweep runs: the purge then waits for the sweep elsewhere.
 	purgeDeletedApp func(ctx context.Context, appID, actor string) error
+	// imageBases keeps each app's latest uploaded image so a redeploy can
+	// leave out the layers it shares (ADR-20261127120000 amendment 1);
+	// opened once by imageBaseStore.
+	imageBasesOnce sync.Once
+	imageBases     *imageupload.BaseStore
+	imageBasesErr  error
 	// databaseSwitchDrainOverride feeds the database switch worker drain
 	// evidence on stores without schedd's drain plans (tests).
 	databaseSwitchDrainOverride      state.DatabaseSwitchDrainStore
@@ -3274,6 +3281,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PATCH /v1/uploads/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.handleAppendUpload))))
 	mux.HandleFunc("POST /v1/uploads/{id}/commit", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.handleCommitUpload)))))
 	mux.HandleFunc("DELETE /v1/uploads/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.handleCancelUpload))))
+	mux.HandleFunc("GET /v1/apps/{slug}/image-base", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.handleGetAppImageBase))))
 	// PR-1 of the deploy-diff cluster — server-side pre-deploy
 	// preview. Read-only (no DB writes, no audit row, no deployment
 	// row), so the auth chain matches GET /v1/apps/{slug}/metrics
