@@ -179,7 +179,7 @@ func (h *Handler) attachOAuthConsumer(w http.ResponseWriter, r *http.Request, ap
 		if h.log != nil {
 			h.log.Warn("oauth consumer enrollment refused", "app_id", app.ID)
 		}
-		return mcpPolicyReject(w, http.StatusForbidden, rule.MCP, "This MCP server cannot open an account for you; contact its owner")
+		return mcpRefuseWithoutChallenge(w, "This MCP server cannot open an account for you; contact its owner")
 	case err != nil:
 		if h.log != nil {
 			h.log.Error("oauth consumer enrollment unavailable", "err", err, "app_id", app.ID)
@@ -191,7 +191,7 @@ func (h *Handler) attachOAuthConsumer(w http.ResponseWriter, r *http.Request, ap
 	case e.id == "":
 		return false
 	case !e.active:
-		return mcpPolicyReject(w, http.StatusForbidden, rule.MCP, "This account was closed by the MCP server's owner")
+		return mcpRefuseWithoutChallenge(w, "This account was closed by the MCP server's owner")
 	}
 	authenticated.ConsumerID = e.id
 	// A stage's callers are never billed or plan-capped, like a stage's

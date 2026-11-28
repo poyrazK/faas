@@ -1111,13 +1111,12 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	defer cancel()
 	if o.publicationID != "" {
 		code = finishPrivateMCPDeploy(verificationCtx, c, o, cfg, candidate.ID, pinReceipt)
-	} else {
-		code = finishMCPDeployWithSmoke(verificationCtx, c, o.slug, candidate.ID, cfg, token, roles, audit, smoke, pinReceipt)
+		if code == 0 {
+			syncExternalOAuthGatewayPolicy(ctx, c, o.path, o.slug, cfg, token, audit)
+		}
+		return code
 	}
-	if code == 0 {
-		syncExternalOAuthGatewayPolicy(ctx, c, o.path, o.slug, cfg, token, audit)
-	}
-	return code
+	return finishMCPDeployWithSmoke(verificationCtx, c, o.path, o.slug, candidate.ID, cfg, token, roles, audit, smoke, pinReceipt)
 }
 
 func validateMCPDeploySecretsFile(path string) error {

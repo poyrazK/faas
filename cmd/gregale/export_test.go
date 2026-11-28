@@ -3324,3 +3324,5 @@ func SetDoctorBootAppClass(cleanup func(func()), class string) {
 func RunDeployBootCheck(ctx context.Context, image string) int {
 	return runDeployBootCheck(ctx, deployBootFlags{image: image, app: "demo"})
 }
+
+var CmdAppTasks = cmdAppTasks

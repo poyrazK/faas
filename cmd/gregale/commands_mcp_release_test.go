@@ -356,7 +356,7 @@ func TestMCPCandidatePromotion(t *testing.T) {
 				}
 				smoke = &mcpSmokeGate{allowTools: true, suite: mcphosting.SmokeSuite{Version: 1, Cases: []mcphosting.SmokeCase{{Name: "addition", Kind: "tool", Target: "add", ExpectedResult: expected}}}}
 			}
-			if got := finishMCPDeployWithSmoke(context.Background(), NewClient(control.URL, "operator-only"), "my-mcp", "candidate", cfg, token, roles, audit, smoke); got != tc.want {
+			if got := finishMCPDeployWithSmoke(context.Background(), NewClient(control.URL, "operator-only"), ".", "my-mcp", "candidate", cfg, token, roles, audit, smoke); got != tc.want {
 				t.Fatalf("exit=%d want=%d output=%s", got, tc.want, output.String())
 			}
 			if tc.accessAudit == "changed" && !strings.Contains(output.String(), api.CodeMCPAccessPolicyChanged) {

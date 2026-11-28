@@ -671,6 +671,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/github/activity/retry":             true, // GitHub activity recovery form; session-cookie + CSRF-only
 	"POST /dashboard/apps/{slug}/preview/{previewSlug}/destroy":     true, // ADR-20261026090000 previews-page Tear down form; session-cookie + CSRF adapter for POST /v1/preview/{slug}/destroy
 	"GET /dashboard/apps/{slug}/data-api":                           true, // ADR-968 session-auth owner HTML workspace
+	"GET /dashboard/apps/{slug}/tasks":                              true, // ADR-230 session-auth read-only task history HTML
 	"GET /dashboard/data":                                           true, // ADR-1591 session-auth connection onboarding HTML
 	"POST /dashboard/data":                                          true, // ADR-1591 account-bound CSRF form adapter
 	"GET /dashboard/apps/{slug}/auth":                               true, // ADR-1190 session-auth owner page; the browser calls the Auth app

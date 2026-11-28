@@ -5937,6 +5937,7 @@ func (s *server) handler() http.Handler {
 	mux.Handle("GET /dashboard/data", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderDashboardPipelines))))
 	mux.Handle("POST /dashboard/data", s.dashboardChain(s.sessionAuth(s.requireVerifiedEmailHandler(http.HandlerFunc(s.dashboardPipelineAction)))))
 	mux.Handle("GET /dashboard/apps/{slug}/data-api", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderDashboardDataAPI))))
+	mux.Handle("GET /dashboard/apps/{slug}/tasks", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderDashboardAppTasks))))
 	mux.Handle("GET /dashboard/apps/{slug}/auth", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderDashboardAuth))))
 	mux.Handle("POST /dashboard/apps/{slug}/auth/settings", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardAuthSettings))))
 	mux.Handle("POST /dashboard/apps/{slug}/auth/providers", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardAuthProviderEnable))))
