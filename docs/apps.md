@@ -364,8 +364,14 @@ after `app exec --detach`:
 gregale app tasks my-api                         # newest first
 gregale app tasks my-api --offset 20             # older page
 gregale app tasks show my-api <task-id>          # status, exit code, output tail
+gregale app tasks show my-api <task-id> --follow # wait for a detached task, then print its result
 gregale app tasks cancel my-api <task-id>        # stop a queued or running task
 ```
+
+`--follow` reports each status change and, once the task finishes, prints
+its output and exits with the task's exit code, like an attached
+`app exec`. The output arrives when the command ends, not line by line.
+Ctrl-C stops following; the task keeps running.
 
 The app's dashboard page links to the same history under **View task
 history**. Only the tail of the output is kept, up to the task's
