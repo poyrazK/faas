@@ -98,11 +98,12 @@ async function sessionResource(pool, { session_id: session, client_id: client, s
   return resource
 }
 
-// registrationOpen checks the bound on registered clients before GoTrue
-// takes a dynamic registration.
-export async function registrationOpen(pool) {
+// registeredClients counts the clients the app holds, which the front
+// checks against limits.oauthClients before GoTrue takes a dynamic
+// registration.
+export async function registeredClients(pool) {
   const { rows } = await pool.query('SELECT count(*)::int AS clients FROM auth.oauth_clients WHERE deleted_at IS NULL')
-  return rows[0].clients < limits.oauthClients
+  return rows[0].clients
 }
 
 // authorizationResource adds the requested resource to the consent page's

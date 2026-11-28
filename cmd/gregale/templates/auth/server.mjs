@@ -12,14 +12,14 @@ import { storageBindings } from './storage.mjs'
 import { createWorkflowStarter, workflowsConfig } from './workflows.mjs'
 import { createEventPublisher, lifecycleConfig, publishesAfter, setLifecycleEvents } from './events.mjs'
 import { createAnonymousPruner, createAttemptPruner, createAuditPruner, createOrgAuditPruner, createUnusedClientPruner } from './retention.mjs'
-import { budgetKey, budgets, createAttempts, guardedPath, outcome, passwordEntries, secondStepEntries, signInSubject } from './attempts.mjs'
+import { addressBucket, budgetKey, budgets, createAttempts, guardedPath, outcome, passwordEntries, secondStepEntries, signInSubject } from './attempts.mjs'
 import { bodyAllowed, smsSendPath } from './sms.mjs'
 import { createScimHandler } from './scim.mjs'
 import { signupRefusal } from './signups.mjs'
 import { impersonated, impersonationBlocked } from './impersonation.mjs'
 import { setDomainJoin } from './orgsso.mjs'
 import { goMemoryLimit, gotrue, limits, pagePolicy, runtimeConfig } from './config.mjs'
-import { accessTokenClaims, authorizationDetails, authorizationResource, bearerClaims, clientTokenAllowed, consentLocation, isClientToken, registrationOpen, wellKnownPath } from './oauth.mjs'
+import { accessTokenClaims, authorizationDetails, authorizationResource, bearerClaims, clientTokenAllowed, consentLocation, isClientToken, registeredClients, wellKnownPath } from './oauth.mjs'
 import { createAuthenticator, createRateLimiter, issueToken, isServiceAccountToken, OAuthError, serviceAccountAllowed, tokenRequest, verificationKeys, verifyToken } from './serviceaccounts.mjs'
 
 const prefix = '/auth/v1'
@@ -67,6 +67,7 @@ function serveUI(req, res, ui) {
   }
   return true
 }
+const limitsDocs = 'https://gregale.dev/docs/application-auth#current-limits'
 const hopByHop = new Set(['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'upgrade', 'te', 'trailer'])
 
 function problem(res, status, code) {
@@ -100,21 +101,42 @@ export function upstreamPath(url) {
 }
 
 // /settings/v1 is public: the CLI and the dashboard read the running app's
-// configuration here because app secrets are write-only. Admin keys are not
-// listed: /settings/v1/admin-keys/<ID> reports one key's scopes and expiry
-// to a caller that already knows its random ID, which only the owner's
-// secret list shows.
-function serveSettings(req, res, settings, adminKeys) {
+// configuration here because app secrets are write-only.
+function serveSettings(req, res, settings) {
   if (req.method !== 'GET') return problem(res, 405, 'method_not_allowed')
-  const path = req.url.split('?')[0]
-  let payload = settings
-  if (path !== '/settings/v1') {
-    const id = /^\/settings\/v1\/admin-keys\/([0-9A-F]{8})$/.exec(path)?.[1]
-    payload = id ? adminKeys.find(key => key.id === id) : undefined
-    if (!payload) return problem(res, 404, 'not_found')
-  }
   res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*', 'X-Content-Type-Options': 'nosniff' })
-  res.end(JSON.stringify(payload))
+  res.end(JSON.stringify(settings))
+}
+
+// serveAdminKey answers /settings/v1/admin-keys/<ID> with one admin key's
+// scopes and expiry, for `gregale auth admin-key list`. Admin keys are never
+// listed: a caller must already hold a random ID, which only the owner's
+// secret list shows, and each address has budgets.adminKeyLookup lookups an
+// hour, so the IDs cannot be enumerated. No browser origin may read it.
+async function serveAdminKey(req, res, adminKeys, attempts) {
+  if (req.method !== 'GET') return problem(res, 405, 'method_not_allowed')
+  try {
+    if (attempts) {
+      const { count, wait } = await attempts.take({ key: budgetKey('admin-key-lookup', addressBucket(clientAddress(req))), budget: budgets.adminKeyLookup })
+      if (wait > 0) return limited(res, 'too_many_lookups', budgets.adminKeyLookup, count, wait)
+    }
+  } catch (err) {
+    console.error(JSON.stringify({ level: 'error', event: 'admin_key_lookup_failed', sqlstate: err?.code ?? null }))
+    return problem(res, 503, 'auth_unavailable')
+  }
+  const id = /^\/settings\/v1\/admin-keys\/([0-9A-F]{8})$/.exec(req.url.split('?')[0])?.[1]
+  const key = id ? adminKeys.find(candidate => candidate.id === id) : undefined
+  if (!key) return problem(res, 404, 'not_found')
+  res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' })
+  res.end(JSON.stringify(key))
+}
+
+// limited answers 429 for a spent budget, with the limit, the count so far,
+// the window and where the limits are documented.
+function limited(res, code, budget, observed, wait) {
+  if (res.headersSent) return res.destroy()
+  res.writeHead(429, { 'Content-Type': 'application/problem+json', 'Cache-Control': 'no-store', 'Retry-After': String(wait) })
+  res.end(JSON.stringify({ status: 429, code, limit: budget.limit, observed, window_seconds: budget.seconds, retry_after: wait, docs_url: limitsDocs }))
 }
 
 // readBody buffers a request body up to bodyBytes for an SMS country check.
@@ -144,7 +166,8 @@ export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bo
     if (impersonated(bearer) && impersonationBlocked(req.method, req.url)) return problem(res, 403, 'impersonation_restricted')
     // A service account's token is for the application's API, not this host.
     if (isServiceAccountToken(bearer) && !serviceAccountAllowed(req.method, req.url)) return problem(res, 403, 'service_account_token')
-    if (settings && /^\/settings\/v1(\/admin-keys\/[^/]*)?$/.test(req.url.split('?')[0])) return serveSettings(req, res, settings, adminKeys)
+    if (settings && req.url.split('?')[0] === '/settings/v1') return serveSettings(req, res, settings)
+    if (settings && req.url.split('?')[0].startsWith('/settings/v1/admin-keys/')) return serveAdminKey(req, res, adminKeys, attempts)
     if (realtime && req.url === '/realtime/authorize-channel') return realtime(req, res)
     if (admin && /^\/admin\/v1([/?]|$)/.test(req.url)) return admin(req, res)
     if (scim && /^\/scim\/v2([/?]|$)/.test(req.url)) return scim(req, res)
@@ -215,22 +238,29 @@ function clientAddress(req) {
 }
 
 // registerClient passes a dynamic OAuth client registration to GoTrue while
-// the app holds fewer than limits.oauthClients clients and the caller's
-// address has registrations left in its budget (budgets.oauthRegistration),
-// so no single address can fill the app's clients.
+// the app holds fewer than limits.oauthClients clients and registrations are
+// left both in the caller's budget (budgets.oauthRegistration, per IPv4
+// address or IPv6 /64) and in the app's (budgets.oauthRegistrationApp). The
+// app's budget is spent only by registrations the caller's allowed, so one
+// address over its own budget cannot spend everyone's. With unused clients
+// pruned after limits.oauthUnusedClientHours, no caller can fill the app.
 async function registerClient(req, res, path, upstreamPort, bodyBytes, oauth, attempts) {
   try {
     if (attempts) {
-      const wait = await attempts.reserve([{ key: budgetKey('oauth-registration', clientAddress(req)), budget: budgets.oauthRegistration }])
-      if (wait > 0) {
-        req.resume()
-        if (res.headersSent) return res.destroy()
-        res.writeHead(429, { 'Content-Type': 'application/problem+json', 'Cache-Control': 'no-store', 'Retry-After': String(wait) })
-        return res.end(JSON.stringify({ status: 429, code: 'too_many_registrations', retry_after: wait }))
+      for (const [scope, budget] of [[addressBucket(clientAddress(req)), budgets.oauthRegistration], ['app', budgets.oauthRegistrationApp]]) {
+        const { count, wait } = await attempts.take({ key: budgetKey('oauth-registration', scope), budget })
+        if (wait > 0) { req.resume(); return limited(res, 'too_many_registrations', budget, count, wait) }
       }
     }
-    if (!(await oauth.registrationOpen())) { req.resume(); return problem(res, 403, 'oauth_client_limit') }
-  } catch {
+    const clients = await oauth.registeredClients()
+    if (clients >= limits.oauthClients) {
+      req.resume()
+      if (res.headersSent) return res.destroy()
+      res.writeHead(403, { 'Content-Type': 'application/problem+json', 'Cache-Control': 'no-store' })
+      return res.end(JSON.stringify({ status: 403, code: 'oauth_client_limit', limit: limits.oauthClients, observed: clients, docs_url: limitsDocs }))
+    }
+  } catch (err) {
+    console.error(JSON.stringify({ level: 'error', event: 'oauth_registration_failed', sqlstate: err?.code ?? null }))
     req.resume()
     return problem(res, 503, 'auth_unavailable')
   }
@@ -400,7 +430,7 @@ export function start(env = process.env) {
   // Failed secrets count per client address in the database, so instances
   // and wakes share the count; tokens per account stay per instance.
   const attempts = createAttempts(pool)
-  const secretFailures = address => [{ key: budgetKey('service-account-client', address), budget: budgets.serviceAccountClient }]
+  const secretFailures = address => [{ key: budgetKey('service-account-client', addressBucket(address)), budget: budgets.serviceAccountClient }]
   const tokenLimits = { limiter: createRateLimiter(), failures: { check: address => attempts.check(secretFailures(address)), take: address => attempts.fail(secretFailures(address)) } }
   const serviceAccounts = config.serviceAccounts ? { issue: request => issueToken({ pool, signer: signingKey(jwtKeys), issuer: config.api, ...tokenLimits }, request) } : null
   const authz = createAuthzHandler({ pool, authenticate, origins: config.origins, invitations, storage: storageBindings(env), workflows: workflows && createWorkflowStarter(workflows), orgSSO, orgDomains: config.orgDomains, teamEnabled: config.productControlTeamEnabled, emailEnabled: config.productControlEmailEnabled, deleteAccount, orgClaims: config.orgClaims, sessions: config.sessions, serviceAccounts: config.serviceAccounts })
@@ -414,7 +444,7 @@ export function start(env = process.env) {
   const scim = createScimHandler({ pool, admin: goTrue, base: config.external })
   const oauth = config.oauth ? {
     location: location => consentLocation(location, config.gotrueEnv.GOTRUE_SITE_URL, config.external),
-    registrationOpen: () => registrationOpen(pool),
+    registeredClients: () => registeredClients(pool),
     resource: id => authorizationResource(pool, id),
     clientCredentials: config.serviceAccounts,
   } : null

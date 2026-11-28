@@ -386,7 +386,9 @@ is mapped. A bare digest, as keys made before scopes were, holds every scope
 and never expires. Secrets are write-only, so `/settings/v1/admin-keys/<ID>`
 reports one key's ID, scopes and expiry (never its digest) for
 `admin-key list`; the public `/settings/v1` no longer lists the keys, so
-only someone who already holds an ID from the owner's secret list can ask. The dashboard page `/dashboard/apps/{slug}/auth` is served by apid but
+only someone who already holds an ID from the owner's secret list can ask.
+That route sends no CORS header and answers `AuthAdminKeyLookupsPerAddress`
+lookups an hour per address, so the 32-bit IDs cannot be enumerated. The dashboard page `/dashboard/apps/{slug}/auth` is served by apid but
 its script calls the Auth app directly from the owner's browser: apid adds the
 Auth app's exact origin to that page's `connect-src`, and the Auth app answers
 CORS only for the Gregale API origin sealed at creation. apid never receives
@@ -739,14 +741,21 @@ and MCP clients can act for an application's users with their consent;
 MCP clients do. Owners register clients with an admin key through
 `/admin/v1/oauth/clients` (`gregale auth oauth-clients`); one app holds at
 most `AuthOAuthMaxClients`, and the front refuses self-registration beyond
-that. So that no one caller can fill those places, each client address may
-self-register `AuthOAuthRegistrationsPerAddress` clients per
-`AuthOAuthRegistrationWindowSeconds` (an `attempt_budgets` row, refused with
-`429 too_many_registrations`), and a self-registered client with no consent,
-session or approved authorization `AuthOAuthUnusedClientHours` after it
-registered is soft-deleted, as GoTrue deletes clients, by the same
-request-driven pruning as activity retention. Clients the owner made are
-never pruned.
+that. So that no one caller can fill those places, each client address (an
+IPv6 /64, as for every failed-attempt budget) may self-register
+`AuthOAuthRegistrationsPerAddress` clients per
+`AuthOAuthRegistrationWindowSeconds`, and everyone together
+`AuthOAuthRegistrationsPerHour` (`attempt_budgets` rows, refused with
+`429 too_many_registrations` carrying the limit, the count and the docs
+URL); the app's budget is spent only by registrations the caller's own
+budget allowed. A self-registered client with no consent, session or
+approved authorization, and no authorization at all in the last
+`AuthOAuthUnusedClientHours`, is soft-deleted that long after it registered,
+as GoTrue deletes clients, by the same request-driven pruning as activity
+retention, so at most about 900 unused clients are alive at once. Clients
+the owner made are never pruned. A sustained flood can still hold
+self-registration at its hourly budget, delaying new clients by up to an
+hour; it cannot fill the app.
 
 GoTrue sends people to `SITE_URL` plus a configured path to approve a
 client. The front redirects that to the hosted consent page on the Auth

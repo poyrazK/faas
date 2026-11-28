@@ -191,11 +191,15 @@ func authAdminKeyList(ctx context.Context, client *api.Client, app, scope string
 	}
 	// The running app reports each key's scopes and expiry by ID (secrets are
 	// write-only); a key it does not report is not loaded yet. Apps on an
-	// older template list them in /settings/v1 instead.
+	// older template list them in /settings/v1 instead. Keys are asked for
+	// one by one only when the app answered its settings, so an unreachable
+	// app costs one timeout rather than one per key.
 	running := map[string]authAdminKeySetting{}
-	found, appErr := client.GetApp(ctx, app)
-	if appErr == nil {
+	found, err := client.GetApp(ctx, app)
+	reachable := false
+	if err == nil {
 		if settings, err := fetchAuthSettings(ctx, found); err == nil {
+			reachable = true
 			for _, k := range settings.AdminKeys {
 				running[k.ID] = k
 			}
@@ -206,7 +210,7 @@ func authAdminKeyList(ctx context.Context, client *api.Client, app, scope string
 		if authAdminKeyName.MatchString(secret.Key) {
 			id := strings.TrimPrefix(secret.Key, authAdminKeyPrefix)
 			k, listed := running[id]
-			if !listed && appErr == nil {
+			if !listed && reachable {
 				k, _ = fetchAuthAdminKey(ctx, found, id)
 			}
 			rows = append(rows, keyRow{ID: id, CreatedAt: secret.CreatedAt, Scopes: k.Scopes, ExpiresAt: k.ExpiresAt})

@@ -1366,6 +1366,15 @@ reported as `email_exists`.
 - The Auth app counts as an ordinary deployed app for plan quotas and RAM
   billing.
 - An Auth app holds at most 4 signing keys.
+- An Auth app holds at most 1,000 OAuth clients. With self-registration on,
+  one client address (an IPv6 /64) may register 10 clients an hour and
+  everyone together 30; more answer `429 too_many_registrations` with the
+  limit, the count and `retry_after`. A self-registered client with no
+  consent, session or approved authorization, and no authorization in the
+  last 24 hours, is deleted 24 hours after it registered; it registers again.
+- Failed sign-in and second-step budgets count an IPv6 client by its /64.
+- `/settings/v1/admin-keys/<ID>` answers 60 lookups an hour per client
+  address.
 - The dashboard page reaches the Auth app at its canonical address. If you
   serve the dashboard from another origin than the Gregale API URL that
   `gregale auth create` used, the Auth app refuses the page's requests.

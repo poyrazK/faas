@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { isIPv4, isIPv6 } from 'node:net'
 import { limits } from './config.mjs'
 import { normalizePhone } from './sms.mjs'
 
@@ -30,7 +31,32 @@ export const budgets = Object.freeze({
   // the app holds at most limits.oauthClients, so one address must not be
   // able to take them all.
   oauthRegistration: { limit: limits.oauthRegistrationsPerAddress, seconds: limits.oauthRegistrationWindowSeconds },
+  // ...and by everyone together, so addresses in many networks cannot
+  // either: at most this many unused clients are alive before pruning
+  // (retention.mjs) removes them, which stays below limits.oauthClients.
+  oauthRegistrationApp: { limit: limits.oauthRegistrationsPerHour, seconds: 3600 },
+  // Lookups of one admin key by ID (/settings/v1/admin-keys/<ID>), so the
+  // IDs cannot be enumerated.
+  adminKeyLookup: { limit: limits.adminKeyLookupsPerAddress, seconds: 3600 },
 })
+
+// addressBucket is the client address a budget counts against: an IPv4
+// address itself, and an IPv6 address's /64, since one subscriber usually
+// holds a whole /64 and could otherwise give every attempt a fresh address.
+export function addressBucket(address) {
+  let value = String(address ?? '').trim().toLowerCase()
+  if (value.startsWith('::ffff:') && isIPv4(value.slice(7))) return value.slice(7)
+  value = value.split('%')[0]
+  if (!isIPv6(value)) return value
+  const groups = part => part ? part.split(':') : []
+  const width = list => list.reduce((n, group) => n + (group.includes('.') ? 2 : 1), 0)
+  let full = groups(value)
+  if (value.includes('::')) {
+    const [head, tail] = value.split('::').map(groups)
+    full = [...head, ...Array(8 - width(head) - width(tail)).fill('0'), ...tail]
+  }
+  return `${full.slice(0, 4).map(group => Number.parseInt(group, 16).toString(16)).join(':')}::/64`
+}
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -60,6 +86,17 @@ export function createAttempts(pool) {
             failures = CASE WHEN b.window_ends_at > now() THEN b.failures + 1 ELSE 1 END,
             window_ends_at = CASE WHEN b.window_ends_at > now() THEN b.window_ends_at ELSE now() + make_interval(secs => $2) END`, [key, budget.seconds])
       }
+    },
+    // take counts one use of a budget and returns the count so far and the
+    // seconds until the budget reopens if this use overspent it, or 0.
+    async take({ key, budget }) {
+      const { rows: [row] } = await pool.query(`INSERT INTO gregale_auth.attempt_budgets AS b (key, failures, window_ends_at)
+          VALUES ($1, 1, now() + make_interval(secs => $2))
+        ON CONFLICT (key) DO UPDATE SET
+          failures = CASE WHEN b.window_ends_at > now() THEN b.failures + 1 ELSE 1 END,
+          window_ends_at = CASE WHEN b.window_ends_at > now() THEN b.window_ends_at ELSE now() + make_interval(secs => $2) END
+        RETURNING failures, ceil(extract(epoch FROM window_ends_at - now()))::int AS wait`, [key, budget.seconds])
+      return { count: row.failures, wait: row.failures > budget.limit ? Math.max(1, row.wait) : 0 }
     },
     // reserve counts one attempt against every budget and returns the
     // seconds until the first one it overspent reopens, or 0.
@@ -144,7 +181,7 @@ export function goQueryValue(query, name) {
 // passwordEntries are the budgets one password sign-in spends.
 export function passwordEntries(subject, address) {
   return [
-    { key: budgetKey('password-address', subject, address), budget: budgets.passwordAddress },
+    { key: budgetKey('password-address', subject, addressBucket(address)), budget: budgets.passwordAddress },
     { key: budgetKey('password-account', subject), budget: budgets.passwordAccount },
   ]
 }
