@@ -730,9 +730,11 @@ Existing Auth apps keep running. The CLI shows the `auth` command, the
 template only with `FAAS_APPLICATION_AUTH_ENABLED` set in the shell; without it
 they are absent from help, completions, man pages, the generated reference
 and suggestions, and dispatch treats them as unknown. The customer docs omit
-the Auth page (`docs/application-auth.md`, unlisted) and the public OpenAPI
-omits the mode. Launch reverses these: add the page to
-`docs/customer-pages.json`, the mode to the OpenAPI enums and the managed
+the Auth page (`docs/application-auth.md`, unlisted; `docs/customer-pages.json`
+registers it as unpublished so the Auth app's error `docs_url` links pass the
+docs link check) and the public OpenAPI omits the mode. Launch reverses
+these: drop the page's `unpublished` reason in `docs/customer-pages.json`,
+add the mode to the OpenAPI enums and the managed
 Postgres page, drop the `Unreleased` markers and the `unlisted` entry, and set
 the apid flag.
 
