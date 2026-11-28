@@ -62,10 +62,12 @@ func (s *Server) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
 		Persistent: start.GetPersistent(),
 		Volume: sched.SandboxVolume{GB: int(start.GetVolumeGb()), BackupID: start.GetVolumeBackupId(),
 			BackupEvery: time.Duration(start.GetVolumeBackupIntervalMs()) * time.Millisecond,
-			NodeID:      start.GetVolumeNodeId(), StoredBackupID: start.GetVolumeStoredBackupId()}}
+			NodeID:      start.GetVolumeNodeId(), StoredBackupID: start.GetVolumeStoredBackupId(),
+			SourceSandboxID: start.GetVolumeSourceSandboxId()}}
 	if r := start.GetResume(); r != nil {
-		admission.Resume = &sched.SandboxResume{NodeID: r.GetNodeId(), RequireNode: r.GetRequireNode(), Snapshot: sched.AgentRunSnapshot{StorageKey: r.GetStorageKey(),
-			VMStateStorageKey: r.GetVmstateStorageKey(), FCVersion: r.GetFcVersion(), MemBytes: r.GetMemBytes()}}
+		admission.Resume = &sched.SandboxResume{NodeID: r.GetNodeId(), RequireNode: r.GetRequireNode(), Fork: r.GetFork(),
+			ForkedFrom: r.GetForkedFrom(), Snapshot: sched.AgentRunSnapshot{StorageKey: r.GetStorageKey(),
+				VMStateStorageKey: r.GetVmstateStorageKey(), FCVersion: r.GetFcVersion(), MemBytes: r.GetMemBytes()}}
 	}
 	ctx := stream.Context()
 	var sendMu sync.Mutex
@@ -144,6 +146,15 @@ func (s *Server) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
 		PauseRefused: func(_ context.Context, reason string) error {
 			return send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_PauseRefused{PauseRefused: &scheddpb.SandboxRunPauseRefused{Reason: reason}}})
 		},
+		Forked: func(_ context.Context, f sched.SandboxForked) error {
+			return send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Forked{Forked: &scheddpb.SandboxRunForked{
+				StorageKey: f.Snapshot.StorageKey, VmstateStorageKey: f.Snapshot.VMStateStorageKey, FcVersion: f.Snapshot.FCVersion,
+				MemBytes: f.Snapshot.MemBytes, VmstateBytes: f.VMStateBytes, ForkMs: f.ForkMs, HasBacking: f.HasBacking,
+				VolumeBackupId: f.VolumeBackupID}}})
+		},
+		ForkRefused: func(_ context.Context, reason string) error {
+			return send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_ForkRefused{ForkRefused: &scheddpb.SandboxRunForkRefused{Reason: reason}}})
+		},
 		WebDomains: func(_ context.Context, d []sched.SandboxWebDomain) error {
 			frame := &scheddpb.SandboxRunWebDomains{Domains: make([]*scheddpb.SandboxRunWebDomain, 0, len(d))}
 			for _, x := range d {
@@ -208,6 +219,8 @@ func watchSandboxFrames(ctx context.Context, stream scheddpb.Schedd_RunSandboxSe
 				req = sched.SandboxControl{Op: sched.SandboxOpAction, Action: sandboxActionFromProto(frame.GetAction())}
 			case frame.GetPause() != nil:
 				req = sched.SandboxControl{Op: sched.SandboxOpPause, CaptureID: frame.GetPause().GetCaptureId()}
+			case frame.GetFork() != nil:
+				req = sched.SandboxControl{Op: sched.SandboxOpFork, CaptureID: frame.GetFork().GetCaptureId()}
 			default:
 				continue
 			}

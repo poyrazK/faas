@@ -95,6 +95,8 @@ type sandboxActivity struct {
 	volume            bool
 	volumeBackupEvery time.Duration
 	volumeBackingUp   atomic.Bool
+	// forking runs one fork capture at a time (ADR-20261122132055 §3).
+	forking atomic.Bool
 }
 
 func newSandboxActivity(sandboxID string, plan api.Plan) *sandboxActivity {
@@ -208,7 +210,7 @@ func (s *Server) RunSandbox(stream vmmdpb.Vmmd_RunSandboxServer) error {
 	}
 	ctx := stream.Context()
 	if volumeGB > 0 {
-		if err := s.prepareSandboxVolume(ctx, &wake, volumeGB, volumeBackupID); err != nil {
+		if err := s.prepareSandboxVolume(ctx, &wake, volumeGB, volumeBackupID, first.GetStart().GetVolumeSourceSandboxId()); err != nil {
 			opErr = err
 			return err
 		}
@@ -350,6 +352,8 @@ func (s *Server) serveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandbox
 					}
 				}
 				return stream.Send(paused)
+			case msg.GetFork() != nil:
+				ev = s.forkSandbox(ctx, instance, act, msg.GetFork())
 			case msg.GetPersistGrant() != nil:
 				act.persists.deliver(msg.GetPersistGrant().GetRequestId(), msg)
 			case msg.GetPersistRecorded() != nil:
@@ -555,7 +559,7 @@ func (s *Server) pauseSandbox(ctx context.Context, instance string, act *sandbox
 	if id, err := uuid.Parse(p.GetCaptureId()); err != nil || id.String() != p.GetCaptureId() {
 		return refuse("invalid")
 	}
-	if !act.beginPause() {
+	if act.forking.Load() || !act.beginPause() {
 		return refuse("busy")
 	}
 	defer act.endPause()
@@ -682,7 +686,16 @@ func sandboxStartFromProto(start *vmmdpb.RunSandboxStart) (fcvm.SandboxWakeReque
 		wake.Snapshot = &fcvm.Snapshot{StorageKey: snap.GetStorageKey(), VMStateStorageKey: snap.GetVmstateStorageKey(),
 			FCVersion: snap.GetFcVersion(), MemBytes: snap.GetMemBytes(), Networkless: wake.Network == api.SandboxNetworkNone}
 		wake.SessionCapture = true
+		if from := start.GetForkedFrom(); from != "" {
+			if (sandboxproto.Request{Op: sandboxproto.OpForked, ForkedFrom: from}).Validate() != nil || from == wake.SandboxID {
+				return fcvm.SandboxWakeRequest{}, invalid("forked_from must be another session's id")
+			}
+			wake.ForkedFrom = from
+		}
 		return wake, nil
+	}
+	if start.GetForkedFrom() != "" {
+		return fcvm.SandboxWakeRequest{}, invalid("forked_from goes only with a session capture")
 	}
 	if snap := start.GetSnapshot(); snap != nil {
 		if !storagekey.IsSandboxSnapshotKey(snap.GetStorageKey(), wake.AccountID, wake.ImageKey != "") ||

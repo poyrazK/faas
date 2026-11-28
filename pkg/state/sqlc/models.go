@@ -17165,19 +17165,22 @@ type SandboxSession struct {
 	TaskMaxChars pgtype.Int4
 	TaskExitCode pgtype.Int4
 	// ADR-20261116182615: the task command's standard output, capped at SandboxTaskOutputMaxBytes.
-	TaskOutput        []byte
-	EgressAllow       []string
-	EgressDeny        []string
-	PlacedNodeID      pgtype.Text
-	Vcpu              pgtype.Int2
-	VolumeGb          pgtype.Int4
-	PauseRequestedAt  pgtype.Timestamptz
-	ResumeRequestedAt pgtype.Timestamptz
-	PausedAt          pgtype.Timestamptz
-	Durability        pgtype.Text
-	ResumedCold       bool
-	ForkedFrom        pgtype.UUID
-	ResumeNotBefore   pgtype.Timestamptz
+	TaskOutput         []byte
+	EgressAllow        []string
+	EgressDeny         []string
+	PlacedNodeID       pgtype.Text
+	Vcpu               pgtype.Int2
+	VolumeGb           pgtype.Int4
+	PauseRequestedAt   pgtype.Timestamptz
+	ResumeRequestedAt  pgtype.Timestamptz
+	PausedAt           pgtype.Timestamptz
+	Durability         pgtype.Text
+	ResumedCold        bool
+	ForkedFrom         pgtype.UUID
+	ResumeNotBefore    pgtype.Timestamptz
+	ForkCaptureID      pgtype.UUID
+	ForkRequestedAt    pgtype.Timestamptz
+	ForkLocalRefusedAt pgtype.Timestamptz
 }
 
 type SandboxSessionCapture struct {
@@ -17196,6 +17199,8 @@ type SandboxSessionCapture struct {
 	ConsumedAt        pgtype.Timestamptz
 	CheckedAt         pgtype.Timestamptz
 	VolumeBackupID    pgtype.UUID
+	Purpose           string
+	UploadedAt        pgtype.Timestamptz
 }
 
 // ADR-20261117091026 domains a web-mode sandbox session was granted or refused, written by agentd from vmmd's domain log.

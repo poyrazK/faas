@@ -47,6 +47,8 @@ type fakeSandboxSchedd struct {
 	// deletions agentd asked for, as node/session.
 	volumeBackups []string
 	volumeDeletes []string
+	// forks are the capture IDs fork frames named.
+	forks []string
 }
 
 func (f *fakeSandboxSchedd) DeleteSandboxVolume(_ context.Context, req *scheddpb.DeleteSandboxVolumeRequest) (*scheddpb.DeleteSandboxVolumeResponse, error) {
@@ -215,6 +217,28 @@ func (f *fakeSandboxSchedd) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) 
 			return stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Paused{Paused: &scheddpb.SandboxRunPaused{
 				StorageKey: mem, VmstateStorageKey: strings.TrimSuffix(mem, "/mem") + "/vmstate", FcVersion: "1.10.0",
 				MemBytes: 2 << 30, VmstateBytes: 40_000, PauseMs: 900, VolumeBackupId: volumeBackup}}})
+		case frame.GetFork() != nil:
+			// vmmd takes a fork capture and the VM runs on
+			// (ADR-20261122132055 §3).
+			id := frame.GetFork().GetCaptureId()
+			f.mu.Lock()
+			f.forks = append(f.forks, id)
+			f.mu.Unlock()
+			if script == "no-fork" {
+				// A vmmd from before forks never answers one.
+				continue
+			}
+			mem := "snap/sandbox-session-" + start.GetAccountId() + "/captures/" + id + "/v2/mem"
+			var volumeBackup string
+			f.mu.Lock()
+			if start.GetVolumeGb() > 0 {
+				volumeBackup = uuid.NewString()
+				f.volumeBackups = append(f.volumeBackups, volumeBackup)
+			}
+			f.mu.Unlock()
+			_ = stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Forked{Forked: &scheddpb.SandboxRunForked{
+				StorageKey: mem, VmstateStorageKey: strings.TrimSuffix(mem, "/mem") + "/vmstate", FcVersion: "1.10.0",
+				MemBytes: 2 << 30, VmstateBytes: 40_000, ForkMs: 120, VolumeBackupId: volumeBackup}}})
 		case frame.GetClose() != nil:
 			f.mu.Lock()
 			f.closes++
@@ -234,6 +258,13 @@ func (f *fakeSandboxSchedd) counts() (starts, freezes, closes int) {
 
 func newSandboxes(t *testing.T, store *agentstore.Store, fake *fakeSandboxSchedd, scfg agentd.SandboxConfig) *agentd.Sandboxes {
 	t.Helper()
+	return newSandboxesLease(t, store, fake, scfg, 300*time.Millisecond)
+}
+
+// newSandboxesLease is newSandboxes with a lease TTL of its own; a long one
+// renews only when nudged within a test's time.
+func newSandboxesLease(t *testing.T, store *agentstore.Store, fake *fakeSandboxSchedd, scfg agentd.SandboxConfig, ttl time.Duration) *agentd.Sandboxes {
+	t.Helper()
 	srv := grpc.NewServer()
 	scheddpb.RegisterScheddServer(srv, fake)
 	lis := bufconn.Listen(1 << 20)
@@ -246,7 +277,7 @@ func newSandboxes(t *testing.T, store *agentstore.Store, fake *fakeSandboxSchedd
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 	client := scheddpb.NewScheddClient(conn)
-	replica := agentd.New(store, client, agentd.Config{Owner: "agentd-test", LeaseTTL: 300 * time.Millisecond,
+	replica := agentd.New(store, client, agentd.Config{Owner: "agentd-test", LeaseTTL: ttl,
 		PollInterval: 10 * time.Millisecond}, nil)
 	if scfg.Tick == 0 {
 		scfg.Tick = 20 * time.Millisecond
