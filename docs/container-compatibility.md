@@ -72,11 +72,17 @@ than `$PORT`; that diagnosis needs `cat` in the image. Pass the variables the
 app needs to start with `--env-file` (docker env-file format).
 
 A worker or job serves no HTTP. Pass `--execution-mode worker` or
-`--execution-mode job` and the boot publishes no port and judges the process
-as Gregale does when it first boots a deployment: a process still running after
-10 seconds is a working worker, a job that exited 0 has completed, and any
-other exit is a startup failure. A worker that exits 0 is a warning, since it
-would stop instead of working; a job still running after 10 seconds passes.
+`--execution-mode job` (with `--app SLUG`, an existing worker or job app is
+checked as one without it) and the boot publishes no port and judges the
+process as Gregale does when it first boots a deployment: a process still
+running at the end of Gregale's observation window (the report shows its
+length) is a working worker, a job that exited 0 has completed, and any other
+exit is a startup failure. A worker that exits 0 is a warning, since it would
+stop instead of working; a job still running at the end of the window passes.
+
+The process runs for real on your machine: a job does its whole task, and a
+worker takes real work until the window ends and the container is removed.
+Pass env that points at test resources, never production credentials.
 
 Pass `--healthcheck-path /healthz` (the path you deploy with) to probe the
 app's readiness route instead of `/`. Gregale routes to an instance only once

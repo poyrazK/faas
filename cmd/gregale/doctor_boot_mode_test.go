@@ -3,13 +3,15 @@ package main_test
 import (
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/cmd/gregale"
 )
 
 func TestDoctorBootWorkerAndJob(t *testing.T) {
 	for _, tc := range []struct {
-		name, mode, state       string
-		check, status, code     string
-		detail, fix             string
+		name, mode, state   string
+		check, status, code string
+		detail, fix         string
 	}{
 		{name: "worker keeps running", mode: "worker", state: "true 0 false", check: "boot-stay-up", status: "ok", detail: "as a worker must"},
 		{name: "worker exits 0", mode: "worker", state: "false 0 false", check: "boot-start", status: "warn", code: "boot_worker_exited", fix: "--execution-mode job"},
@@ -56,5 +58,26 @@ func TestDoctorBootExecutionModeFlagValidation(t *testing.T) {
 		if code, _, _ := runDoctorBoot(t, bootInspector("3000/tcp"), args...); code == 0 {
 			t.Errorf("%q accepted", args)
 		}
+	}
+}
+
+func TestDoctorBootExistingWorkerApp(t *testing.T) {
+	docker := newFakeBootDocker(t)
+	main.SetDoctorBootAppClass(t.Cleanup, "worker")
+	_, report, _ := runDoctorBoot(t, bootInspector("3000/tcp"), "--app", "queue", "--json")
+	if c := bootCheck(t, report, "boot-stay-up"); c.Status != "ok" || !strings.Contains(c.Detail, "as a worker must") {
+		t.Fatalf("boot-stay-up = %+v", c)
+	}
+	for _, call := range docker.calls(t) {
+		if strings.HasPrefix(call, "run ") && strings.Contains(call, "--publish") {
+			t.Fatalf("a worker app was booted as an HTTP app: %q", call)
+		}
+	}
+}
+
+func TestDoctorBootExecutionModeTrimmed(t *testing.T) {
+	newFakeBootDocker(t)
+	if code, report, _ := runDoctorBoot(t, bootInspector("3000/tcp"), "--execution-mode", " worker ", "--json"); code != 0 {
+		t.Fatalf("exit %d: %+v", code, report.Checks)
 	}
 }

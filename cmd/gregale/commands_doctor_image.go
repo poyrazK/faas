@@ -91,6 +91,7 @@ func (f *doctorImageFlags) validate(fs *flag.FlagSet) error {
 	if visited["healthcheck-path"] && (!f.boot || !strings.HasPrefix(f.healthPath, "/") || strings.ContainsFunc(f.healthPath, func(r rune) bool { return r <= ' ' || r == 0x7f })) {
 		return errors.New("--healthcheck-path requires --boot and an HTTP path that starts with / and has no spaces")
 	}
+	f.executionMode = strings.TrimSpace(f.executionMode)
 	if visited["execution-mode"] && (!f.boot || !slices.Contains(doctorBootModes, f.executionMode)) {
 		return errors.New("--execution-mode requires --boot and one of request, service, worker or job")
 	}
@@ -253,7 +254,7 @@ func addDoctorBootChecks(parent context.Context, report *doctorReport, flags *do
 	defer stop()
 	app := doctorBootLookupApp(ctx, flags.app, flags.deploy)
 	memoryMB, memorySource := doctorBootMemory(ctx, flags, app)
-	opts := doctorBootOptions{image: flags.image, port: port, envFile: flags.envFile, memoryMB: memoryMB, memorySource: memorySource, healthPath: flags.healthPath, probeHost: app.host, deploy: flags.deploy, mode: strings.TrimSpace(flags.executionMode)}
+	opts := doctorBootOptions{image: flags.image, port: port, envFile: flags.envFile, memoryMB: memoryMB, memorySource: memorySource, healthPath: flags.healthPath, probeHost: app.host, deploy: flags.deploy, mode: doctorBootMode(flags.executionMode, flags.healthPath, app)}
 	if report.Image != nil {
 		opts.imageHealthcheck = doctorBootImageHealthcheck(report.Image.Healthcheck)
 	}

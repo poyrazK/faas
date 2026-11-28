@@ -36,9 +36,13 @@ func deployBootFlagProblem(localImageName string, boot, createOnly bool, explici
 }
 
 // deployBootModeProblem refuses --boot for a deploy the boot check cannot
-// judge: a gRPC-health service, which the local probe cannot ask. Workers
-// and jobs are checked without HTTP (doctor_boot_mode.go).
-func deployBootModeProblem(healthcheck *api.DeploymentHealthcheck) error {
+// judge: a gRPC-health service, which the local probe cannot ask, and an
+// HTTP health path on a worker or job, which serves none (as doctor does).
+// Workers and jobs are otherwise checked without HTTP (doctor_boot_mode.go).
+func deployBootModeProblem(mode string, healthcheck *api.DeploymentHealthcheck) error {
+	if healthcheck != nil && healthcheck.Path != "" && doctorBootNoListener(mode) {
+		return fmt.Errorf("--healthcheck-path probes HTTP, which a %s does not serve", strings.TrimSpace(mode))
+	}
 	if healthcheck != nil && healthcheck.GRPC != nil {
 		return errors.New("--boot probes HTTP, and this deploy checks readiness with gRPC health; deploy without --boot")
 	}

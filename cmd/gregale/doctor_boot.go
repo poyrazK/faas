@@ -158,6 +158,9 @@ func runDoctorBootChecks(ctx context.Context, opts doctorBootOptions) []doctorCh
 		args = append(args, "--env-file", opts.envFile)
 	}
 	args = append(args, opts.image)
+	if doctorBootNoListener(opts.mode) {
+		doctorBootRealRunNote(opts.mode)
+	}
 	_, _ = fmt.Fprintf(osStderr, "Starting %s with %s (pulls the image if it is not local)…\n", opts.image, docker.bin)
 	runCtx, cancel := context.WithTimeout(ctx, doctorBootRunTimeout)
 	_, err = docker.run(runCtx, args...)

@@ -24,6 +24,20 @@ func doctorBootNoListener(mode string) bool {
 	return mode == api.ExecutionModeWorker || mode == api.ExecutionModeJob
 }
 
+// doctorBootMode is the mode the boot judges: --execution-mode (or the
+// deploy's gregale.yaml), else an existing worker or job app's observed
+// class. An explicit health path asks for an HTTP check and keeps it.
+func doctorBootMode(explicit, healthPath string, app doctorBootApp) string {
+	if mode := strings.TrimSpace(explicit); mode != "" {
+		return mode
+	}
+	if healthPath == "" && doctorBootNoListener(app.workloadClass) {
+		_, _ = fmt.Fprintf(osStderr, "App %s runs as a %s; checking the image as one (pass --execution-mode to override).\n", app.slug, app.workloadClass)
+		return app.workloadClass
+	}
+	return ""
+}
+
 // checkNoListener watches a worker or job for the observation window.
 func (b doctorBoot) checkNoListener(ctx context.Context) []doctorCheck {
 	deadline := b.started.Add(doctorBootStayUp)
@@ -56,6 +70,12 @@ func (b doctorBoot) checkNoListener(ctx context.Context) []doctorCheck {
 		detail = fmt.Sprintf("still running after %s; a job may run longer, and Gregale counts it done when it exits 0", bootSeconds(doctorBootStayUp))
 	}
 	return append(checks, doctorCheck{Name: "boot-stay-up", Status: "ok", Detail: detail})
+}
+
+// doctorBootRealRunNote warns that a worker or job does its real work in the
+// boot, with whatever env it was given.
+func doctorBootRealRunNote(mode string) {
+	_, _ = fmt.Fprintf(osStderr, "The %s runs for real on this machine for up to %s, with the env you passed; point it at test resources, not production.\n", mode, bootSeconds(doctorBootStayUp))
 }
 
 // modeExitedCheck judges a worker or job that exited within the window.

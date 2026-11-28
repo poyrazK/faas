@@ -204,3 +204,48 @@ func TestDeployBootFlagValidation(t *testing.T) {
 		t.Fatal("an invalid --boot combination uploaded")
 	}
 }
+
+func TestDeployLocalImageBootReadsWorkerFromManifest(t *testing.T) {
+	localImageRepo(t)
+	stub := newLocalImageStub(t)
+	docker := bootDeployDocker(t) // running, and no HTTP answer
+	if err := os.WriteFile("gregale.yaml", []byte("worker:\n  drain_timeout: 10s\n  stop_signal: SIGTERM\n  scale:\n    min: 1\n    max: 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, stderr := deployCapturingStderr(t, "--name", "demo", "--app", "--no-wait", "--local-image", "acme/web:dev", "--boot")
+	if code != 0 {
+		t.Fatalf("code=%d: %s", code, stderr)
+	}
+	stub.checkUploaded(t, "acme/web:dev")
+	if run := dockerCallIndexOf(docker.calls(t), "run "); run < 0 || strings.Contains(docker.calls(t)[run], "--publish") {
+		t.Fatalf("gregale.yaml's worker was booted as an HTTP app: %q", docker.calls(t))
+	}
+	if !strings.Contains(stderr, "runs for real on this machine") {
+		t.Errorf("no warning that the worker does real work: %s", stderr)
+	}
+}
+
+func TestDeployLocalImageBootUsesExistingAppClass(t *testing.T) {
+	localImageRepo(t)
+	stub := newLocalImageStub(t)
+	docker := bootDeployDocker(t)
+	main.SetDoctorBootAppClass(t.Cleanup, "worker")
+	code, stderr := deployCapturingStderr(t, "--name", "demo", "--app", "--no-wait", "--local-image", "acme/web:dev", "--boot")
+	if code != 0 {
+		t.Fatalf("code=%d: %s", code, stderr)
+	}
+	stub.checkUploaded(t, "acme/web:dev")
+	if run := dockerCallIndexOf(docker.calls(t), "run "); run < 0 || strings.Contains(docker.calls(t)[run], "--publish") {
+		t.Fatalf("the worker app was booted as an HTTP app: %q", docker.calls(t))
+	}
+}
+
+func TestDeployLocalImageBootRefusesHealthPathOnWorker(t *testing.T) {
+	localImageRepo(t)
+	stub := newLocalImageStub(t)
+	bootDeployDocker(t)
+	code, stderr := deployCapturingStderr(t, "--name", "demo", "--app", "--no-wait", "--local-image", "acme/web:dev", "--boot", "--execution-mode", "worker", "--healthcheck-path", "/healthz")
+	if code == 0 || stub.opts != nil || !strings.Contains(stderr, "--healthcheck-path probes HTTP") {
+		t.Fatalf("code=%d stderr=%s", code, stderr)
+	}
+}
