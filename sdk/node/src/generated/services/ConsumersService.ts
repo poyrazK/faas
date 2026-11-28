@@ -740,10 +740,10 @@ export class ConsumersService {
    * With `environment` set to a stage, the consumer and its keys belong
    * to that stage: the stage's hosts accept only its own consumers once it
    * has any, and production's until then. Plan assignments follow the
-   * consumer; trials and billing apply to production consumers only. Until
-   * the release after this one, a stage consumer's `external_ref` and key
-   * names must differ from production's. Creating a stage's consumer
-   * answers 501 `not_implemented` until the platform enables it.
+   * consumer; trials and billing apply to production consumers only. A
+   * stage consumer may reuse a production `external_ref` and key names.
+   * Creating a stage's consumer answers 501 `not_implemented` until the
+   * platform enables it.
    *
    * @returns APIConsumerResponse The created consumer identity.
    * @throws ApiError
@@ -2309,7 +2309,7 @@ export class ConsumersService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
-        409: `A paid plan is offered and Stripe is not connected.`,
+        409: `A paid plan is offered and Stripe is not connected, or oauth_consumers is on and the gateway does not check the MCP server's OAuth tokens (no MCP jwt edge rule).`,
         422: `A provider other than Stripe, an unknown plan, an invalid scope or URL, or a value out of range.`,
       },
     });

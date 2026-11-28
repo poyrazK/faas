@@ -89,10 +89,10 @@ def sync_detailed(
      With `environment` set to a stage, the consumer and its keys belong
     to that stage: the stage's hosts accept only its own consumers once it
     has any, and production's until then. Plan assignments follow the
-    consumer; trials and billing apply to production consumers only. Until
-    the release after this one, a stage consumer's `external_ref` and key
-    names must differ from production's. Creating a stage's consumer
-    answers 501 `not_implemented` until the platform enables it.
+    consumer; trials and billing apply to production consumers only. A
+    stage consumer may reuse a production `external_ref` and key names.
+    Creating a stage's consumer answers 501 `not_implemented` until the
+    platform enables it.
 
     Args:
         slug (str):
@@ -133,10 +133,10 @@ def sync(
      With `environment` set to a stage, the consumer and its keys belong
     to that stage: the stage's hosts accept only its own consumers once it
     has any, and production's until then. Plan assignments follow the
-    consumer; trials and billing apply to production consumers only. Until
-    the release after this one, a stage consumer's `external_ref` and key
-    names must differ from production's. Creating a stage's consumer
-    answers 501 `not_implemented` until the platform enables it.
+    consumer; trials and billing apply to production consumers only. A
+    stage consumer may reuse a production `external_ref` and key names.
+    Creating a stage's consumer answers 501 `not_implemented` until the
+    platform enables it.
 
     Args:
         slug (str):
@@ -172,10 +172,10 @@ async def asyncio_detailed(
      With `environment` set to a stage, the consumer and its keys belong
     to that stage: the stage's hosts accept only its own consumers once it
     has any, and production's until then. Plan assignments follow the
-    consumer; trials and billing apply to production consumers only. Until
-    the release after this one, a stage consumer's `external_ref` and key
-    names must differ from production's. Creating a stage's consumer
-    answers 501 `not_implemented` until the platform enables it.
+    consumer; trials and billing apply to production consumers only. A
+    stage consumer may reuse a production `external_ref` and key names.
+    Creating a stage's consumer answers 501 `not_implemented` until the
+    platform enables it.
 
     Args:
         slug (str):
@@ -214,10 +214,10 @@ async def asyncio(
      With `environment` set to a stage, the consumer and its keys belong
     to that stage: the stage's hosts accept only its own consumers once it
     has any, and production's until then. Plan assignments follow the
-    consumer; trials and billing apply to production consumers only. Until
-    the release after this one, a stage consumer's `external_ref` and key
-    names must differ from production's. Creating a stage's consumer
-    answers 501 `not_implemented` until the platform enables it.
+    consumer; trials and billing apply to production consumers only. A
+    stage consumer may reuse a production `external_ref` and key names.
+    Creating a stage's consumer answers 501 `not_implemented` until the
+    platform enables it.
 
     Args:
         slug (str):
