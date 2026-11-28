@@ -126,7 +126,7 @@ func TestMemProjectEnvironmentBranchScopeBuildsWaitForData(t *testing.T) {
 	}
 	build := func(release []string) state.Deployment {
 		t.Helper()
-		d, err := s.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "pr-1", Kind: state.DeploymentKindPreview, ReleaseCommand: release})
+		d, err := s.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "pr-1", Kind: state.DeploymentKindPreview, ImageDigest: "sha256:pr", ReleaseCommand: release})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -151,6 +151,30 @@ func TestMemProjectEnvironmentBranchScopeBuildsWaitForData(t *testing.T) {
 	awaiting, err := s.ProjectEnvironmentBranchDeploymentsAwaitingActivation(ctx, branch.EnvironmentID)
 	if err != nil || len(awaiting) != 1 || awaiting[0].ID != plain.ID {
 		t.Fatalf("awaiting activation = %+v, %v; want only the build without a release command", awaiting, err)
+	}
+	// Once its release command succeeded (imaged held it until the data was
+	// ready), a migrating build is primed on activation too.
+	if err := s.SetDeploymentRootfs(ctx, migrating.ID, "/migrating.ext4", "layers/migrating.ext4", 4096); err != nil {
+		t.Fatal(err)
+	}
+	task, err :=s.CreateAppTask(ctx, state.CreateAppTaskParams{AccountID: acct.ID, AppID: app.ID, DeploymentID: migrating.ID,
+		Kind: state.AppTaskKindRelease, Command: []string{"migrate"}, TimeoutSeconds: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := s.ClaimNextAppTask(ctx, "test", time.Now(), time.Minute)
+	if err != nil || claimed.ID != task.ID {
+		t.Fatalf("claim release task = %+v, %v", claimed, err)
+	}
+	if _, err := s.MarkAppTaskRunning(ctx, task.ID, *claimed.LeaseToken, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CompleteAppTask(ctx, state.CompleteAppTaskParams{ID: task.ID, LeaseToken: *claimed.LeaseToken, Status: state.AppTaskSucceeded, ExitCode: new(int), FinishedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	awaiting, err = s.ProjectEnvironmentBranchDeploymentsAwaitingActivation(ctx, branch.EnvironmentID)
+	if err != nil || len(awaiting) != 2 {
+		t.Fatalf("awaiting activation after the release command = %+v, %v; want both builds", awaiting, err)
 	}
 
 	lease := uuid.NewString()
@@ -181,7 +205,16 @@ func TestMemProjectEnvironmentBranchScopeBuildsWaitForData(t *testing.T) {
 	if err != nil || got.DataState != state.EnvironmentBranchDataPending || got.DataAttempts != 0 || got.DataError != "" {
 		t.Fatalf("reopened branch = %+v, %v; want pending with fresh attempts", got, err)
 	}
-	if claimed, err := s.ClaimProjectEnvironmentBranchData(ctx, uuid.NewString(), now, time.Minute); err != nil || claimed.EnvironmentID != branch.EnvironmentID {
+	lease = uuid.NewString()
+	if claimed, err := s.ClaimProjectEnvironmentBranchData(ctx, lease, now, time.Minute); err != nil || claimed.EnvironmentID != branch.EnvironmentID {
 		t.Fatalf("claim reopened data = %+v, %v; want it due at once", claimed, err)
+	}
+	// Failed data does not hold a build into the branch's scope: the
+	// branch's own deployments stay dark, a pull request build serves.
+	if err := s.RetryProjectEnvironmentBranchData(ctx, branch.EnvironmentID, lease, now, "gave up", true); err != nil {
+		t.Fatal(err)
+	}
+	if ready, err := s.EnvironmentBranchDataReady(ctx, plain.ID); err != nil || !ready {
+		t.Fatalf("build into a branch whose data failed: data ready = %v, %v; want true", ready, err)
 	}
 }

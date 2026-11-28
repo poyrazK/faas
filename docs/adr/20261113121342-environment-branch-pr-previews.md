@@ -127,14 +127,17 @@ For each production database the PR branch's parent binds:
 The slice 4 trial (2026-11-28) found three gaps, now closed:
 
 - **PR builds wait for the branch's data.** A PR build into a branch whose data is still pending
-  went live with no database URL. A build in a branch's scope now waits like the branch's own
-  deployments: imaged holds its release command (the release sweep resumes it), schedd does
-  not prime it, and the branch data reconciler primes one without a release command once the
-  data is ready (`EnvironmentBranchDataReady` covers deployments in the branch's scope).
+  went live with no database URL. A build in a branch's scope now waits while the branch's data
+  is pending: imaged holds its release command (the release sweep resumes it), schedd does
+  not prime it, and the branch data reconciler primes it once the data is ready (a build with
+  a release command once that command succeeded). Unlike the branch's own deployments, it is
+  not held when the data failed: the PR build serves as it did before.
 - **Bindings made after the copy.** A PR build reopens a ready branch's data when the app has a
-  production binding, of a database with previews copy or empty, under a key the branch's
-  scope does not bind. The reconciler's pass is idempotent and adds the binding; the build
-  waits for it. App previews set up their databases on every build the same way.
+  production binding under a key the branch's scope does not bind, of a database the PR gets:
+  previews copy and made by the branch point, or previews empty with the preview databases
+  capability. The reconciler's pass is idempotent and adds the binding; the build waits for
+  it. App previews set up their databases on every build the same way. A failure to check is
+  logged and the build goes ahead.
 - **In-progress budget.** A copy or binding still being made is checked without spending an
   attempt for 10 minutes from when it was made, not from the branch's creation. A branch whose
   copy could not start for two hours (stale usage) spent its last attempts on a database that
@@ -142,10 +145,11 @@ The slice 4 trial (2026-11-28) found three gaps, now closed:
 - **Compose build context on GitHub builds.** A project deploy stages a Compose service's build
   context (`build: ./web`) as the archive root; a GitHub build staged the whole repository, so
   the service's Dockerfile built against the repository root (`"/app.py": not found`), on push
-  and on PR builds alike. Project reconcile now records `build_compose_context` on the app, and
-  the GitHub bridge narrows the staged repository to the app's RootDir when its Dockerfile is
-  there. gregale.yaml, release commands and the source checks are still read from the
-  repository, as before. An app reconciled earlier gets the field with its next change.
+  and on PR builds alike. Project reconcile now records `build_compose_context` on the app (a
+  change of it redeploys the app on the next project apply), and the GitHub bridge streams the
+  staged repository's entries under the app's RootDir into a new archive when its Dockerfile is
+  there; otherwise, or if that fails, the build keeps the repository. gregale.yaml, release
+  commands and the source checks are still read from the repository, as before.
 
 ## Consequences
 

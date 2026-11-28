@@ -248,8 +248,11 @@ func (s *server) pullRequestBranchBuild(ctx context.Context, app state.App, scop
 	case branch.PullRequestNumber != pullRequest:
 		return status.Errorf(codes.FailedPrecondition, "EnqueueBuild: environment %s was not made for pull request #%d", scope, pullRequest)
 	}
-	if err := s.reopenPullRequestBranchData(ctx, app, branch); err != nil {
-		return status.Errorf(codes.Unavailable, "EnqueueBuild: refresh the branch's database bindings: %v", err)
+	if err := s.reopenPullRequestBranchData(ctx, app, branch); err != nil && s.log != nil {
+		// Best effort: the build goes ahead with the branch's bindings as
+		// they are, as it did before bindings were refreshed.
+		s.log.Warn("environment branch: refresh a pull request's database bindings",
+			"environment", branch.EnvironmentID, notifyAppField, app.ID, "err", err)
 	}
 	return nil
 }
@@ -286,8 +289,11 @@ func (s *server) reopenPullRequestBranchData(ctx context.Context, app state.App,
 }
 
 // pullRequestBranchMissesBinding reports whether app has a production
-// binding of a database with previews copy or empty whose environment key
-// branch's scope does not bind.
+// binding of a database its pull requests get whose environment key branch's
+// scope does not bind. A pull request gets a database with previews copy that
+// existed at the branch point (a later one has nothing to copy as of then), or
+// one with previews empty while app has the preview databases capability; the
+// branch data reconciler would otherwise fail on every reopen.
 func (s *server) pullRequestBranchMissesBinding(ctx context.Context, acct state.Account, app state.App, branch state.ProjectEnvironmentBranch) (bool, error) {
 	bindings, err := s.managedPostgresBindings.ListForApp(ctx, acct.ID, app.ID, "")
 	if errors.Is(err, managedpostgres.ErrUnsupported) {
@@ -300,10 +306,14 @@ func (s *server) pullRequestBranchMissesBinding(ctx context.Context, acct state.
 	if err != nil {
 		return false, err
 	}
+	empties := s.capabilityEnabledFor(previewDatabasesCapability, acct, app)
 	previewed := map[string]bool{}
 	for _, database := range databases {
-		if database.Previews == managedpostgres.PreviewsCopy || database.Previews == managedpostgres.PreviewsEmpty {
-			previewed[database.Name] = true
+		switch database.Previews {
+		case managedpostgres.PreviewsCopy:
+			previewed[database.Name] = !database.CreatedAt.After(branch.BranchPoint)
+		case managedpostgres.PreviewsEmpty:
+			previewed[database.Name] = empties
 		}
 	}
 	bound := map[string]bool{}

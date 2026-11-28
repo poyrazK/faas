@@ -51,7 +51,7 @@ func TestEnvironmentBranchDataInProgressBudgetStartsWithTheCopy(t *testing.T) {
 	if got := apidserver.EnvironmentBranchDataInProgressFrom(branch, apidserver.CopyStarted(created.Add(-time.Hour), inProgress)); !got.Equal(created) {
 		t.Fatalf("an older copy's budget starts at %v; want the branch's creation %v", got, created)
 	}
-	if err := apidserver.CopyStarted(time.Time{}, inProgress); err != inProgress {
+	if err := apidserver.CopyStarted(time.Time{}, inProgress); err != inProgress { //nolint:errorlint // asserts the very error comes back unwrapped
 		t.Fatalf("CopyStarted without a time = %v; want the error unchanged", err)
 	}
 	if err := apidserver.CopyStarted(copyAt, nil); err != nil {

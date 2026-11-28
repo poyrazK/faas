@@ -194,9 +194,13 @@ func (m *MemStore) ProjectEnvironmentBranchDeploymentsAwaitingActivation(_ conte
 			out = append(out, d)
 		}
 	}
-	// Builds into the branch's scope with no release command (PgStore).
+	// Builds into the branch's scope with no release command left to run
+	// (PgStore).
 	for _, d := range m.deployments {
-		if _, linked := m.projectEnvironmentBranchDeployments[d.ID]; linked || d.Status != DeploySnapshotting || len(d.ReleaseCommand) > 0 {
+		if _, linked := m.projectEnvironmentBranchDeployments[d.ID]; linked || d.Status != DeploySnapshotting {
+			continue
+		}
+		if len(d.ReleaseCommand) > 0 && !m.releaseTaskSucceededLocked(d.ID) {
 			continue
 		}
 		if b, ok := m.environmentBranchOfScopeLocked(d); ok && b.EnvironmentID == environmentID {
@@ -205,6 +209,17 @@ func (m *MemStore) ProjectEnvironmentBranchDeploymentsAwaitingActivation(_ conte
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
+}
+
+// releaseTaskSucceededLocked reports whether deploymentID's release command
+// succeeded.
+func (m *MemStore) releaseTaskSucceededLocked(deploymentID string) bool {
+	for _, task := range m.appTasks {
+		if task.DeploymentID == deploymentID && task.Kind == AppTaskKindRelease && task.Status == AppTaskSucceeded {
+			return true
+		}
+	}
+	return false
 }
 
 // environmentBranchOfScopeLocked is the branch of d's app's project whose
@@ -233,8 +248,10 @@ func (m *MemStore) EnvironmentBranchDataReady(_ context.Context, deploymentID st
 	if !ok {
 		return true, nil
 	}
+	// A build into a branch's scope waits only while the data is pending
+	// (PgStore).
 	if b, ok := m.environmentBranchOfScopeLocked(d); ok {
-		return b.DataState == EnvironmentBranchDataReady, nil
+		return b.DataState != EnvironmentBranchDataPending, nil
 	}
 	return true, nil
 }

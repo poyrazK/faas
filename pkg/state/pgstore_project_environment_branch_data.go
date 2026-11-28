@@ -256,8 +256,9 @@ func (s *PgStore) ProjectEnvironmentBranchDeploymentsAwaitingActivation(ctx cont
 		return nil, nil
 	}
 	// The branch's own deployments, and builds into its scope that wait for
-	// the data with no release command; one with a release command resumes
-	// through imaged, which runs the command first.
+	// the data with no release command left to run: none declared, or one
+	// that succeeded. One whose command has not run resumes through imaged,
+	// which runs the command first.
 	rows, err := s.pool.Query(ctx, `
 		select l.deployment_id::text from project_environment_branch_deployments l
 		  join deployments d on d.id = l.deployment_id
@@ -268,7 +269,9 @@ func (s *PgStore) ProjectEnvironmentBranchDeploymentsAwaitingActivation(ctx cont
 		  join apps a on a.project_id = e.project_id
 		  join deployments d on d.app_id = a.id and d.scope = e.slug
 		 where b.environment_id = $1 and d.status = 'snapshotting'
-		   and coalesce(cardinality(d.release_command), 0) = 0
+		   and (coalesce(cardinality(d.release_command), 0) = 0 or exists (
+		        select 1 from app_tasks t
+		         where t.deployment_id = d.id and t.kind = 'release' and t.status = 'succeeded'))
 		 order by 1`, environmentID)
 	if err != nil {
 		return nil, mapErr(err)
@@ -301,9 +304,11 @@ func (s *PgStore) EnvironmentBranchDataReady(ctx context.Context, deploymentID s
 	if !validUUID(deploymentID) {
 		return true, nil
 	}
-	// A deployment the branch created names its branch; any other deployment
-	// in a branch's scope (a pull request's build) belongs to the branch of
-	// its app's project with that slug.
+	// A deployment the branch created names its branch and waits for its
+	// data. Any other deployment in a branch's scope (a pull request's build)
+	// belongs to the branch of its app's project with that slug, and waits
+	// only while the data is pending: a branch whose data failed builds as
+	// before rather than holding every push until the stale sweep.
 	var state string
 	err := s.pool.QueryRow(ctx, `
 		select coalesce(
@@ -314,7 +319,7 @@ func (s *PgStore) EnvironmentBranchDataReady(ctx context.Context, deploymentID s
 		     join apps a on a.id = d.app_id
 		     join project_environments e on e.project_id = a.project_id and e.slug = d.scope
 		     join project_environment_branches b on b.environment_id = e.id
-		    where d.id = $1),
+		    where d.id = $1 and b.data_state = 'pending'),
 		  'ready')`, deploymentID).Scan(&state)
 	if err != nil {
 		return false, mapErr(err)

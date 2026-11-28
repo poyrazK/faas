@@ -44,7 +44,7 @@ func writeRepoTarball(t *testing.T, files map[string]string) string {
 // tarballFiles lists the regular files of a .tar.gz.
 func tarballFiles(t *testing.T, path string) map[string]bool {
 	t.Helper()
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:forbidigo // test archive the test just wrote
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,6 +66,58 @@ func tarballFiles(t *testing.T, path string) map[string]bool {
 		if h.Typeflag == tar.TypeReg {
 			files[strings.TrimPrefix(h.Name, "./")] = true
 		}
+	}
+}
+
+// writeTarGz writes headers to path; a regular file's body is Size "x"s.
+func writeTarGz(t *testing.T, path string, headers []tar.Header) {
+	t.Helper()
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gz := gzip.NewWriter(f)
+	tw := tar.NewWriter(gz)
+	for _, h := range headers {
+		if err := tw.WriteHeader(&h); err != nil {
+			t.Fatal(err)
+		}
+		if h.Typeflag == tar.TypeReg {
+			if _, err := io.WriteString(tw, strings.Repeat("x", int(h.Size))); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for _, c := range []io.Closer{tw, gz, f} {
+		if err := c.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// tarballEntries maps each entry name of a .tar.gz to its link target.
+func tarballEntries(t *testing.T, path string) map[string]string {
+	t.Helper()
+	f, err := os.Open(path) //nolint:forbidigo // test archive the test just wrote
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := tar.NewReader(gz)
+	entries := map[string]string{}
+	for {
+		h, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return entries
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries[h.Name] = h.Linkname
 	}
 }
 
@@ -95,6 +147,30 @@ func TestGitHubBuildNarrowsToComposeBuildContext(t *testing.T) {
 	files := tarballFiles(t, spooled)
 	if !files["Dockerfile"] || !files["app.py"] || files["compose.yaml"] || files["README.md"] || files["web/app.py"] {
 		t.Fatalf("narrowed archive = %v; want the web directory at its root", files)
+	}
+
+	// A "./" prefixed archive with links: a symlink stays, a hard link
+	// within the context is re-rooted, one to a file outside it is dropped.
+	linked := filepath.Join(t.TempDir(), "linked.tar.gz")
+	writeTarGz(t, linked, []tar.Header{
+		{Name: "./web/", Typeflag: tar.TypeDir, Mode: 0o755},
+		{Name: "./web/Dockerfile", Typeflag: tar.TypeReg, Mode: 0o644, Size: 4},
+		{Name: "./web/app.py", Typeflag: tar.TypeReg, Mode: 0o644, Size: 4},
+		{Name: "./web/current", Typeflag: tar.TypeSymlink, Linkname: "app.py"},
+		{Name: "./web/same.py", Typeflag: tar.TypeLink, Linkname: "./web/app.py"},
+		{Name: "./web/shared.py", Typeflag: tar.TypeLink, Linkname: "./README.md"},
+		{Name: "./README.md", Typeflag: tar.TypeReg, Mode: 0o644, Size: 4},
+	})
+	spooled, narrowed, err = apidserver.SpoolBuildSource(t.Context(), t.TempDir(), linked, compose)
+	if err != nil || narrowed <= 0 {
+		t.Fatalf("spool linked = %q, %d, %v; want a narrowed archive", spooled, narrowed, err)
+	}
+	entries := tarballEntries(t, spooled)
+	if _, ok := entries["Dockerfile"]; !ok || entries["current"] != "app.py" || entries["same.py"] != "app.py" {
+		t.Fatalf("narrowed links = %v; want Dockerfile, the symlink kept and the hard link re-rooted", entries)
+	}
+	if _, ok := entries["shared.py"]; ok {
+		t.Fatalf("narrowed links = %v; want the hard link to a file outside the context dropped", entries)
 	}
 
 	for name, app := range map[string]state.App{
