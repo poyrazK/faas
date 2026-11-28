@@ -1486,6 +1486,7 @@ type App struct {
 	ScalingRevision                   int64
 	SandboxTemplate                   bool
 	OwnerHomeNodeID                   pgtype.UUID
+	RouteOfAppID                      pgtype.UUID
 }
 
 type AppApiRoute struct {

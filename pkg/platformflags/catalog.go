@@ -144,8 +144,8 @@ const (
 	// block rules check the wider CRS rule set.
 	EdgeWAFStrictInspection = "edge_waf_strict_inspection"
 	// EdgeWAFInlineBody releases ADR-831 amendment 22: under strict
-	// inspection, warn and block rules also score the body's first 2 KiB
-	// in-path.
+	// inspection, warn and block rules also score the body's first 6 fields
+	// (within 2 KiB) in-path.
 	EdgeWAFInlineBody = "edge_waf_inline_body"
 )
 
@@ -564,7 +564,7 @@ var catalog = []Spec{
 	{
 		Key:   EdgeWAFInlineBody,
 		Label: "Edge WAF in-path body checks",
-		Description: "Release ADR-831 amendment 22 to accounts that also have edge_waf_strict_inspection: warn and block rules score the first 2 KiB of an uncompressed request body in-path, " +
+		Description: "Release ADR-831 amendment 22 to accounts that also have edge_waf_strict_inspection: warn and block rules score the first 6 JSON values or form fields (within 2 KiB) of an uncompressed request body in-path, " +
 			"so block refuses a body attack with 403 before the app wakes. Off by default because rules already in block then start refusing bodies observe only reported " +
 			"(GraphQL bodies 932235/942290, prose with SQL 942350). While it is off, bodies are sampled and reported only.",
 		ADR:        "ADR-831",

@@ -356,7 +356,7 @@ func (c *Client) doWithClientAndHeadersAndIdempotencyKeyPolicy(ctx context.Conte
 			"the gregale CLI cannot reach this route — use the dashboard at "+docsBase+"/dashboards#sessions",
 		).WithDocs(docsBase + "/cli")
 	}
-	path, err := c.projectRoute(path)
+	path, err := c.orgRoute(method, path)
 	if err != nil {
 		return err
 	}
@@ -600,7 +600,7 @@ func (c *Client) doBytesWithHeader(ctx context.Context, method, path string, bod
 		}
 		r = bytes.NewReader(b)
 	}
-	path, err := c.projectRoute(path)
+	path, err := c.orgRoute(method, path)
 	if err != nil {
 		return nil, err
 	}
@@ -778,6 +778,10 @@ func (c *Client) StreamAccountExport(ctx context.Context, includeSecrets bool, r
 	if requestID == "" {
 		requestID = newUUIDv4()
 	}
+	path, err := c.orgRoute(http.MethodGet, path)
+	if err != nil {
+		return 0, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
 		return 0, err
@@ -832,6 +836,10 @@ func (c *Client) DeleteAccountIncludingManagedPostgres(ctx context.Context, idem
 func (c *Client) deleteAccount(ctx context.Context, idempotencyKey, path string) (AccountDeletionResponse, error) {
 	if idempotencyKey == "" {
 		idempotencyKey = newUUIDv4()
+	}
+	path, err := c.orgRoute(http.MethodDelete, path)
+	if err != nil {
+		return AccountDeletionResponse{}, err
 	}
 	req, err := http.NewRequestWithContext(ctx, "DELETE", c.baseURL+path, nil)
 	if err != nil {
@@ -6709,7 +6717,7 @@ func (c *Client) CreateOrgApp(ctx context.Context, slug string, req CreateAppReq
 // slugs are 404 `org_not_found`.
 func (c *Client) GetOrg(ctx context.Context, slug string) (OrgResponse, error) {
 	var out OrgResponse
-	return out, c.do(ctx, "GET", "/v1/orgs/"+slug, nil, &out)
+	return out, c.do(ctx, "GET", "/v1/orgs/"+url.PathEscape(slug), nil, &out)
 }
 
 // ListOrgActivity returns one newest-first page of the organization's global

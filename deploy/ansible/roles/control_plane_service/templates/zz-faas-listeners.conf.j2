@@ -5,3 +5,7 @@
 # 2026-11-15 #25). Same variables the gatewayd_public_service role reads.
 Environment=FAAS_TCP_LISTENERS_ENABLED={{ (faas_tcpd_enabled | default(false) | bool) | ternary('1', '0') }}
 Environment=FAAS_UDP_LISTENERS_ENABLED={{ (faas_udpd_enabled | default(false) | bool) | ternary('1', '0') }}
+# Whether the edge serves the AI gateway's public host, so apid lists AI
+# access tokens as available only where they can be used (prod hunt
+# 2026-11-28). Same variable the public_edge role reads.
+Environment=FAAS_AI_ACCESS_TOKEN_HOST_ENABLED={{ (faas_ai_gateway_public_enabled | default(false) | bool) | ternary('1', '0') }}

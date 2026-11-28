@@ -438,6 +438,8 @@ type authPublicSettings struct {
 		MessagesPerRecipient int  `json:"messages_per_recipient"`
 		MessagesPerNetwork   *int `json:"messages_per_network"`
 		TrustedNetworkDays   int  `json:"trusted_network_days"`
+		// LogDays is absent from Auth apps that predate security events.
+		LogDays *int `json:"log_days"`
 	} `json:"security"`
 	Sessions struct {
 		MaxAgeMinutes *int `json:"max_age_minutes"`

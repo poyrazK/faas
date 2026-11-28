@@ -1842,6 +1842,10 @@ type App struct {
 	// job), counts against SandboxTemplatesMax instead of DeployedApps and
 	// stays out of ListApps and ListAppsByOrg. Set only at create.
 	SandboxTemplate bool
+	// RouteOfAppID names the source app when this app is a route split's
+	// route app: it serves only through that app's route rule
+	// (ADR-20261121170000 amendment 6). "" for every other app.
+	RouteOfAppID string
 	// PublicAuthBasicSealed (issue #477 / ADR-079) is the
 	// secretbox-sealed APP_BASIC_AUTH blob carrying the
 	// {username, password} pair the basic-auth path verifies

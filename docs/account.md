@@ -153,8 +153,39 @@ organization and invite them:
 
 ```bash
 gregale org create --name "Acme" acme
+gregale --org acme billing plan hobby       # a new organization starts on Free
 gregale org members invite --org acme --email ada@example.com --role developer
 ```
+
+A new organization starts on the Free plan, which has no seats for other
+members: inviting fails with `403 org_invitation_cap_exceeded` and names the
+upgrade. Hobby seats 10 members, Pro 50 and Scale 200. The owner changes the
+organization's plan with `gregale --org SLUG billing plan PLAN`.
+
+### Working in an organization from the CLI
+
+Put `--org SLUG` before the command to act for the organization instead of
+your personal account:
+
+```bash
+gregale --org acme deploy                 # a new app is created in acme
+gregale --org acme add postgres           # the database belongs to acme
+gregale --org acme billing status         # acme's plan and billing
+gregale --org acme billing portal
+gregale --org acme deploy --project       # acme's projects
+```
+
+`--org` applies to projects, new apps, managed PostgreSQL, buckets, the plan,
+billing status, the billing portal, budgets, overage caps, costs and monthly
+usage. Existing apps need no flag: an app's name is global and your role in
+its organization decides what you can do.
+
+A command that shows or changes only your personal account fails with
+`unsupported_by_cli` under `--org`, rather than acting on your personal
+account or showing its data as if it were the organization's. Examples are
+`gregale billing cancel`, the billing forecast and daily usage. For the
+organization's API keys, use `gregale org key list|create|rotate|delete
+--org SLUG`.
 
 ### Roles
 

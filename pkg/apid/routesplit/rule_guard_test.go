@@ -96,3 +96,25 @@ func TestRuleChangesAfterUndoAreFree(t *testing.T) {
 		t.Fatalf("an undone split's leftover rule could not be removed: %+v", prob)
 	}
 }
+
+// Amendment 6: the split marks the route's app before it has a deployment,
+// so the gateway serves it only through the source's route rule.
+func TestApplyMarksTheRouteApp(t *testing.T) {
+	f := newFixture(t)
+	split, prob := f.svc.Apply(f.ctx, f.acct, f.source, f.request())
+	if prob != nil {
+		t.Fatalf("apply: %+v", prob)
+	}
+	target, err := f.store.AppByID(f.ctx, split.TargetAppID)
+	if err != nil || target.RouteOfAppID != f.source.ID {
+		t.Fatalf("route's app = %+v, %v; want marked as a route of %s", target, err, f.source.ID)
+	}
+	if source, _ := f.store.AppByID(f.ctx, f.source.ID); source.RouteOfAppID != "" {
+		t.Fatalf("the source app was marked: %+v", source)
+	}
+	// A route's app serves through its source, so it is never split itself.
+	_, prob = f.svc.Apply(f.ctx, f.acct, target, f.request())
+	if prob == nil || prob.Code != api.CodeRouteSplitUnsupported || !strings.Contains(prob.Detail, "source app") {
+		t.Fatalf("splitting the route's app = %+v, want refused", prob)
+	}
+}
