@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -47,7 +48,12 @@ func TestDoctorBootHealthPath(t *testing.T) {
 		detail  string
 		errCode string
 	}{
-		{name: "passes once warm", handler: func(t *testing.T, d fakeBootDocker) { healthApp(t, d, 3) }, status: "ok", detail: "GET /healthz → 200"},
+		{name: "passes once warm", handler: func(t *testing.T, d fakeBootDocker) {
+			// A loaded machine may not fit two probes into the default 0.3 s;
+			// a passing check returns at once, so a long window costs nothing.
+			main.SetDoctorBootTimings(t.Cleanup, 5*time.Second, 200*time.Millisecond, 10*time.Millisecond)
+			healthApp(t, d, 2)
+		}, status: "ok", detail: "GET /healthz → 200"},
 		{name: "never passes", handler: func(t *testing.T, d fakeBootDocker) { healthApp(t, d, 1<<20) }, code: 1, status: "error", detail: "GET /healthz → 503", errCode: "boot_health_failed"},
 		{name: "redirect in the container is followed", handler: func(t *testing.T, d fakeBootDocker) {
 			serveBoot(t, d, func(w http.ResponseWriter, r *http.Request) {

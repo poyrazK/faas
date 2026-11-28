@@ -149,7 +149,7 @@ func runDoctorImageCommand(flags *doctorImageFlags, inspector doctorImageInspect
 	}
 	report := runDoctorImageChecksWithLocal(ctx, flags.image, auth, inspector, readLocalDockerImage)
 	if flags.boot {
-		addDoctorBootChecks(&report, flags)
+		addDoctorBootChecks(context.WithoutCancel(ctx), &report, flags) // not bound by the registry inspection timeout
 	}
 	if asJSON {
 		if err := writeJSON(report); err != nil {
@@ -228,12 +228,12 @@ func doctorImageTailChecks(cfg oci.ImageConfig) []doctorCheck {
 // startup-and-port check with what the run found. It boots even when registry
 // metadata could not be read from the registry or the local Docker store;
 // PORT is then the default serving port.
-func addDoctorBootChecks(report *doctorReport, flags *doctorImageFlags) {
+func addDoctorBootChecks(parent context.Context, report *doctorReport, flags *doctorImageFlags) {
 	port := api.DefaultAppPort
 	if report.Image != nil && report.Image.ServingPort > 0 {
 		port = report.Image.ServingPort
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(parent, os.Interrupt)
 	defer stop()
 	app := doctorBootLookupApp(ctx, flags.app)
 	memoryMB, memorySource := doctorBootMemory(ctx, flags, app)
