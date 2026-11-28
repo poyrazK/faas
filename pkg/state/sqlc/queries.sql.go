@@ -69189,7 +69189,8 @@ WHERE
  OR (candidate.status='running' AND coalesce(candidate.lease_until,candidate.updated_at+($1::bigint*interval '1 millisecond'))<=now()))
 AND EXISTS (SELECT 1 FROM apps a JOIN app_resource_accounts ac ON ac.app_id=a.id
   WHERE a.id=candidate.app_id AND a.status<>'deleted'
-  AND ac.status NOT IN ('suspended','deleted_pending') AND ac.abuse_hold_at IS NULL)
+  AND ac.status NOT IN ('suspended','deleted_pending') AND ac.abuse_hold_at IS NULL
+  AND NOT EXISTS (SELECT 1 FROM orgs o WHERE o.id=a.org_id AND NOT o.personal_org AND o.abuse_hold_at IS NOT NULL))
 AND (
  candidate.operation_id IS NOT NULL OR
  (SELECT count(*) FROM workflow_runs active WHERE active.app_id=candidate.app_id
@@ -119313,7 +119314,8 @@ SELECT EXISTS(
   OR (candidate.status='running' AND coalesce(candidate.lease_until,candidate.updated_at+($1::bigint*interval '1 millisecond'))<=now()))
  AND EXISTS (SELECT 1 FROM apps a JOIN app_resource_accounts ac ON ac.app_id=a.id
   WHERE a.id=candidate.app_id AND a.status<>'deleted'
-  AND ac.status NOT IN ('suspended','deleted_pending') AND ac.abuse_hold_at IS NULL)
+  AND ac.status NOT IN ('suspended','deleted_pending') AND ac.abuse_hold_at IS NULL
+  AND NOT EXISTS (SELECT 1 FROM orgs o WHERE o.id=a.org_id AND NOT o.personal_org AND o.abuse_hold_at IS NOT NULL))
 )::boolean AS due
 `
 

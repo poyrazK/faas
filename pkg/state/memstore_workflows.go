@@ -334,7 +334,15 @@ func (m *MemStore) workflowRunAppHeldLocked(appID string) bool {
 	if app.DeletedAt != nil || app.Status == AppDeleted {
 		return true
 	}
-	if app.OrgID != "" && m.invocationOwnerHeldLocked(app.OrgID) {
+	if app.OrgID != "" {
+		if org, ok := m.orgs[app.OrgID]; ok && org.Status == OrgStatusDeletedPending {
+			return true
+		}
+		if m.invocationOwnerHeldLocked(app.OrgID) {
+			return true
+		}
+	}
+	if account, ok := m.accounts[app.AccountID]; ok && account.Status == AccountDeletedPending {
 		return true
 	}
 	return m.invocationOwnerHeldLocked(app.AccountID)

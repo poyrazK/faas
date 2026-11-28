@@ -107,24 +107,50 @@ func (s *server) applyPostgresChanges(ctx context.Context, store state.CommitCha
 	return nil
 }
 
-// applySourcePostgresChanges applies a pushed gregale.yaml's postgres_changes
-// block. As with `gregale deploy`, an account the feature is not released to,
-// or a plan without queues, skips the block. A database you run still needs
-// `gregale postgres-changes install` once, because its owner URL never leaves
-// your machine.
-func (s *server) applySourcePostgresChanges(ctx context.Context, acct state.Account, app state.App, spec *gregalemanifest.PostgresChangesSpec) *api.Problem {
+// stageSourcePostgresChanges validates a pushed gregale.yaml's
+// postgres_changes block before the deployment is queued, so a bad block
+// fails the deploy without writing anything. As with `gregale deploy`, an
+// account the feature is not released to, or a plan without queues, skips
+// the block. A database you run still needs `gregale postgres-changes
+// install` once, because its owner URL never leaves your machine.
+func (s *server) stageSourcePostgresChanges(ctx context.Context, acct state.Account, spec *gregalemanifest.PostgresChangesSpec) (*api.PutPostgresChangesRequest, *api.Problem) {
 	if spec == nil || !s.platformFlagEnabled(platformflags.PostgresChanges, acct) || api.MustLimitsFor(acct.Plan).MaxQueueDepth == 0 {
-		return nil
+		return nil, nil
+	}
+	if _, ok := s.store.(state.CommitChangesStore); !ok {
+		return nil, api.ErrCapacity("postgres changes store unavailable")
+	}
+	req, err := spec.Request()
+	if err == nil {
+		err = req.Validate()
+	}
+	if err != nil {
+		return nil, api.ErrValidation("postgres_changes: " + err.Error())
+	}
+	if req.Database != "" {
+		if _, _, problem := s.postgresChangesDatabase(ctx, acct, req.Database); problem != nil {
+			return nil, problem
+		}
+	}
+	return &req, nil
+}
+
+// applyStagedPostgresChanges installs a source deploy's validated
+// postgres_changes block once its deployment is queued. Installing before
+// that would leave capture, the relay login and the Commit source behind
+// when a later manifest step or the enqueue fails. The deployment is already
+// accepted, so a failure here is logged rather than failing the request.
+func (s *server) applyStagedPostgresChanges(ctx context.Context, acct state.Account, app state.App, req *api.PutPostgresChangesRequest) {
+	if req == nil {
+		return
 	}
 	store, ok := s.store.(state.CommitChangesStore)
 	if !ok {
-		return api.ErrCapacity("postgres changes store unavailable")
+		return
 	}
-	req, err := spec.Request()
-	if err != nil {
-		return api.ErrValidation("postgres_changes: " + err.Error())
+	if problem := s.applyPostgresChanges(ctx, store, acct, app, *req); problem != nil {
+		s.log.Warn("source deploy postgres_changes not applied", "app_id", app.ID, "code", problem.Code, "detail", problem.Detail)
 	}
-	return s.applyPostgresChanges(ctx, store, acct, app, req)
 }
 
 // postgresChangesDatabase resolves a managed database the account owns, by
