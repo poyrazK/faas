@@ -49,6 +49,9 @@ var hopByHopHeaders = map[string]struct{}{
 type Handler struct {
 	// aiAccountRates bounds each account's AI calls per second.
 	aiAccountRates aiAccountRates
+	// aiDrain ends billable AI calls still running when the daemon stops,
+	// so they settle (DrainAICalls).
+	aiDrain aiDrain
 	// Log, when set, records failures the caller only sees as a generic 503.
 	Log                       *slog.Logger
 	SimulationHandler         http.Handler
@@ -580,6 +583,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if aiPlan != nil && aiPlan.endpoint.billable() && batch == nil && realtime == realtimeNone {
 		aiCall = newAICallContext(ctx, requestTimeout, time.Now())
 		defer aiCall.Close()
+		// Deferred before the settlement, so it runs after it.
+		defer h.aiDrain.track(aiCall)()
 		ctx = aiCall //nolint:contextcheck // aiCall is derived from ctx through context.WithDeadline and WithCancelCause.
 		defer h.renewAILease(integration.ID, decision.LeaseID, requestTimeout)()
 	} else if requestTimeout > 0 {
