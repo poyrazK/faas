@@ -5,6 +5,7 @@ package main
 //	gregale app tasks [list] <app> [--limit N] [--offset N]
 //	gregale app tasks show <app> <task-id>
 //	gregale app tasks cancel <app> <task-id>
+//	gregale app tasks retry <app> <task-id>
 //
 // `app exec --detach`, release commands and binding probes leave task receipts
 // behind; until these commands the CLI printed a task ID that nothing could
@@ -24,7 +25,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const appTasksUsage = "usage: gregale app tasks [list] <app> [--limit N] [--offset N]\n       gregale app tasks show <app> <task-id>\n       gregale app tasks cancel <app> <task-id>"
+const appTasksUsage = "usage: gregale app tasks [list] <app> [--limit N] [--offset N]\n       gregale app tasks show <app> <task-id>\n       gregale app tasks cancel <app> <task-id>\n       gregale app tasks retry <app> <task-id>"
 
 func cmdAppTasks(slug string, args []string) int {
 	verb := "list"
@@ -38,8 +39,10 @@ func cmdAppTasks(slug string, args []string) int {
 		return cmdAppTaskShow(slug, args)
 	case "cancel":
 		return cmdAppTaskCancel(slug, args)
+	case "retry":
+		return cmdAppTaskRetry(slug, args)
 	default:
-		return printErr("Unknown tasks command", fmt.Errorf("%q is not a tasks command; use list, show or cancel\n%s", verb, appTasksUsage))
+		return printErr("Unknown tasks command", fmt.Errorf("%q is not a tasks command; use list, show, cancel or retry\n%s", verb, appTasksUsage))
 	}
 }
 
@@ -134,7 +137,60 @@ func cmdAppTaskCancel(slug string, args []string) int {
 	return 0
 }
 
-// appTaskIDArg returns the app and task ID for show and cancel. In a linked
+// cmdAppTaskRetry runs a finished manual task's command again as a new task
+// on the app's current live deployment, with the same shell mode, timeout and
+// output limit. It does not wait; the new task is read back with show.
+func cmdAppTaskRetry(slug string, args []string) int {
+	slug, id, ok := appTaskIDArg(slug, args, "retry")
+	if !ok {
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	ctx := context.Background()
+	previous, err := client.GetAppTask(ctx, slug, id)
+	if err != nil {
+		return printErr("Could not load app task", err)
+	}
+	if err := appTaskRetryable(previous, slug); err != nil {
+		return printErr("Cannot retry this task", err)
+	}
+	task, err := client.CreateAppTask(ctx, slug, api.CreateAppTaskRequest{
+		Command:        previous.Command,
+		CommandShell:   previous.CommandShell,
+		TimeoutSeconds: previous.TimeoutSeconds,
+		MaxOutputBytes: previous.MaxOutputBytes,
+	})
+	if err != nil {
+		return printErr("Could not retry app task", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(task))
+	}
+	PrintOK(osStdout, "Retrying task %s as %s (%s); follow it with gregale app tasks show %s %s", previous.ID, task.ID, appTaskCommandLine(task, 60), quoteCLIArg(slug), task.ID)
+	return 0
+}
+
+// appTaskRetryable refuses what a plain re-submit cannot reproduce: unfinished
+// tasks, interactive sessions (they need a terminal; run app exec -it again),
+// release and cron tasks (the platform runs those), and platform probes.
+func appTaskRetryable(task api.AppTaskResponse, slug string) error {
+	switch {
+	case !task.Status.Terminal():
+		return fmt.Errorf("task %s is still %s; wait for it or cancel it with gregale app tasks cancel %s %s", task.ID, task.Status, quoteCLIArg(slug), task.ID)
+	case task.Interactive:
+		return fmt.Errorf("task %s was an interactive session; start a new one with gregale app exec -it %s -- %s", task.ID, quoteCLIArg(slug), appTaskCommandLine(task, 0))
+	case task.Kind != api.AppTaskKindManual:
+		return fmt.Errorf("task %s is a %s task, which the platform runs; only app exec tasks can be retried", task.ID, task.Kind)
+	case len(task.Command) == 0 || strings.HasPrefix(task.Command[0], "__gregale_"):
+		return fmt.Errorf("task %s is a platform command; rerun the command that started it instead", task.ID)
+	}
+	return nil
+}
+
+// appTaskIDArg returns the app and task ID for show, cancel and retry. In a linked
 // checkout `app tasks show <task-id>` reaches here with the task ID in the
 // app position (a UUID is a valid slug), so a lone UUID names the task and
 // the linked app is used.
