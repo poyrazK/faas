@@ -1668,6 +1668,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithExecutionEnvironments(strings.TrimSpace(deps.getenv("FAAS_EXECUTION_ENVIRONMENTS_ENABLED")) == "1", executionEnvironmentBases(deps.getenv)).
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
 		WithListenersEnabled(strings.TrimSpace(deps.getenv("FAAS_TCP_LISTENERS_ENABLED")) == "1", strings.TrimSpace(deps.getenv("FAAS_UDP_LISTENERS_ENABLED")) == "1").
+		WithAIAccessTokenHostEnabled(strings.TrimSpace(deps.getenv("FAAS_AI_ACCESS_TOKEN_HOST_ENABLED")) == "1").
 		WithReleasePhaseEnabled(releasePhaseEnabledFromEnv(deps.getenv)).
 		WithAppForksEnabled(appForksEnabledFromEnv(deps.getenv)).
 		WithCrashSnapshotsEnabled(strings.TrimSpace(deps.getenv("FAAS_CRASH_SNAPSHOTS")) == "1").

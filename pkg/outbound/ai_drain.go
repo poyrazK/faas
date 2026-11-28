@@ -72,6 +72,15 @@ func (d *aiDrain) waitIdle(done <-chan struct{}) bool {
 	}
 }
 
+// EndAICalls ends the billable AI calls in flight, and any started after,
+// through their deadline path, so each settles at its reservation. A
+// handed-off generation asked to stop early calls it (ADR-20261128150000):
+// its drain is then one grace, not the hand-off's half hour.
+func (h *Handler) EndAICalls() {
+	h.aiDrain.init()
+	h.aiDrain.cancel()
+}
+
 // DrainAICalls is a stop function for a stopping outboundd: it lets billable
 // AI calls finish until aiDrainSettleWindow before ctx's deadline, then
 // ends the rest so they settle at their reservation, and returns when they

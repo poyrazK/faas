@@ -136,6 +136,41 @@ type RouteSplitStore interface {
 	// and non-managed secrets, or returns the deployment already seeded for
 	// the split. ErrNotFound when the source has no live artifact.
 	SeedRouteSplitTarget(ctx context.Context, seed RouteSplitSeed) (Deployment, error)
+	// MarkRouteApp records that appID serves only through sourceAppID's
+	// route rule (amendment 6). ErrNotFound unless both apps exist in one
+	// account.
+	MarkRouteApp(ctx context.Context, appID, sourceAppID string) error
+}
+
+func (m *MemStore) MarkRouteApp(_ context.Context, appID, sourceAppID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	app, okApp := m.apps[appID]
+	source, okSource := m.apps[sourceAppID]
+	if !okApp || !okSource || app.AccountID != source.AccountID {
+		return ErrNotFound
+	}
+	app.RouteOfAppID = sourceAppID
+	m.apps[appID] = app
+	return nil
+}
+
+func (s *PgStore) MarkRouteApp(ctx context.Context, appID, sourceAppID string) error {
+	_, err1 := uuid.Parse(appID)
+	_, err2 := uuid.Parse(sourceAppID)
+	if err1 != nil || err2 != nil {
+		return ErrNotFound
+	}
+	n, err := new(sqlc.Queries).MarkRouteApp(ctx, s.pool, sqlc.MarkRouteAppParams{
+		AppID: mustPgUUID(appID), SourceAppID: mustPgUUID(sourceAppID),
+	})
+	if err != nil {
+		return mapErr(err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func validRouteSplit(s RouteSplit) bool {

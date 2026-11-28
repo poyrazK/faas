@@ -1,0 +1,147 @@
+package main_test
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/onebox-faas/faas/cmd/gregale"
+	"github.com/onebox-faas/faas/pkg/api"
+)
+
+// orgPlanSink serves a Free personal account and a Pro organization "acme",
+// and records every plan change it receives. With checkout set, a plan change
+// answers 402 with a checkout URL instead.
+type orgPlanSink struct {
+	mu        sync.Mutex
+	checkout  bool
+	orgResult bool
+	changes   []string
+}
+
+func (s *orgPlanSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/account":
+		main.WriteJSONTest(w, api.AccountResponse{Email: "a@b.c", Plan: "free"})
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/orgs/acme":
+		main.WriteJSONTest(w, api.OrgResponse{Slug: "acme", Plan: "pro"})
+	case r.Method == http.MethodPatch:
+		var body map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		s.mu.Lock()
+		s.changes = append(s.changes, r.URL.Path+" "+body["plan"])
+		s.mu.Unlock()
+		if s.checkout {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusPaymentRequired)
+			_ = json.NewEncoder(w).Encode(api.Problem{
+				Status: http.StatusPaymentRequired, Code: api.CodePayment, Title: "Billing subscription required",
+				Detail: "update the payment method", BillingPortalURL: "https://billing.example/portal",
+			})
+			return
+		}
+		if s.orgResult {
+			main.WriteJSONTest(w, api.OrgPlanResponse{OrgID: "org-acme", Plan: api.Plan(body["plan"])})
+			return
+		}
+		main.WriteJSONTest(w, api.AccountResponse{Plan: body["plan"]})
+	default:
+		w.WriteHeader(http.StatusNotFound)
+	}
+}
+
+func startOrgPlanSink(t *testing.T, sink *orgPlanSink) {
+	t.Helper()
+	srv := httptest.NewServer(sink)
+	t.Cleanup(srv.Close)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	main.ResetJSONOut(t)
+}
+
+// TestPlanUnderOrgChangesTheOrganizationPlan pins ADR-20261127200000:
+// `gregale --org acme billing plan` changes acme's plan, not the personal
+// account's, and compares against acme's plan for the downgrade prompt.
+func TestPlanUnderOrgChangesTheOrganizationPlan(t *testing.T) {
+	sink := &orgPlanSink{}
+	startOrgPlanSink(t, sink)
+	_, restore := main.CaptureStdout(t)
+	defer restore()
+	_, restoreErr := main.CaptureStderr(t)
+	defer restoreErr()
+
+	// Pro → Hobby is a downgrade for acme (the personal account is Free):
+	// without --yes the non-interactive prompt refuses and nothing changes.
+	if code := main.Run([]string{"--org", "acme", "billing", "plan", "hobby"}); code == 0 {
+		t.Fatalf("billing plan hobby without --yes = 0; want the downgrade confirmation to refuse")
+	}
+	if len(sink.changes) != 0 {
+		t.Fatalf("plan changed without confirmation: %v", sink.changes)
+	}
+	if code := main.Run([]string{"--org", "acme", "billing", "plan", "hobby", "--yes"}); code != 0 {
+		t.Fatalf("billing plan hobby --yes = %d, want 0", code)
+	}
+	if len(sink.changes) != 1 || sink.changes[0] != "/v1/orgs/acme/plan hobby" {
+		t.Fatalf("plan changes = %v, want [/v1/orgs/acme/plan hobby]", sink.changes)
+	}
+}
+
+// TestPlanUnderOrgJSONIsTheOrganizationResult: --json prints the
+// organization's plan result (org_id, plan), not an empty account.
+func TestPlanUnderOrgJSONIsTheOrganizationResult(t *testing.T) {
+	sink := &orgPlanSink{orgResult: true}
+	startOrgPlanSink(t, sink)
+	stdout, restore := main.CaptureStdout(t)
+	defer restore()
+	_, restoreErr := main.CaptureStderr(t)
+	defer restoreErr()
+
+	if code := main.Run([]string{"--json", "--org", "acme", "billing", "plan", "scale"}); code != 0 {
+		t.Fatalf("billing plan scale --json = %d, want 0", code)
+	}
+	var got api.OrgPlanResponse
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("decode %q: %v", stdout.String(), err)
+	}
+	if got.OrgID != "org-acme" || got.Plan != api.PlanScale || strings.Contains(stdout.String(), `"email"`) {
+		t.Fatalf("--json = %s, want the organization's plan result", stdout.String())
+	}
+}
+
+// TestOrgFlagRejectsNonSlugs: --org is trimmed before it is checked, so a
+// padded flag-looking value or a path in it never becomes the organization.
+func TestOrgFlagRejectsNonSlugs(t *testing.T) {
+	sink := &orgPlanSink{}
+	startOrgPlanSink(t, sink)
+	_, restore := main.CaptureStdout(t)
+	defer restore()
+	_, restoreErr := main.CaptureStderr(t)
+	defer restoreErr()
+	for _, value := range []string{" -x", "acme/members", "acme?x=1", "   "} {
+		if code := main.Run([]string{"--org=" + value, "billing", "plan", "pro", "--yes"}); code == 0 {
+			t.Errorf("--org=%q accepted", value)
+		}
+	}
+	if len(sink.changes) != 0 {
+		t.Fatalf("plan changed with a rejected --org: %v", sink.changes)
+	}
+}
+
+// TestPlanUnderOrgHintsKeepTheOrg: the retry line after a billing hand-off
+// keeps --org, so pasting it does not change the personal account's plan.
+func TestPlanUnderOrgHintsKeepTheOrg(t *testing.T) {
+	startOrgPlanSink(t, &orgPlanSink{checkout: true})
+	main.WithRecorder(t)
+	stdout, restore := main.CaptureStdout(t)
+	defer restore()
+	_, restoreErr := main.CaptureStderr(t)
+	defer restoreErr()
+
+	main.Run([]string{"--org", "acme", "billing", "plan", "scale"})
+	if out := stdout.String(); !strings.Contains(out, "Then retry: gregale --org acme billing plan scale") {
+		t.Fatalf("stdout = %q, want the retry line to keep --org acme", out)
+	}
+}

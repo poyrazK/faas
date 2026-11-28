@@ -3622,6 +3622,10 @@ const (
 	// OutboundAISemanticCacheIndexBytesMax bounds one outboundd process's
 	// semantic index across every integration.
 	OutboundAISemanticCacheIndexBytesMax = 64 << 20
+	// OutboundCacheSnapshotMaxAgeSeconds is the oldest cache snapshot a
+	// starting outboundd loads (ADR-20261128150000): a snapshot left by a
+	// generation that stopped longer ago is stale and deleted unread.
+	OutboundCacheSnapshotMaxAgeSeconds = 600
 	// Managed prompts (ADR 20261114180740): a version's messages, distinct
 	// variables, stop strings and size (messages, defaults and params); the
 	// largest response_format object; description and note lengths; the
@@ -10511,6 +10515,14 @@ const (
 	// requests a second. The rest of the rule's inspect_body_bytes is still
 	// sampled off-path and reported.
 	EdgeWAFMaxInlineBodyBytes = 2 << 10
+	// EdgeWAFMaxInlineBodyFields is how many JSON leaf values or form fields
+	// of that prefix a warn or block rule scores in-path. CRS runs each
+	// body rule once per parsed field, so the cost grows with fields, not
+	// bytes; the rest of the prefix is sampled off-path and reported. On
+	// the 4-vCPU test host (2026-11-28) 6 fields kept the in-path p95 at
+	// 1.5-2.0 ms at 100-500 req/s; 8 fields reached 2.5 ms and 16 fields
+	// 4 ms at 500 req/s, past criterion W1's 2 ms.
+	EdgeWAFMaxInlineBodyFields = 6
 	// EdgeWAFInlineAccountSharePercent is the share of the node's check
 	// slots (at least one) an account's waiting checks are served first
 	// for (ADR-831 amendment 16). An account may use every free slot, but a
@@ -18563,6 +18575,20 @@ const (
 	AuthMessagesPerRecipientMax     = 50
 	AuthMessagesPerNetworkMax       = 1000
 	AuthMessageWindowSeconds        = 3600
+	// AuthSecurityLogDaysDefault is how long an Auth app keeps its security
+	// events (wrong passwords and codes, holds, passes past a spent account
+	// budget, message limits and new-device alerts) after the last one alike,
+	// unless the owner sets AUTH_SECURITY_LOG_DAYS, up to
+	// AuthSecurityLogMaxDays. They name networks and keyed address digests,
+	// never addresses, and live in the owner's own database.
+	AuthSecurityLogDaysDefault = 30
+	AuthSecurityLogMaxDays     = 365
+	// AuthSecurityEventsQueued bounds the security-event rows an Auth app
+	// instance holds waiting for its one writer; alike events merge into a
+	// waiting row's count, and past the bound events are dropped (and the
+	// count logged), so recording neither grows memory nor takes more than
+	// one of the front's database connections during an attack.
+	AuthSecurityEventsQueued = 1000
 	// AuthAnonymousRetentionMaxDays bounds how long idle anonymous users may
 	// be kept before the Auth app deletes them, when the owner sets a limit.
 	AuthAnonymousRetentionMaxDays = 3650

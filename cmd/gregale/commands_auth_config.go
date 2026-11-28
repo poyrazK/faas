@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--mfa-phone on|off] [--recovery-codes on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE] [--events on|off] [--passkeys on|off] [--passkey-rp-id DOMAIN|none] [--brand-name NAME] [--brand-color #RRGGBB] [--brand-logo-url URL] [--captcha turnstile|hcaptcha|off --captcha-site-key KEY --captcha-secret-stdin] [--activity-retention DAYS|forever] [--sms twilio|twilio_verify|messagebird|textlocal|vonage|off --sms-account ID --sms-sender SENDER --sms-secret-stdin] [--sms-countries CODES|all] [--sso on|off] [--anonymous on|off] [--anonymous-retention DAYS|forever] [--identity-linking on|off] [--self-deletion on|off] [--org-claims on|off] [--signup-domains DOMAINS|any] [--blocked-domains DOMAINS|none] [--block-disposable on|off] [--signup-access open|invite|waitlist] [--impersonation on|off] [--web3 ethereum,solana|off] [--session-max-age DURATION|off] [--session-idle DURATION|off] [--single-session on|off] [--org-domains on|off] [--service-accounts on|off] [--new-device-alerts on|off] [--messages-per-recipient N|default] [--messages-per-network N|off] [--oauth-server on|off] [--oauth-registration on|off] [--org-sso on|off]"
+	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--mfa-phone on|off] [--recovery-codes on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE] [--events on|off] [--passkeys on|off] [--passkey-rp-id DOMAIN|none] [--brand-name NAME] [--brand-color #RRGGBB] [--brand-logo-url URL] [--captcha turnstile|hcaptcha|off --captcha-site-key KEY --captcha-secret-stdin] [--activity-retention DAYS|forever] [--sms twilio|twilio_verify|messagebird|textlocal|vonage|off --sms-account ID --sms-sender SENDER --sms-secret-stdin] [--sms-countries CODES|all] [--sso on|off] [--anonymous on|off] [--anonymous-retention DAYS|forever] [--identity-linking on|off] [--self-deletion on|off] [--org-claims on|off] [--signup-domains DOMAINS|any] [--blocked-domains DOMAINS|none] [--block-disposable on|off] [--signup-access open|invite|waitlist] [--impersonation on|off] [--web3 ethereum,solana|off] [--session-max-age DURATION|off] [--session-idle DURATION|off] [--single-session on|off] [--org-domains on|off] [--service-accounts on|off] [--new-device-alerts on|off] [--messages-per-recipient N|default] [--messages-per-network N|off] [--security-log-days N|default] [--oauth-server on|off] [--oauth-registration on|off] [--org-sso on|off]"
 	authProvidersUsage = "usage: gregale auth providers list NAME | gregale auth providers enable NAME PROVIDER --client-id ID [--client-secret-stdin] [--url URL] | gregale auth providers disable NAME PROVIDER"
 )
 
@@ -79,6 +79,7 @@ func cmdAuthConfig(args []string) int {
 	serviceAccounts := fs.String("service-accounts", "", "on or off: let organizations make service accounts that get tokens with the client-credentials grant")
 	newDeviceAlerts := fs.String("new-device-alerts", "", "on or off: email people when their account signs in from a new network and device (needs an email provider)")
 	messagesPerRecipient := fs.String("messages-per-recipient", "", fmt.Sprintf("sign-in codes, links and resets one address or number may be sent an hour (1-%d), or default (%d)", api.AuthMessagesPerRecipientMax, api.AuthMessagesPerRecipientDefault))
+	securityLogDays := fs.String("security-log-days", "", fmt.Sprintf("days to keep security events: wrong passwords, holds, message limits, new-device alerts (1-%d), or default (%d)", api.AuthSecurityLogMaxDays, api.AuthSecurityLogDaysDefault))
 	messagesPerNetwork := fs.String("messages-per-network", "", fmt.Sprintf("messages one network may ask for an hour (1-%d), or off (the default; an app that sends from its own server asks from one network)", api.AuthMessagesPerNetworkMax))
 	sms := authSMSFlags{
 		provider:  fs.String("sms", "", "phone sign-in by text message through your own SMS account: twilio, twilio_verify, messagebird, textlocal, vonage, or off"),
@@ -176,6 +177,17 @@ func cmdAuthConfig(args []string) int {
 			return printErr("Invalid Auth settings", err)
 		}
 		*target.field = &count
+	}
+	if given["security-log-days"] {
+		days := 0
+		if *securityLogDays != "default" {
+			n, err := strconv.Atoi(*securityLogDays)
+			if err != nil || n < 1 {
+				return printErr("Invalid Auth settings", errors.New("--security-log-days must be a number of days or default"))
+			}
+			days = n
+		}
+		change.SecurityLogDays = &days
 	}
 	if change.SessionMaxAgeMinutes != nil && change.SessionIdleMinutes != nil && *change.SessionMaxAgeMinutes > 0 && *change.SessionIdleMinutes > *change.SessionMaxAgeMinutes {
 		PrintWarn(osStderr, "the idle limit is longer than the maximum age, so it has no effect")
@@ -775,7 +787,11 @@ func authSecuritySummary(settings authPublicSettings) string {
 	if s.MessagesPerNetwork != nil {
 		network = fmt.Sprintf("%d per network", *s.MessagesPerNetwork)
 	}
-	return fmt.Sprintf("%s; at most %d messages an hour per recipient, %s", alerts, s.MessagesPerRecipient, network)
+	summary := fmt.Sprintf("%s; at most %d messages an hour per recipient, %s", alerts, s.MessagesPerRecipient, network)
+	if s.LogDays != nil {
+		summary += fmt.Sprintf("; security events kept %d days", *s.LogDays)
+	}
+	return summary
 }
 
 // authServiceAccountsSummary says whether organizations may make service

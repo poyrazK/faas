@@ -1587,9 +1587,36 @@ SQL keywords (942350), with no change on the customer's side; and
 account after checking its `observe` body detections; retire it with
 `edge_waf_strict_inspection`.
 
-Criterion W1 (in-path p95 at most 2 ms) was measured on requests without a
-body; it must be measured again with bodies on the 4-vCPU Linux test host
-before the flag is widened past test accounts.
+**Addendum (2026-11-28): at most 6 body fields.** Criterion W1 (in-path
+p95 at most 2 ms at 100-500 req/s) was measured with bodies on the 4-vCPU
+EC2 test host (`TestEdgeWAFInlineLoad_E2E` with `FAAS_E2E_WAF_LOAD_BODY=1`:
+JSON of 10-40 fields, an 8 KiB upload, form posts and body-only attacks;
+two passes each, interleaved, runs with other work on the host discarded).
+The 2 KiB prefix alone failed it: p95 4.8 / 5.0-6.8 / 8.3-8.9 ms at
+100 / 250 / 500 req/s (no bodies: 1.35-1.41 ms), and 512 B or 1 KiB did not
+fix it (2.7-3.7 and 4.6-6.8 ms). A profile showed why: CRS runs each body
+rule once per parsed field, and Coraza 3.8.1 copies the whole argument list
+for every rule (`collections.Map.FindAll`, 65% of a check's allocations),
+so the cost grows with fields, not bytes. The in-path check therefore also
+stops after `api.EdgeWAFMaxInlineBodyFields` (6) JSON leaf values or form
+pairs (`boundBodyFields`; other types are one argument to CRS). Coraza's
+`SecArgumentsLimit` is not used: it caps query arguments too, which would
+let padding hide a URL attack. Measured p95 by field cap at 100 / 250 /
+500 req/s:
+
+| Cap | 100 req/s | 250 req/s | 500 req/s |
+|---|---|---|---|
+| 16 fields | 2.87 ms | 2.89-2.92 ms | 3.83-4.12 ms |
+| 8 fields | 1.81-1.87 ms | 1.87-1.90 ms | 2.28-2.48 ms |
+| 6 fields | 1.48 ms | 1.48 ms | 1.88-1.97 ms |
+| 4 fields | 1.46-1.47 ms | 1.44-1.46 ms | 1.58-1.68 ms |
+
+With 6 fields W1 passes with no check skipped; gatewayd-internal CPU per
+request rises from about 2.3 to 3.5 ms at 100 req/s. An attack past the
+sixth field (or past 2 KiB) passes the in-path check and is still scored
+and reported by the sampled check. Caching Coraza's argument lists per
+phase would cut about 30% of a body check's CPU and could raise the cap
+later.
 
 Tests: `TestCheckInline` (XSS and SQLi in a JSON body, a benign body, body
 headers without bytes), `TestCheckInlineBoundsBody`,
