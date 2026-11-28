@@ -3413,25 +3413,14 @@ func TestPlanOpenAPIDocConstants(t *testing.T) {
 }
 
 // TestFullRootfsAllowedPlans_PlanMembership (M-3 commit 9 / ADR-141
-// §Decision 2). PlanFree must be absent; Hobby/Pro/Scale must be
-// present. Closed-set posture mirrors PlanMeetsMinimumPlan.
+// §Decision 2; ADR-147 amendment 2026-11-28). Every plan, Free
+// included, may auto-dispatch. Closed-set posture mirrors
+// PlanMeetsMinimumPlan.
 func TestFullRootfsAllowedPlans_PlanMembership(t *testing.T) {
-	for _, p := range FullRootfsAllowedPlans {
-		if p == PlanFree {
-			t.Errorf("FullRootfsAllowedPlans must NOT include PlanFree (no auto-dispatch on Free)")
+	for _, p := range []Plan{PlanFree, PlanHobby, PlanPro, PlanScale} {
+		if !PlanMeetsFullRootfs(p) {
+			t.Errorf("PlanMeetsFullRootfs(%s) = false; want true", p)
 		}
-	}
-	if !PlanMeetsFullRootfs(PlanHobby) {
-		t.Errorf("PlanMeetsFullRootfs(PlanHobby) = false; want true")
-	}
-	if !PlanMeetsFullRootfs(PlanPro) {
-		t.Errorf("PlanMeetsFullRootfs(PlanPro) = false; want true")
-	}
-	if !PlanMeetsFullRootfs(PlanScale) {
-		t.Errorf("PlanMeetsFullRootfs(PlanScale) = false; want true")
-	}
-	if PlanMeetsFullRootfs(PlanFree) {
-		t.Errorf("PlanMeetsFullRootfs(PlanFree) = true; want false (Free has no auto-dispatch)")
 	}
 	if PlanMeetsFullRootfs(Plan("unknown")) {
 		t.Errorf("PlanMeetsFullRootfs(unknown) = true; want false (closed-set)")
@@ -3439,14 +3428,14 @@ func TestFullRootfsAllowedPlans_PlanMembership(t *testing.T) {
 }
 
 // TestUserUIDOverrideMax_PerPlan (M-3 commit 9 / ADR-142 §Decision 4).
-// Hobby 16 / Pro 64 / Scale 256. Free is 0 (Free cannot auto-dispatch).
-// Monotonic ladder: Hobby ≤ Pro ≤ Scale.
+// Free 16 / Hobby 16 / Pro 64 / Scale 256 (Free since the ADR-147
+// amendment 2026-11-28). Monotonic ladder: Free ≤ Hobby ≤ Pro ≤ Scale.
 func TestUserUIDOverrideMax_PerPlan(t *testing.T) {
 	cases := []struct {
 		plan Plan
 		want int
 	}{
-		{PlanFree, 0},
+		{PlanFree, 16},
 		{PlanHobby, 16},
 		{PlanPro, 64},
 		{PlanScale, 256},
@@ -3457,20 +3446,22 @@ func TestUserUIDOverrideMax_PerPlan(t *testing.T) {
 		}
 	}
 	// Monotonic ladder.
-	if !(UserUIDOverrideMax[PlanHobby] <= UserUIDOverrideMax[PlanPro] &&
+	if !(UserUIDOverrideMax[PlanFree] <= UserUIDOverrideMax[PlanHobby] &&
+		UserUIDOverrideMax[PlanHobby] <= UserUIDOverrideMax[PlanPro] &&
 		UserUIDOverrideMax[PlanPro] <= UserUIDOverrideMax[PlanScale]) {
 		t.Errorf("UserUIDOverrideMax is not monotonic Hobby ≤ Pro ≤ Scale")
 	}
 }
 
 // TestMaxFullRootfsLayerBytes_PerPlan (M-3 commit 9 / ADR-141
-// §Decision 5). Hobby 256 MB / Pro 1 GB / Scale 4 GB. Closed set:
-// unknown plan → zero value.
+// §Decision 5). Free 256 MB / Hobby 256 MB / Pro 1 GB / Scale 4 GB.
+// Closed set: unknown plan → zero value.
 func TestMaxFullRootfsLayerBytes_PerPlan(t *testing.T) {
 	cases := []struct {
 		plan Plan
 		want int64
 	}{
+		{PlanFree, 256 << 20},
 		{PlanHobby, 256 << 20},
 		{PlanPro, 1 << 30},
 		{PlanScale, 4 << 30},
@@ -3484,13 +3475,20 @@ func TestMaxFullRootfsLayerBytes_PerPlan(t *testing.T) {
 	_ = MaxFullRootfsLayerBytes[Plan("unknown")]
 }
 
-// TestFullRootfsAllowAutoDefault_PerPlan (M-3 commit 9 / ADR-141
-// §Decision 2). Free → false (no auto-dispatch). Paid plans → true.
-func TestFullRootfsAllowAutoDefault_PerPlan(t *testing.T) {
-	if FullRootfsAllowAutoDefault[PlanFree] {
-		t.Errorf("FullRootfsAllowAutoDefault[PlanFree] = true; want false")
+// TestFreeFullRootfsAddsNoDisk pins the ADR-147 amendment's cost
+// argument: Free's full-rootfs ceiling is its app-layer cap, so a
+// self-contained Free deployment uses no more disk than a two-drive one.
+func TestFreeFullRootfsAddsNoDisk(t *testing.T) {
+	appLayer := int64(MustLimitsFor(PlanFree).AppLayerMaxMB) << 20
+	if got := MaxFullRootfsLayerBytes[PlanFree]; got <= 0 || got > appLayer {
+		t.Fatalf("MaxFullRootfsLayerBytes[free] = %d; want 0 < cap <= app-layer cap %d", got, appLayer)
 	}
-	for _, p := range []Plan{PlanHobby, PlanPro, PlanScale} {
+}
+
+// TestFullRootfsAllowAutoDefault_PerPlan (M-3 commit 9 / ADR-141
+// §Decision 2; ADR-147 amendment 2026-11-28). Every plan → true.
+func TestFullRootfsAllowAutoDefault_PerPlan(t *testing.T) {
+	for _, p := range []Plan{PlanFree, PlanHobby, PlanPro, PlanScale} {
 		if !FullRootfsAllowAutoDefault[p] {
 			t.Errorf("FullRootfsAllowAutoDefault[%s] = false; want true", p)
 		}

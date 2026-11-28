@@ -43,7 +43,10 @@ function claimsFromToken(token, user) {
   let payload
   try { payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8')) } catch { throw new HTTPError(401, 'not_authenticated') }
   if (payload.sub !== user.id || typeof payload.session_id !== 'string') throw new HTTPError(401, 'not_authenticated')
-  return { sub: user.id, session_id: payload.session_id, ...(payload.client_id ? { client_id: String(payload.client_id) } : {}) }
+  // An impersonated session keeps its act claim, so routes can refuse what
+  // such a session may not do (team.mjs).
+  const act = typeof payload.act?.sub === 'string' && payload.act.sub.startsWith('admin:') ? { act: { sub: payload.act.sub } } : {}
+  return { sub: user.id, session_id: payload.session_id, ...(payload.client_id ? { client_id: String(payload.client_id) } : {}), ...act }
 }
 
 // authenticate asks GoTrue, on loopback, to verify the bearer token.
@@ -165,7 +168,7 @@ export function auditReply(rows, limit) {
 
 // routeOrganization serves /orgs/<id>/..., or returns null for a path it
 // does not know.
-async function routeOrganization({ run, rows, services, invitations }, org, method, parts, body) {
+async function routeOrganization({ run, rows, services, invitations, claims }, org, method, parts, body) {
   if (parts[2] === 'service-accounts') {
     if (services.serviceAccounts !== true) throw new HTTPError(404, 'not_found')
     return serviceAccountsRoute(rows, org, method, parts.slice(3), body)
@@ -181,7 +184,7 @@ async function routeOrganization({ run, rows, services, invitations }, org, meth
   }
   if (parts[2] === 'team' || parts[2] === 'team-actions') {
     if (services.teamEnabled !== true) throw new HTTPError(404, 'not_found')
-    return routeTeam({ run, method, parts, body, invitations, query: services.query })
+    return routeTeam({ run, method, parts, body, invitations, query: services.query, impersonator: claims.act?.sub ?? null })
   }
   if (parts[2] === 'domains' || parts[2] === 'sso') {
     // Domains come with self-service SSO, or alone with AUTH_ORG_DOMAINS.
@@ -251,7 +254,7 @@ export async function route(pool, claims, method, path, body, services = {}) {
   if (parts[0] === 'orgs' && parts.length >= 2) {
     const org = requireUUID(parts[1])
     try {
-      const routed = await routeOrganization({ run, rows, services, invitations }, org, method, parts, body)
+      const routed = await routeOrganization({ run, rows, services, invitations, claims }, org, method, parts, body)
       if (routed) return routed
     } catch (err) {
       // A member refused because the organization requires a second factor

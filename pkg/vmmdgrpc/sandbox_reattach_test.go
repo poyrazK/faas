@@ -24,9 +24,16 @@ import (
 
 func newReattachClient(t *testing.T, vmm *sandboxRunVMM, grace time.Duration) vmmdpb.VmmdClient {
 	t.Helper()
+	cli, _ := newReattachServer(t, vmm, grace)
+	return cli
+}
+
+func newReattachServer(t *testing.T, vmm *sandboxRunVMM, grace time.Duration) (vmmdpb.VmmdClient, *vmmdgrpc.Server) {
+	t.Helper()
 	srv := grpc.NewServer()
-	vmmdgrpc.New(vmm, wire.NewOpsMetrics("vmmd_sandbox_reattach_test"), "1.0.0", nil).WithAgentRuns(true).
-		WithSandboxReattachGrace(grace).Register(srv)
+	impl := vmmdgrpc.New(vmm, wire.NewOpsMetrics("vmmd_sandbox_reattach_test"), "1.0.0", nil).WithAgentRuns(true).
+		WithSandboxReattachGrace(grace)
+	impl.Register(srv)
 	lis := bufconn.Listen(1 << 20)
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(func() { srv.Stop(); _ = lis.Close() })
@@ -36,7 +43,7 @@ func newReattachClient(t *testing.T, vmm *sandboxRunVMM, grace time.Duration) vm
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-	return vmmdpb.NewVmmdClient(conn)
+	return vmmdpb.NewVmmdClient(conn), impl
 }
 
 // openSandbox sends start on a stream it can cancel and returns its first
@@ -123,4 +130,58 @@ func TestSandboxNotDetachableEndsWithItsStream(t *testing.T) {
 	}
 	cancel()
 	waitUntil(t, func() bool { _, destroyed, _, _ := vmm.state(); return len(destroyed) == 1 })
+}
+
+// A new start of the instance replaces a detached VM no reattach came for:
+// the old one is destroyed first, and its grace never touches the new one.
+func TestSandboxRestartReplacesTheDetachedVM(t *testing.T) {
+	vmm := newSandboxRunVMM()
+	cli, srv := newReattachServer(t, vmm, 300*time.Millisecond)
+	_, cancel, _, err := openSandbox(t, cli, detachableStart())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	waitUntil(t, func() bool { return srv.DetachedSandboxes() == 1 })
+	stream, _, ev, err := openSandbox(t, cli, detachableStart())
+	if err != nil || ev.GetBooted() == nil {
+		t.Fatalf("second boot = %v %v", ev, err)
+	}
+	if woken, destroyed, _, _ := vmm.state(); woken != 2 || len(destroyed) != 1 {
+		t.Fatalf("after the second boot: %d woken, destroyed %v", woken, destroyed)
+	}
+	// Past the first VM's grace the second still runs.
+	time.Sleep(500 * time.Millisecond)
+	if _, destroyed, _, _ := vmm.state(); len(destroyed) != 1 {
+		t.Fatalf("the old grace destroyed the new VM: %v", destroyed)
+	}
+	if err := stream.Send(&vmmdpb.RunSandboxRequest{Frame: &vmmdpb.RunSandboxRequest_Close{Close: &vmmdpb.RunSandboxClose{}}}); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, func() bool { _, destroyed, _, _ := vmm.state(); return len(destroyed) == 2 })
+}
+
+// A stopping vmmd destroys the VMs it kept and keeps no more: sessions
+// are not adopted, so nothing could reattach to them.
+func TestStoppingVMMDKeepsNoDetachedSandbox(t *testing.T) {
+	vmm := newSandboxRunVMM()
+	cli, srv := newReattachServer(t, vmm, time.Minute)
+	_, cancel, _, err := openSandbox(t, cli, detachableStart())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	waitUntil(t, func() bool { return srv.DetachedSandboxes() == 1 })
+	if n := srv.StopDetachingSandboxes(context.Background()); n != 1 {
+		t.Fatalf("destroyed %d detached VMs, want 1", n)
+	}
+	if _, destroyed, _, _ := vmm.state(); len(destroyed) != 1 {
+		t.Fatalf("destroyed %v", destroyed)
+	}
+	_, cancel, _, err = openSandbox(t, cli, detachableStart())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	waitUntil(t, func() bool { _, destroyed, _, _ := vmm.state(); return len(destroyed) == 2 })
 }

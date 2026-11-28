@@ -2,6 +2,32 @@ package api
 
 import "testing"
 
+// Prod 2026-11-28: a Free app layer over the plan cap and a GitHub branch
+// that moved past the deploying commit counted as platform failures and,
+// from two signups, degraded the public status page. Refusals of what the
+// customer shipped are theirs; codes the platform can also cause are not.
+func TestIsCustomerCausedDeploymentFailure(t *testing.T) {
+	for _, tc := range []struct {
+		code string
+		want bool
+	}{
+		{CodeAppStartupCrash, true},
+		{CodeAppNotListening, true},
+		{CodeAppLayerTooBig, true},
+		{CodeSourceRefStale, true},
+		{CodeSourceRefUnavailable, false},
+		{CodeImageManifestInvalid, false},
+		{CodeDeploymentSmokeFailed, false},
+		{CodeReleaseCommandFailed, false},
+		{"internal", false},
+		{"", false},
+	} {
+		if got := IsCustomerCausedDeploymentFailure(tc.code); got != tc.want {
+			t.Errorf("IsCustomerCausedDeploymentFailure(%q) = %v, want %v", tc.code, got, tc.want)
+		}
+	}
+}
+
 // Prod 2026-11-23: `release: nmp run migrate` exited 127 and counted as a
 // platform failure; only the platform failing to start the command or a
 // missing platform runtime tool should.

@@ -69,6 +69,7 @@ export const emailTypes = Object.freeze({
   security_notice: { placeholders: ['app', 'email', 'event'], subject: '{{event}}', body: 'This is a security notice from {{app}}. If this was not you, reset your password.' },
   organization_invitation: { placeholders: ['app', 'email', 'org', 'link'], subject: 'Join {{org}} on {{app}}', body: 'You have been invited to join {{org}} on {{app}}.\n\nSign in or create an account with this email address to accept.' },
   signup_approved: { placeholders: ['app', 'email', 'link'], subject: 'You can sign up for {{app}} now', body: 'Good news: {{email}} may now create an account on {{app}}.' },
+  new_device: { placeholders: ['app', 'email', 'device', 'network', 'time'], subject: 'New sign-in to {{app}}', body: 'Your {{app}} account {{email}} was signed in to from a device and network it has not used recently.\n\nDevice: {{device}}\nNetwork: {{network}}\nTime: {{time}}\n\nIf this was you, there is nothing to do. If it was not, reset your password and sign out of your other sessions.' },
 })
 
 export const placeholder = /\{\{\s*([a-z_]+)\s*\}\}/g
