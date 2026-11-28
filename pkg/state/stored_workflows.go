@@ -22,14 +22,21 @@ type StoredWorkflow struct {
 	PublishedVersion      int64
 	Enabled               bool
 	UpdatedAt             time.Time
+	// EnvironmentID is the stage that owns the workflow; "" is production
+	// (ADR-20261104120000). A stage runs its manual and schedule workflows on
+	// its own deployment; any other stage workflow stays disabled.
+	EnvironmentID string
 }
 
 // StoredWorkflowRevision is an immutable snapshot created whenever a dashboard
 // stored workflow is published. LegacySnapshot rows were seeded from the latest
 // publication present when revision history was introduced.
 type StoredWorkflowRevision struct {
-	CheckEvidence        json.RawMessage
-	AppID                string
+	CheckEvidence json.RawMessage
+	AppID         string
+	// EnvironmentID is the environment whose workflow published it ("" is
+	// production).
+	EnvironmentID        string
 	Name                 string
 	Version              int64
 	Definition           json.RawMessage
@@ -42,6 +49,8 @@ type StoredWorkflowRevision struct {
 type StoredWorkflowRevisionListOptions struct {
 	Limit  int
 	Offset int
+	// EnvironmentID lists that environment's revisions ("" is production).
+	EnvironmentID string
 }
 
 const maxStoredWorkflowRevisionOffset = int(^uint32(0) >> 1)
@@ -62,6 +71,9 @@ type StoredWorkflowMutation struct {
 	RestoreManifest  bool
 	ActorAccountID   string
 	ActorAPIKeyID    string
+	// EnvironmentID names the stage the caller addresses; "" is production.
+	// A workflow is reached only through its own environment.
+	EnvironmentID string
 }
 
 type StoredWorkflowStore interface {
@@ -70,6 +82,12 @@ type StoredWorkflowStore interface {
 	GetStoredWorkflowRevision(context.Context, string, string, int64) (StoredWorkflowRevision, error)
 	MutateStoredWorkflow(context.Context, string, string, StoredWorkflowMutation) (StoredWorkflow, error)
 	EffectiveWorkflowDefinitions(context.Context, string, json.RawMessage) (json.RawMessage, error)
+	// ListStageStoredWorkflows reads one stage's workflows; ListStoredWorkflows
+	// reads production's.
+	ListStageStoredWorkflows(ctx context.Context, appID, environmentID string) ([]StoredWorkflow, error)
+	// StoredWorkflowEnvironment reports which environment holds the app's
+	// workflow name ("" is production), or ErrNotFound.
+	StoredWorkflowEnvironment(ctx context.Context, appID, name string) (string, error)
 }
 
 var (
@@ -77,6 +95,13 @@ var (
 	ErrStoredWorkflowOwnershipConflict = errors.New("stored workflow: explicit confirmation is required to change YAML ownership")
 	ErrStoredWorkflowInvalid           = errors.New("stored workflow: invalid definition")
 	ErrStoredWorkflowRevisionNotFound  = errors.New("stored workflow: revision not found")
+	// ErrStoredWorkflowNameInOtherEnvironment refuses a name another
+	// environment of the app holds: names stay unique per app until the
+	// contract release (ADR-20261104120000).
+	ErrStoredWorkflowNameInOtherEnvironment = errors.New("stored workflow: another environment of the app uses this name")
+	// ErrStoredWorkflowStageDisabled refuses enabling a stage's workflow
+	// whose trigger a stage does not run yet (only manual and schedule).
+	ErrStoredWorkflowStageDisabled = errors.New("stored workflow: a stage runs only manual and schedule workflows")
 )
 
 type StoredWorkflowQuotaError struct {
@@ -140,11 +165,14 @@ func mergeStoredWorkflowDefinitions(manifest json.RawMessage, records []StoredWo
 	return json.Marshal(definitions)
 }
 
-func mutateStoredWorkflow(appID, name string, mutation StoredWorkflowMutation, previous *StoredWorkflow, manifest json.RawMessage, records []StoredWorkflow, plan api.Plan, hasDeployment bool) (StoredWorkflow, error) {
+// otherNames are the app's stored workflows in its other environments: the
+// plan's per-app limit counts every environment (ADR-20261104120000).
+func mutateStoredWorkflow(appID, name string, mutation StoredWorkflowMutation, previous *StoredWorkflow, manifest json.RawMessage, records []StoredWorkflow, otherNames []string, plan api.Plan, hasDeployment bool) (StoredWorkflow, error) {
 	if name == "" || strings.TrimSpace(name) != name || strings.ContainsAny(name, "/\\\x00") || len(name) > api.StoredWorkflowNameMaxBytes || mutation.ExpectedVersion < 0 {
 		return StoredWorkflow{}, ErrStoredWorkflowInvalid
 	}
-	current := StoredWorkflow{AppID: appID, Name: name, Enabled: true}
+	stage := mutation.EnvironmentID != ""
+	current := StoredWorkflow{AppID: appID, Name: name, Enabled: !stage, EnvironmentID: mutation.EnvironmentID}
 	if previous != nil {
 		current = copyStoredWorkflow(*previous)
 	}
@@ -167,6 +195,9 @@ func mutateStoredWorkflow(appID, name string, mutation StoredWorkflowMutation, p
 	}
 	for _, record := range records {
 		names[record.Name] = true
+	}
+	for _, other := range otherNames {
+		names[other] = true
 	}
 	if mutation.Action == "save" && len(names) > plan.WorkflowMaxPerApp() {
 		return StoredWorkflow{}, &StoredWorkflowQuotaError{plan, plan.WorkflowMaxPerApp(), len(names)}
@@ -224,6 +255,9 @@ func mutateStoredWorkflow(appID, name string, mutation StoredWorkflowMutation, p
 		if current.PublishedVersion == 0 {
 			current.Enabled = definition.Trigger == nil || definition.Trigger.Enabled == nil || *definition.Trigger.Enabled
 		}
+		if stage && !StageWorkflowRunnable(definition) {
+			current.Enabled = false
+		}
 		current.Published = cloneWorkflowJSON(current.Draft)
 		current.PublishedVersion = current.Version + 1
 	case "enable":
@@ -237,6 +271,9 @@ func mutateStoredWorkflow(appID, name string, mutation StoredWorkflowMutation, p
 			var definition api.WorkflowSpec
 			if err := json.Unmarshal(current.Published, &definition); err != nil {
 				return StoredWorkflow{}, ErrStoredWorkflowInvalid
+			}
+			if stage && !StageWorkflowRunnable(definition) {
+				return StoredWorkflow{}, ErrStoredWorkflowStageDisabled
 			}
 			if _, err := api.ValidateWorkflowDAG(definition, plan); err != nil {
 				return StoredWorkflow{}, fmt.Errorf("%w: %w", ErrStoredWorkflowInvalid, err)
@@ -256,4 +293,11 @@ func mutateStoredWorkflow(appID, name string, mutation StoredWorkflowMutation, p
 	current.Version++
 	current.UpdatedAt = time.Now().UTC()
 	return current, nil
+}
+
+// StageWorkflowRunnable reports whether a stage runs the definition: manual
+// starts and schedules, on the stage's own deployment (ADR-20261104120000,
+// stored_workflows_environment_enabled_chk).
+func StageWorkflowRunnable(definition api.WorkflowSpec) bool {
+	return definition.Trigger == nil || definition.Trigger.Type == "manual" || definition.Trigger.Type == "schedule"
 }

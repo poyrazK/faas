@@ -1480,6 +1480,7 @@ export type { StoredWorkflowCheckEvidence } from './StoredWorkflowCheckEvidence.
 export type { StoredWorkflowCheckExclusion } from './StoredWorkflowCheckExclusion.js';
 export type { StoredWorkflowCheckExpectation } from './StoredWorkflowCheckExpectation.js';
 export type { StoredWorkflowCheckScenario } from './StoredWorkflowCheckScenario.js';
+export type { StoredWorkflowEnvironment } from './StoredWorkflowEnvironment.js';
 export type { StoredWorkflowFailurePolicy } from './StoredWorkflowFailurePolicy.js';
 export type { StoredWorkflowFailurePolicyResponse } from './StoredWorkflowFailurePolicyResponse.js';
 export type { StoredWorkflowFailureTransition } from './StoredWorkflowFailureTransition.js';

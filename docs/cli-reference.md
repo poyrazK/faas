@@ -7324,21 +7324,23 @@ Create a local stored workflow starter with simulation samples
 
 List stored workflow versions and ownership for an app
 
-`gregale workflow stored list --app <SLUG>`
+`gregale workflow stored list --app <SLUG> [--env <ENV>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug | required |
+| `--env <ENV>` | project environment that holds the workflow (default production) (also --environment) |  |
 
 #### workflow stored get
 
 Inspect stored workflow state or export a definition
 
-`gregale workflow stored get --app <SLUG> --name <NAME> [--definition-out <PATH>] [--published]`
+`gregale workflow stored get --app <SLUG> [--env <ENV>] --name <NAME> [--definition-out <PATH>] [--published]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug | required |
+| `--env <ENV>` | project environment that holds the workflow (default production) (also --environment) |  |
 | `--name <NAME>` | stored workflow name | required |
 | `--definition-out <PATH>` | export the selected definition as JSON to a new file |  |
 | `--published` | export the published definition instead of the draft |  |
@@ -7437,11 +7439,12 @@ Reports each run&#39;s outcome.
 
 Stop future scheduled and event-triggered admissions
 
-`gregale workflow stored pause --app <SLUG> --name <NAME> --expected-version <N>`
+`gregale workflow stored pause --app <SLUG> [--env <ENV>] --name <NAME> --expected-version <N>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug | required |
+| `--env <ENV>` | project environment that holds the workflow (default production) (also --environment) |  |
 | `--name <NAME>` | stored workflow name | required |
 | `--expected-version <N>` | current stored workflow version | required |
 
@@ -7449,11 +7452,12 @@ Stop future scheduled and event-triggered admissions
 
 Resume automatic scheduled and event-triggered admissions
 
-`gregale workflow stored resume --app <SLUG> --name <NAME> --expected-version <N>`
+`gregale workflow stored resume --app <SLUG> [--env <ENV>] --name <NAME> --expected-version <N>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug | required |
+| `--env <ENV>` | project environment that holds the workflow (default production) (also --environment) |  |
 | `--name <NAME>` | stored workflow name | required |
 | `--expected-version <N>` | current stored workflow version | required |
 
@@ -7467,11 +7471,12 @@ Inspect immutable published snapshots
 
 List published revisions for a stored workflow
 
-`gregale workflow stored revisions list --app <SLUG> --name <NAME> [--limit <N>] [--offset <N>]`
+`gregale workflow stored revisions list --app <SLUG> [--env <ENV>] --name <NAME> [--limit <N>] [--offset <N>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug | required |
+| `--env <ENV>` | project environment that holds the workflow (default production) (also --environment) |  |
 | `--name <NAME>` | stored workflow name | required |
 | `--limit <N>` | page size (1..100, default 50) |  |
 | `--offset <N>` | number of revisions to skip |  |
@@ -7480,11 +7485,12 @@ List published revisions for a stored workflow
 
 Inspect a revision or export its definition
 
-`gregale workflow stored revisions show --app <SLUG> --name <NAME> --revision <N> [--definition-out <PATH>]`
+`gregale workflow stored revisions show --app <SLUG> [--env <ENV>] --name <NAME> --revision <N> [--definition-out <PATH>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug | required |
+| `--env <ENV>` | project environment that holds the workflow (default production) (also --environment) |  |
 | `--name <NAME>` | stored workflow name | required |
 | `--revision <N>` | published revision number | required |
 | `--definition-out <PATH>` | export the definition as JSON to a new file |  |
@@ -7506,11 +7512,12 @@ Restore a published revision as a draft
 
 Delete a stored workflow using its current version
 
-`gregale workflow stored delete --app <SLUG> --name <NAME> --expected-version <N> --yes [--restore-manifest]`
+`gregale workflow stored delete --app <SLUG> [--env <ENV>] --name <NAME> --expected-version <N> --yes [--restore-manifest]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug | required |
+| `--env <ENV>` | project environment that holds the workflow (default production) (also --environment) |  |
 | `--name <NAME>` | stored workflow name | required |
 | `--expected-version <N>` | current stored workflow version | required |
 | `--yes` | required explicit confirmation of stored workflow deletion | required |
@@ -7551,11 +7558,12 @@ Does not run steps.
 
 Save a stored workflow definition as a draft
 
-`gregale workflow stored apply --app <SLUG> --file <PATH> --expected-version <N>`
+`gregale workflow stored apply --app <SLUG> [--env <ENV>] --file <PATH> --expected-version <N>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug | required |
+| `--env <ENV>` | project environment that holds the workflow (default production) (also --environment) |  |
 | `--file <PATH>` | YAML or JSON definition file | required |
 | `--expected-version <N>` | current version; use 0 for a new draft | required |
 
@@ -7563,11 +7571,12 @@ Save a stored workflow definition as a draft
 
 Publish the current stored workflow draft
 
-`gregale workflow stored publish --app <SLUG> --name <NAME> --expected-version <N> [--take-over-manifest] [--scenarios <PATH>] [--require-coverage]`
+`gregale workflow stored publish --app <SLUG> [--env <ENV>] --name <NAME> --expected-version <N> [--take-over-manifest] [--scenarios <PATH>] [--require-coverage]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug | required |
+| `--env <ENV>` | project environment that holds the workflow (default production) (also --environment) |  |
 | `--name <NAME>` | stored workflow name | required |
 | `--expected-version <N>` | current version of the draft | required |
 | `--take-over-manifest` | explicitly take over YAML ownership |  |
@@ -7795,7 +7804,7 @@ gregale workflow schedule simulate --app billing --workflow nightly --at 2027-03
 
 Trigger a new workflow run
 
-`gregale workflow run [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--app <slug>] [--input <JSON>] [--input-file <PATH|->] [--idempotency-key <KEY>] <workflow-name>`
+`gregale workflow run [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--app <slug>] [--input <JSON>] [--input-file <PATH|->] [--idempotency-key <KEY>] [--env <ENV>] <workflow-name>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -7806,6 +7815,7 @@ Trigger a new workflow run
 | `--input <JSON>` | JSON input payload (default {}; excludes --input-file) |  |
 | `--input-file <PATH|->` | read one JSON value from a file, or - for stdin; maximum 1 MiB; excludes --input |  |
 | `--idempotency-key <KEY>` | stable key for retrying an uncertain run start |  |
+| `--env <ENV>` | project environment whose live deployment runs it (default production) (also --environment) |  |
 
 Examples:
 
