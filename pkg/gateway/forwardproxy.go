@@ -76,8 +76,11 @@ func WithSyntheticInvocation(ctx context.Context) context.Context {
 // (x-gregale-webhook-*). A public request carrying one has it dropped. The
 // webhook prefix was not dropped, so any caller could send
 // `X-Gregale-Webhook-Provider: stripe` to an app (production-us 2026-11-07).
+// The batched trigger marker (X-Gregale-Batch-Size) was missing too, and the
+// SDKs take a request carrying it for a broker batch (prod hunt r80).
 func isPlatformDeliveryHeader(name string) bool {
-	return api.IsReservedOperationHeader(name) || api.HasLowerPrefix(name, "x-gregale-event-") || api.HasLowerPrefix(name, "x-gregale-webhook-")
+	return api.IsReservedOperationHeader(name) || api.HasLowerPrefix(name, "x-gregale-event-") || api.HasLowerPrefix(name, "x-gregale-webhook-") ||
+		strings.EqualFold(name, api.TriggerBatchSizeHeader)
 }
 
 func isSyntheticInvocation(ctx context.Context) bool {

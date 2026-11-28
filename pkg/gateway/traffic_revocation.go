@@ -4,16 +4,27 @@ package gateway
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"maps"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/trafficrevocation"
+	"golang.org/x/time/rate"
 )
+
+// unavailableRefusalLog keeps one unavailable refusal a second. Prod hunt
+// r80 (2026-11-28): every stored-workflow run's first step got
+// traffic_revocation_unavailable and no host logged why, because the
+// gateway's own enrollment checks refused with a bare sentinel.
+var unavailableRefusalLog = rate.Sometimes{Interval: time.Second}
 
 type trafficEnrollmentKey struct{}
 
@@ -102,26 +113,29 @@ func TrafficRevocation(ctx context.Context) error {
 func (e *trafficEnrollment) addBaseline(ctx context.Context, scopes []trafficrevocation.Scope, baseline map[trafficrevocation.Scope]trafficrevocation.State) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.closed || len(scopes) != len(baseline) || len(scopes) > api.TrafficSecurityMaxRequestScopes {
-		return trafficrevocation.ErrUnavailable
+	if e.closed {
+		return fmt.Errorf("%w: request security lifetime already closed", trafficrevocation.ErrUnavailable)
+	}
+	if len(scopes) != len(baseline) || len(scopes) > api.TrafficSecurityMaxRequestScopes {
+		return fmt.Errorf("%w: %d scopes but the preceding hop's snapshot has %d", trafficrevocation.ErrUnavailable, len(scopes), len(baseline))
 	}
 	expected := make(map[trafficrevocation.Scope]trafficrevocation.State, len(scopes))
 	for _, scope := range scopes {
 		id, err := uuid.Parse(scope.ID)
 		if err != nil {
-			return trafficrevocation.ErrUnavailable
+			return fmt.Errorf("%w: %s scope id is not a UUID", trafficrevocation.ErrUnavailable, scope.Kind)
 		}
 		state, exists := baseline[trafficrevocation.Scope{Kind: scope.Kind, ID: id.String()}]
 		if !exists {
-			return trafficrevocation.ErrUnavailable
+			return fmt.Errorf("%w: %s %s is not in the preceding hop's snapshot", trafficrevocation.ErrUnavailable, scope.Kind, id)
 		}
 		expected[scope] = state
 	}
 	if len(expected) != len(baseline) {
-		return trafficrevocation.ErrUnavailable
+		return fmt.Errorf("%w: duplicate scopes against the preceding hop's snapshot", trafficrevocation.ErrUnavailable)
 	}
 	if len(e.scopes) != 0 && !maps.Equal(e.scopes, expected) {
-		return trafficrevocation.ErrUnavailable
+		return fmt.Errorf("%w: nested delivery's snapshot differs from the admitted one", trafficrevocation.ErrUnavailable)
 	}
 	release, err := e.registry.AdmitAt(ctx, expected, e.cancel)
 	if err != nil {
@@ -239,13 +253,13 @@ func (e *trafficEnrollment) add(ctx context.Context, scopes []trafficrevocation.
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.closed {
-		return trafficrevocation.ErrUnavailable
+		return fmt.Errorf("%w: request security lifetime already closed", trafficrevocation.ErrUnavailable)
 	}
 	fresh := make([]trafficrevocation.Scope, 0, len(scopes))
 	seen := make(map[trafficrevocation.Scope]struct{}, len(scopes))
 	for _, scope := range scopes {
 		if scope.ID == "" {
-			return trafficrevocation.ErrUnavailable
+			return fmt.Errorf("%w: %s scope has no id", trafficrevocation.ErrUnavailable, scope.Kind)
 		}
 		if _, exists := e.scopes[scope]; exists {
 			continue
@@ -306,6 +320,12 @@ func trafficRevocationCause(ctx context.Context) error {
 
 func writeTrafficRevocationError(w http.ResponseWriter, r *http.Request, err error) {
 	recordTrafficRefusal(r.Context(), trafficSecurityDecision(err))
+	if errors.Is(err, trafficrevocation.ErrUnavailable) {
+		attrs := []any{"path", logsanitize.Field(r.URL.Path), "request_id", requestIDFrom(r), "synthetic", isSyntheticInvocation(r.Context()), "err", err}
+		unavailableRefusalLog.Do(func() {
+			slog.Default().Warn("traffic security: request refused as unavailable", attrs...)
+		})
+	}
 	// The lifetime is canceled; error delivery gets a separate short allowance.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), api.RequestBudgetErrorWriteTimeout)
 	defer cancel()

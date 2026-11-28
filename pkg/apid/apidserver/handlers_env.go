@@ -311,6 +311,10 @@ func (s *server) setEnv(w http.ResponseWriter, r *http.Request, acct state.Accou
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := overriddenEnvKeyProblem(key); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	app, ok := s.loadApp(w, r, acct, slug)
 	if !ok {
 		return
@@ -947,4 +951,17 @@ func (s *server) deploymentScopeForEnvRow(ctx context.Context, appUUID uuid.UUID
 		return defaultEnvScope, nil
 	}
 	return dep.Scope, nil
+}
+
+// overriddenEnvKeyProblem refuses keys the platform sets at wake. `env set
+// PORT=9999` was accepted and silently ignored: the app still got the
+// platform's PORT (prod hunt r78). Identity keys are dropped by guest-init.
+func overriddenEnvKeyProblem(key string) *api.Problem {
+	if key == "PORT" {
+		return api.ErrEnvVarInvalidKey("PORT is set by Gregale to the port the app must listen on; read $PORT instead of setting it")
+	}
+	if api.IsPlatformIdentityEnvKey(key) {
+		return api.ErrEnvVarInvalidKey(key + " is set by Gregale on every instance and cannot be overridden")
+	}
+	return nil
 }

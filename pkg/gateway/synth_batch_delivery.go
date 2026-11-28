@@ -88,8 +88,8 @@ func (s *SynthServer) dispatchBatchAsOneInvocation(ctx context.Context, req batc
 	defer cancel()
 	inv := state.Invocation{
 		ID: req.InvocationID + "-batch-" + uuid.NewString(), AppID: req.AppID, Source: state.InvocationSource(req.Source),
-		Method: http.MethodPost, Path: "/_triggers/" + req.Source + "/" + req.TriggerID, Payload: encoded,
-		Headers: jsonOrEmpty(map[string]string{"Content-Type": "application/json", "X-Gregale-Batch-Size": strconv.Itoa(len(body.Records))}),
+		Method: http.MethodPost, Path: api.TriggerDeliveryPathPrefix + req.Source + "/" + req.TriggerID, Payload: encoded,
+		Headers: jsonOrEmpty(map[string]string{"Content-Type": "application/json", api.TriggerBatchSizeHeader: strconv.Itoa(len(body.Records))}),
 	}
 	out, statusCode, err := s.invokeWithStatus(invokeCtx, req.AppID, inv)
 	if err != nil {

@@ -19,9 +19,24 @@ package api
 
 import (
 	"encoding/json"
+	"net/url"
 	"slices"
 	"time"
 )
+
+// RedactURLUserinfo replaces the credentials in a URL's userinfo
+// (https://user:pass@host) with "redacted" so a stored webhook target is never
+// shown or audited with them. Webhook targets with userinfo are refused since
+// prod hunt r81 (2026-11-28); rows created before then still carry it. A value
+// that does not parse, or has no userinfo, is returned unchanged.
+func RedactURLUserinfo(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil {
+		return raw
+	}
+	u.User = url.User("redacted")
+	return u.String()
+}
 
 // AppWebhookSecretMaxBytes bounds the plaintext webhook_secret the
 // customer may submit on create / update. 256 mirrors the alert-rule
@@ -590,7 +605,7 @@ func AppWebhookResponseFromRow(r AppWebhookRow) AppWebhookResponse {
 		ID:                        r.ID,
 		AppID:                     r.AppID,
 		AccountID:                 r.AccountID,
-		TargetURL:                 r.TargetURL,
+		TargetURL:                 RedactURLUserinfo(r.TargetURL),
 		WebhookSecretSealedMasked: AppWebhookSecretMasked,
 		EventFilter:               r.EventFilter,
 		RetryPolicy:               r.RetryPolicy,

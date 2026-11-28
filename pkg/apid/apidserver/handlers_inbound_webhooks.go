@@ -13,6 +13,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -76,6 +77,12 @@ func validateInboundWebhookDeliveryPath(deliveryPath string) *api.Problem {
 	}
 	if !strings.HasPrefix(deliveryPath, "/") || len(deliveryPath) > api.InboundWebhookDeliveryPathMaxBytes || strings.ContainsAny(deliveryPath, "?#") {
 		return inboundWebhookProblem(http.StatusBadRequest, "delivery_path must be an absolute path without a query or fragment and must not exceed 256 bytes")
+	}
+	// `//host/x` reads as a host-relative URL and `/../` as a traversal; cron
+	// paths refuse both, so delivery paths do too (prod hunt r78).
+	clean := path.Clean(deliveryPath)
+	if clean != deliveryPath && (clean == "/" || clean+"/" != deliveryPath) || strings.ContainsAny(deliveryPath, " \t\r\n\\") {
+		return inboundWebhookProblem(http.StatusBadRequest, "delivery_path must be a clean path on the app: no //, . or .. segments, spaces or backslashes")
 	}
 	return nil
 }
@@ -470,6 +477,9 @@ func verifyInboundWebhook(_ context.Context, endpoint state.InboundWebhookEndpoi
 		if !api.ValidInboundWebhookEventID(eventID) || !api.ValidInboundWebhookEventType(eventType) {
 			return "", "", inboundWebhookProblem(http.StatusBadRequest, "generic webhooks require a valid event id and event type header")
 		}
+		if problem := genericInboundWebhookTimestampProblem(headers.Get(api.InboundWebhookTimestampHeader), now); problem != nil {
+			return "", "", problem
+		}
 		if !anySecretVerifies(secrets, func(secret string) bool {
 			return verifyGenericInboundWebhookSignature(headers.Get(api.InboundWebhookTimestampHeader), headers.Get(api.InboundWebhookSignatureHeader), eventID, eventType, body, secret, now)
 		}) {
@@ -479,6 +489,25 @@ func verifyInboundWebhook(_ context.Context, endpoint state.InboundWebhookEndpoi
 	default:
 		return "", "", api.ErrCapacity("inbound webhook provider is unavailable")
 	}
+}
+
+// genericInboundWebhookTimestampProblem names a missing, malformed or stale
+// X-Gregale-Timestamp. A delivery signed 10 minutes earlier was told only that
+// its signature did not verify (prod hunt r78). The window is public, so
+// naming it before the signature check reveals nothing.
+func genericInboundWebhookTimestampProblem(value string, now time.Time) *api.Problem {
+	value = strings.TrimSpace(value)
+	seconds, err := strconv.ParseInt(value, 10, 64)
+	if !genericWebhookTimestampPattern.MatchString(value) || err != nil {
+		return api.NewProblem(http.StatusBadRequest, api.CodeInboundWebhookBadSignature, "Invalid webhook timestamp",
+			"the "+api.InboundWebhookTimestampHeader+" header must be the Unix time in seconds when the delivery was signed")
+	}
+	delta := now.Sub(time.Unix(seconds, 0))
+	if delta < -inboundWebhookSignatureTolerance || delta > inboundWebhookSignatureTolerance {
+		return api.NewProblem(http.StatusBadRequest, api.CodeInboundWebhookBadSignature, "Webhook timestamp outside the window",
+			fmt.Sprintf("the %s header is %s from Gregale's clock; it must be within %s, so sign each delivery when you send it", api.InboundWebhookTimestampHeader, delta.Abs().Round(time.Second), inboundWebhookSignatureTolerance))
+	}
+	return nil
 }
 
 func verifyGenericInboundWebhookSignature(timestampValue, signatureValue, eventID, eventType string, body []byte, secret string, now time.Time) bool {

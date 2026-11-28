@@ -249,7 +249,7 @@ func (s *Service) loadInspectorWebhooks(r *http.Request, acct state.Account, app
 	selected := r.URL.Query().Get("webhook_id")
 	for _, hook := range hooks {
 		if hook.Scope == state.AppWebhookScopeApp && hook.AccountID == acct.ID && hook.AppID == app.ID {
-			data.Webhooks = append(data.Webhooks, dashboard.WebhookPageItem{ID: hook.ID, TargetURL: hook.TargetURL})
+			data.Webhooks = append(data.Webhooks, dashboard.WebhookPageItem{ID: hook.ID, TargetURL: api.RedactURLUserinfo(hook.TargetURL)})
 			if hook.ID == selected {
 				data.WebhookID = selected
 			}

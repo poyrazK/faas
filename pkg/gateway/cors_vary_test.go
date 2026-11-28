@@ -123,3 +123,22 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+// The preflight 204 is written to w directly, so the recorder's Vary op
+// never ran on it (prod hunt r80).
+func TestCORSPreflightVariesOnOrigin(t *testing.T) {
+	h := &Handler{edgeRules: stubEdgeRuleMatcher{cors: &EdgeRuleCORSResolved{
+		ID: "rule-cors", AccountID: "acct-1", AppID: "app-1",
+		AllowOrigins: []string{"https://app.example.com"}, AllowMethods: []string{"GET"},
+	}}, edgeRuleAudit: &countingAudit{}, metrics: NewMetrics()}
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodOptions, "http://h.example.com/x", nil)
+	r.Header.Set("Origin", "https://app.example.com")
+	r.Header.Set("Access-Control-Request-Method", "GET")
+	if !h.applyEdgeRuleCORS(rec, r, App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanPro}, &statusRecorder{ResponseWriter: rec}) {
+		t.Fatal("preflight was not answered")
+	}
+	if rec.Code != http.StatusNoContent || !equalStrings(rec.Header().Values("Vary"), []string{"Origin"}) {
+		t.Fatalf("preflight = %d Vary %q, want 204 with Vary: Origin", rec.Code, rec.Header().Values("Vary"))
+	}
+}

@@ -288,6 +288,8 @@ See [Networking](networking.md).
 
 HTTP 400 Bad Request · Bad request; Invalid webhook
 
+See [Event-driven workloads](event-driven.md).
+
 ### `approval_denied`
 
 HTTP 403 Forbidden · Approval denied
@@ -1304,7 +1306,7 @@ See [Event-driven workloads](event-driven.md#inbound-webhook-backlog).
 
 ### `inbound_webhook_bad_signature`
 
-HTTP 400 Bad Request · Invalid webhook signature
+HTTP 400 Bad Request · Invalid webhook signature; Invalid webhook timestamp; Webhook timestamp outside the window
 
 ### `inbound_webhook_invalid`
 
@@ -1614,7 +1616,7 @@ See [Jobs](jobs.md).
 
 ### `job_quota_exceeded`
 
-HTTP 403 Forbidden · Job limit reached
+HTTP 403 Forbidden · Job limit reached; Job setting over plan limit
 
 See [Plans and pricing](plans.md).
 

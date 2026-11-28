@@ -112,6 +112,16 @@ func TestManagedValkeyCommandFences(t *testing.T) {
 			t.Errorf("%s must be refused for customer sessions", platform)
 		}
 	}
+	// Commands that make the cache VM open its own outbound connection to a
+	// client-chosen address are renamed away and refused at the proxy.
+	for _, outbound := range []string{"MIGRATE"} {
+		if !slices.Contains(ManagedValkeyBlockedCommands, outbound) || !slices.Contains(ManagedValkeyClientDeniedCommands, outbound) {
+			t.Errorf("%s must be blocked inside Valkey and refused at the proxy", outbound)
+		}
+		if !strings.Contains(ManagedValkeyServerCommand(64, "noeviction")[2], "--rename-command "+outbound+" ''") {
+			t.Errorf("server command does not rename %s away", outbound)
+		}
+	}
 }
 
 func TestManagedValkeyImageIsADeployableReference(t *testing.T) {

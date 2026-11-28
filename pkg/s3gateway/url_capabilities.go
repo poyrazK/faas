@@ -1,6 +1,9 @@
 package s3gateway
 
 import (
+	"crypto/md5" // #nosec G501 -- compares against the S3 ETag, not a security hash.
+	"encoding/hex"
+	"io"
 	"net/http"
 	"slices"
 	"strconv"
@@ -89,6 +92,10 @@ func (h *Handler) loadURLPutReceipt(w http.ResponseWriter, r *http.Request, req 
 	}
 	w.Header().Set("X-Gregale-Upload-ID", c.ID)
 	if c.Status == "completed" {
+		if !completedURLPutMatches(r, c) {
+			writeS3Error(w, http.StatusConflict, "OperationAborted", "This signed URL already wrote an object with different content. Request a new signed URL to write again.", r.URL.Path, req.requestID)
+			return c, false
+		}
 		writeEncryptionHeaders(w.Header(), c.Encryption.Selection)
 		w.Header().Set("ETag", c.ETag)
 		if c.VersionID != "" {
@@ -105,6 +112,55 @@ func (h *Handler) loadURLPutReceipt(w http.ResponseWriter, r *http.Request, req 
 		return c, false
 	}
 	return c, true
+}
+
+// completedURLPutMatches reports whether a PUT on a signed URL whose write
+// already completed can be a retry of that write. A retry with another body
+// used to get the first write's 200 and ETag while nothing was stored (prod
+// hunt r79). The size must match; when the stored ETag is a plain MD5 the
+// body must hash to it. Other ETags cannot be checked, so a same-size retry
+// still gets the saved result.
+func completedURLPutMatches(r *http.Request, c state.ObjectUploadCompletion) bool {
+	size := r.ContentLength
+	chunked := strings.Contains(strings.ToLower(r.Header.Get("Content-Encoding")), "aws-chunked")
+	if chunked {
+		decoded, err := strconv.ParseInt(r.Header.Get("X-Amz-Decoded-Content-Length"), 10, 64)
+		if err != nil {
+			return false
+		}
+		size = decoded
+	}
+	// A body sent with HTTP chunked transfer-encoding has no length up
+	// front; it is measured (and hashed) below instead of refused.
+	unknownLength := size < 0 && !chunked
+	if !unknownLength && size != c.Bytes {
+		return false
+	}
+	want, ok := plainMD5ETag(c.ETag)
+	verifiable := ok && !chunked && c.Encryption.Empty() && r.Body != nil
+	if !verifiable && !unknownLength {
+		return true
+	}
+	if r.Body == nil {
+		return c.Bytes == 0
+	}
+	sum := md5.New() // #nosec G401 -- S3 ETag comparison, not a security hash.
+	n, err := io.Copy(sum, io.LimitReader(r.Body, c.Bytes+1))
+	if err != nil || n != c.Bytes {
+		return false
+	}
+	return !verifiable || hex.EncodeToString(sum.Sum(nil)) == want
+}
+
+func plainMD5ETag(etag string) (string, bool) {
+	v := strings.ToLower(strings.Trim(strings.TrimSpace(etag), `"`))
+	if len(v) != 32 {
+		return "", false
+	}
+	if _, err := hex.DecodeString(v); err != nil {
+		return "", false
+	}
+	return v, true
 }
 
 func (h *Handler) replayURLPut(w http.ResponseWriter, r *http.Request, req requestContext) bool {

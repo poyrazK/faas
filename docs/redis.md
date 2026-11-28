@@ -44,23 +44,34 @@ wake. A cache binds only to an app that exists, so for a new app deploy once,
 bind, and deploy again. An app that needs Redis to start fails that first
 deploy's health check; the deploy after binding fixes it.
 
-Binding also lets the app call the cache. An app in a project reaches only its
-own project's services under the default `project` policy, and a cache is not
-part of any project, so the binding is what lets it connect. To take that
-away:
+Binding also lets a project app call the cache. An app in a project reaches
+only its own project's services under the default `project` policy, and a
+cache is not part of any project, so the binding is what lets it connect. To
+take that away:
 
 ```bash
 gregale redis unbind sessions --app web
 ```
 
-The app's `REDIS_URL` stays set until you remove it with `gregale env unset`;
-its connections are refused from then on.
+The project app's `REDIS_URL` stays set until you remove it with
+`gregale env unset`; its connections are refused from then on.
 
-Caches have no password. A cache has no public address, and only apps in the
-same account that are allowed to call it can connect, so clients configured
-with a bare `host:port` work too. An app that calls with the `account`
-service policy (`x-gregale-service-policy: account`) reaches every service in
-the account, caches included, without a binding.
+**An app outside a project reaches every cache in the account, bound or not.**
+Standalone apps keep `account` service reachability unless they opt into a
+declared policy ([internal services](internal-services.md)), so for them a
+binding only sets `REDIS_URL` and `unbind` does not refuse connections. To
+limit a standalone app to the services it names, set
+`service_binding_policy: "declared"` with its `service_binding_targets`.
+
+Caches have no password and no per-key or per-app permissions: any app that
+can connect can read, write and delete every key, `FLUSHALL` included. A
+cache has no public address, and only apps in the same account that are
+allowed to call it can connect, so clients configured with a bare
+`host:port` work too. An app that calls with the `account` service policy
+(`x-gregale-service-policy: account`) reaches every service in the account,
+caches included, without a binding. Keep data that one app must not see from
+another in a separate account, or put the apps in projects and bind only the
+apps that need each cache.
 
 ## Run a command from your machine
 
@@ -130,8 +141,11 @@ running to restart; its next connection starts it with its data.
 
 - Commands that change the server (`CONFIG`, `DEBUG`, `MODULE`, `SHUTDOWN`,
   `SAVE`, `BGSAVE`, `BGREWRITEAOF`, `REPLICAOF`, `SLAVEOF`, `FAILOVER`,
-  `CLUSTER`, `ACL`, `MONITOR`, `SYNC`, `PSYNC`, `REPLCONF`) are refused. Lua scripts,
-  functions, pub/sub, streams and transactions work.
+  `CLUSTER`, `ACL`, `MONITOR`, `SYNC`, `PSYNC`, `REPLCONF`) are refused, and so
+  is `MIGRATE`, which would make the cache open its own connection to another
+  host. To copy keys between caches, read them in your app and write them to
+  the other cache. Lua scripts, functions, pub/sub, streams and transactions
+  work.
 - You cannot deploy your own image to a cache. Use `gregale redis resize` to
   change its size.
 

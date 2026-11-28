@@ -3324,4 +3324,7 @@ func RunDeployBootCheck(ctx context.Context, image string) int {
 	return runDeployBootCheck(ctx, deployBootFlags{image: image, app: "demo"})
 }
 
+// RetainedLineMatches applies `logs --grep` to an archived log frame.
+var RetainedLineMatches = retainedLineMatches
+
 var CmdAppTasks = cmdAppTasks

@@ -88,6 +88,10 @@ import (
 
 var ResolveAlertmanagerURL = resolveAlertmanagerURL
 
+var ValidateWebhookURL = validateWebhookURL
+
+var WebhookTargetProblem = webhookTargetProblem
+
 var CronResidentSecondsPerMonth = cronResidentSecondsPerMonth
 
 // SealNotificationChannel validates a channel create request (ADR-749).
@@ -2825,3 +2829,8 @@ func PlanWorkloadReleaseCommand(scanDir string, workloads []reposcan.Workload, w
 	s := &server{releasePhaseOff: releasePhaseOff}
 	return s.planWorkloadReleaseCommand(scanDir, workloads, workload)
 }
+
+var GenericInboundWebhookTimestampProblem = genericInboundWebhookTimestampProblem
+var ValidateInboundWebhookDeliveryPath = validateInboundWebhookDeliveryPath
+
+var OverriddenEnvKeyProblem = overriddenEnvKeyProblem

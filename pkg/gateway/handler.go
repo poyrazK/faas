@@ -3119,8 +3119,10 @@ func (h *Handler) applyEdgeRuleCORS(w http.ResponseWriter, r *http.Request, app 
 		rec.installHeaderOps(respOps)
 	}
 	if r.Method == http.MethodOptions {
-		// Preflight short-circuit: 204 + headers, no proxy.
-		for _, op := range respOps {
+		// Preflight short-circuit: 204 + headers, no proxy. The answer
+		// depends on Origin too, and it is written to w directly, so the
+		// recorder's Vary op never ran on it (prod hunt r80).
+		for _, op := range slices.Concat(respOps, corsVaryOps) {
 			applyHeaderOp(w.Header(), op)
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -6541,6 +6543,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if isPlatformDeliveryHeader(name) {
 				delete(r.Header, name)
 			}
+		}
+		// The trigger delivery path is the platform's: a request it did not
+		// deliver could post records that look like a broker batch (prod hunt
+		// r80). Refused before app lookup, so it never wakes or bills an app.
+		if api.IsTriggerDeliveryPath(r.URL.Path) {
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
+				"Reserved path", "paths under "+api.TriggerDeliveryPathPrefix+" are reserved for Gregale trigger deliveries"))
+			return
 		}
 	}
 	// Direct HTTP calls do not have a scheduler invocation row. Give function

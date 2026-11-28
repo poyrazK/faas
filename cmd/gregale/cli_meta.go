@@ -1246,7 +1246,9 @@ var cliCommands = []cliCommand{
 				{Name: "pagerduty-region", Short: "PagerDuty service region of the new key", Value: "REGION", ClosedSet: []string{"us", "eu"}},
 			}},
 			{Name: "test", Short: "Send a marked test notification", Positionals: []string{"<channel-id>"}},
-			{Name: "rm", Short: "Delete a channel", Positionals: []string{"<channel-id>"}},
+			{Name: "rm", Short: "Delete a channel", Positionals: []string{"<channel-id>"}, Flags: []cliFlag{
+				{Name: "yes", Short: "delete without prompting on a terminal", Bool: true},
+			}},
 		},
 	},
 	{
@@ -2034,7 +2036,7 @@ var cliCommands = []cliCommand{
 			{Name: "no-require-authn", Group: "Access and security", Short: "disable the per-deployment token requirement"},
 			{Name: "platform-tenant-required", Group: "Access and security", Short: "require verified customer identity on app traffic (Hobby and above)"},
 			{Name: "no-platform-tenant-required", Group: "Access and security", Short: "allow app traffic without verified customer identity"},
-			{Name: "maintenance", Group: "Request handling", Common: true, Short: "put every request into 503 maintenance mode"},
+			{Name: "maintenance", Group: "Request handling", Common: true, Short: "put every request into 503 maintenance mode; queued, async and cron deliveries wait until it is off"},
 			{Name: "no-maintenance", Group: "Request handling", Common: true, Short: "resume normal request handling"},
 			{Name: "streaming-enabled", Group: "Request handling", Short: "enable streamed responses (plan eligibility is checked by the API)"},
 			{Name: "no-streaming-enabled", Group: "Request handling", Short: "use buffered responses"},

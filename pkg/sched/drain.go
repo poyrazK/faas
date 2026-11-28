@@ -892,6 +892,14 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 			"inv", inv.ID, "app_id", inv.AppID)
 		return
 	}
+	// Maintenance mode answers every request 503 without a wake; queued,
+	// async and cron deliveries woke the app anyway (prod hunt r81). Hold
+	// them, without spending an attempt, until maintenance is turned off.
+	if app.MaintenanceMode {
+		_ = d.store.FailInvocation(ctx, inv.ID, "app in maintenance mode; delivery held", time.Duration(api.EdgeRuleMaintenanceRetryAfterSeconds)*time.Second, 0)
+		d.log.Debug("drain: app in maintenance; deferred", "inv", inv.ID, "app_id", inv.AppID)
+		return
+	}
 	// 3. Claim. An app whose invocations may run past 30 s holds a lease
 	// that outlasts the run; an expired lease would requeue the invocation
 	// while its handler still ran (ADR-1180). Its delivery runs in the

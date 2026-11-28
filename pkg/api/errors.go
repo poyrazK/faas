@@ -5035,12 +5035,34 @@ func ErrPlanJobsNotAllowed(p Plan) *Problem {
 // 403 (not 402) because the plan DOES unlock jobs — the right copy
 // is "delete / cancel / shrink to add another", not "upgrade".
 func ErrJobQuota(plan Plan, quotaName string, limit, observed int) *Problem {
+	// A per-job setting over the plan cap was told to cancel a task or
+	// delete a job (prod hunt r80, --ram over the cap); only the count caps
+	// free up that way.
+	if setting, ok := jobQuotaSettings[quotaName]; ok {
+		return NewProblem(http.StatusForbidden, CodeJobQuotaExceeded,
+			"Job setting over plan limit",
+			fmt.Sprintf("%s plan allows at most %d for a job's %s; this job asks for %d. Lower it to %d or less, or upgrade the plan.",
+				plan, limit, setting, observed, limit)).
+			WithLimit(int64(limit), int64(observed)).
+			WithDocs(docsBase + "/plans")
+	}
 	return NewProblem(http.StatusForbidden, CodeJobQuotaExceeded,
 		"Job limit reached",
 		fmt.Sprintf("%s plan caps jobs at %d for %s; you have %d. Cancel a task or delete a job to free capacity.",
 			plan, limit, quotaName, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/plans")
+}
+
+// jobQuotaSettings names the per-job caps of ErrJobQuota, as the setting a
+// customer lowers (the CLI flag in parentheses).
+var jobQuotaSettings = map[string]string{
+	"ram_mb":          "memory in MB (--ram)",
+	"task_timeout_s":  "task timeout in seconds (--timeout)",
+	"timeout_sec":     "timeout in seconds (--timeout)",
+	"max_parallelism": "parallelism (--parallelism)",
+	"tasks_per_run":   "task count",
+	"retry_max":       "retries (--retries)",
 }
 
 // ValidateJobRAMMB refuses a job or image run whose memory cannot boot a

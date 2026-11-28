@@ -149,7 +149,7 @@ func (s *server) projectDashboardWebhooks(ctx context.Context, log *slog.Logger,
 			continue
 		}
 		item := dashboard.WebhookPageItem{
-			ID: row.ID, TargetURL: row.TargetURL, EventFilter: append([]string(nil), row.EventFilter...),
+			ID: row.ID, TargetURL: api.RedactURLUserinfo(row.TargetURL), EventFilter: append([]string(nil), row.EventFilter...),
 			RetryPolicy: string(row.RetryPolicy), Enabled: row.Enabled,
 			CreatedAt: dashboardJobsTime(row.CreatedAt), UpdatedAt: dashboardJobsTime(row.UpdatedAt),
 		}

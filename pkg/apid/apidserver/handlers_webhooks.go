@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -213,7 +214,24 @@ func validateWebhookURL(rawURL string) *api.Problem {
 		// (migrations/00140_app_webhooks.sql:42-46).
 		return api.ErrAppWebhookInvalid(fmt.Sprintf("target_url length %d out of bounds [8, 2048]", len(rawURL)))
 	}
+	// Credentials in the URL were stored, listed and audited in plain text
+	// (prod hunt r81). Log drains already refuse them.
+	if u, err := url.Parse(rawURL); err == nil && u.User != nil {
+		return api.ErrAppWebhookInvalid("target_url must not contain credentials (user:password@); " +
+			"verify deliveries with the webhook signing secret, or check a token in the URL path")
+	}
 	return nil
+}
+
+// webhookTargetProblem re-codes the shared target URL check's malformed-URL
+// refusal, which is an alert-rule problem (alert_rule_invalid with the alerts
+// docs link), as a webhook problem. The egress denial keeps its stable
+// image_egress_denied code.
+func webhookTargetProblem(p *api.Problem) *api.Problem {
+	if p != nil && p.Code == api.CodeAlertRuleInvalid {
+		return api.ErrAppWebhookInvalid(p.Detail)
+	}
+	return p
 }
 
 // validateWebhookSecret caps the plaintext secret length. Mirrors
@@ -323,7 +341,7 @@ func (s *server) createAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 		// "Every event" would include events Datadog does not model.
 		req.EventFilter = append([]string(nil), api.DatadogWebhookEvents...)
 	}
-	if prob := resolveAndCheckEgress(r.Context(), req.TargetURL); prob != nil {
+	if prob := webhookTargetProblem(resolveAndCheckEgress(r.Context(), req.TargetURL)); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -376,7 +394,7 @@ func (s *server) createAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 	s.audit.Emit(r.Context(), "app.webhook_created", &acct.ID, map[string]any{
 		"webhook_id":      row.ID,
 		"app_id":          app.ID,
-		"target_url":      row.TargetURL,
+		"target_url":      api.RedactURLUserinfo(row.TargetURL),
 		"retry_policy":    string(row.RetryPolicy),
 		"delivery_format": string(row.DeliveryFormat),
 		"enabled":         row.Enabled,
@@ -437,11 +455,23 @@ func (s *server) deliverAppEvent(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	var destination *state.AppWebhook
+	var redacted []*state.AppWebhook
 	for i := range hooks {
-		if hooks[i].AccountID == acct.ID && (hooks[i].ID == req.Destination || hooks[i].TargetURL == req.Destination) {
+		if hooks[i].AccountID != acct.ID {
+			continue
+		}
+		if hooks[i].ID == req.Destination || hooks[i].TargetURL == req.Destination {
 			destination = &hooks[i]
 			break
 		}
+		// Lists show legacy credentialed targets as redacted@; accept that
+		// spelling when it names exactly one webhook.
+		if api.RedactURLUserinfo(hooks[i].TargetURL) == req.Destination {
+			redacted = append(redacted, &hooks[i])
+		}
+	}
+	if destination == nil && len(redacted) == 1 {
+		destination = redacted[0]
 	}
 	if destination == nil {
 		// production-us hunt #4: a URL that was never registered answered
@@ -487,7 +517,7 @@ func (s *server) deliverAppEvent(w http.ResponseWriter, r *http.Request, acct st
 	writeJSON(w, http.StatusAccepted, api.DeliverAppEventResponse{
 		ID:          delivery.ID,
 		WebhookID:   destination.ID,
-		Destination: destination.TargetURL,
+		Destination: api.RedactURLUserinfo(destination.TargetURL),
 		Event:       string(delivery.Event),
 		Status:      string(delivery.Status),
 		StatusURL:   "/v1/apps/" + app.Slug + "/webhooks/" + destination.ID + "/deliveries",
@@ -557,7 +587,7 @@ func (s *server) updateAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 			api.WriteProblem(w, prob)
 			return
 		}
-		if prob := resolveAndCheckEgress(r.Context(), *req.TargetURL); prob != nil {
+		if prob := webhookTargetProblem(resolveAndCheckEgress(r.Context(), *req.TargetURL)); prob != nil {
 			api.WriteProblem(w, prob)
 			return
 		}
@@ -623,7 +653,7 @@ func (s *server) updateAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 	s.audit.Emit(r.Context(), "app.webhook_updated", &acct.ID, map[string]any{
 		"webhook_id":      row.ID,
 		"app_id":          app.ID,
-		"target_url":      row.TargetURL,
+		"target_url":      api.RedactURLUserinfo(row.TargetURL),
 		"enabled":         row.Enabled,
 		"retry_policy":    string(row.RetryPolicy),
 		"delivery_format": string(row.DeliveryFormat),
@@ -662,7 +692,7 @@ func (s *server) deleteAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 	s.audit.Emit(r.Context(), "app.webhook_deleted", &acct.ID, map[string]any{
 		"webhook_id": id,
 		"app_id":     app.ID,
-		"target_url": existing.TargetURL,
+		"target_url": api.RedactURLUserinfo(existing.TargetURL),
 	})
 	w.WriteHeader(http.StatusNoContent)
 }

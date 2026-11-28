@@ -125,6 +125,15 @@ can. Common scopes:
 | `runs:read` / `runs:write` | Inspect, or submit and cancel, disposable runs. |
 | `agent` | Open the hosted MCP server; see [headless agents](mcp.md#headless-agents-with-an-agent-key). |
 
+Scopes limit what a key can do through the Gregale API, not traffic to your
+apps. An app that requires an API key (`gregale app APP --require-authn`)
+accepts any active key of the owning account, whatever its scopes: an
+`apps:read` or `agent` key can send `GET` and `POST` requests to it like an
+`admin` key. Keys of other accounts get `403`. Give keys that must not reach
+your apps' data to a separate account, and authenticate the callers inside
+the app ([application auth](application-auth.md)) when only some of them
+should get through.
+
 The number of keys an account can hold depends on the plan: 3 on Free, 10 on
 Hobby, 50 on Pro and 200 on Scale. Keys still inside a rotation grace window
 count. Past the limit, creating a key fails with `409 api_key_limit_exceeded`.

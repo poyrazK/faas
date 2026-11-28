@@ -3036,7 +3036,7 @@ Change an app&#39;s settings
 | `--no-require-authn` | disable the per-deployment token requirement |  |
 | `--platform-tenant-required` | require verified customer identity on app traffic (Hobby and above) |  |
 | `--no-platform-tenant-required` | allow app traffic without verified customer identity |  |
-| `--maintenance` | put every request into 503 maintenance mode |  |
+| `--maintenance` | put every request into 503 maintenance mode; queued, async and cron deliveries wait until it is off |  |
 | `--no-maintenance` | resume normal request handling |  |
 | `--streaming-enabled` | enable streamed responses (plan eligibility is checked by the API) |  |
 | `--no-streaming-enabled` | use buffered responses |  |
@@ -8643,7 +8643,11 @@ Send a marked test notification
 
 Delete a channel
 
-`gregale alert channel delete <channel-id>`
+`gregale alert channel delete [--yes] <channel-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | delete without prompting on a terminal |  |
 
 ### alert list
 
