@@ -293,20 +293,23 @@ export class GregaleSandboxSession implements SandboxSession<GregaleSandboxSessi
 
   // ---- commands --------------------------------------------------------
 
-  #argv(args: ExecCommandArgs): string[] {
-    if (args.tty) {
-      throw new SandboxUnsupportedFeatureError('Gregale sandboxes do not attach a terminal to commands yet; run it without tty', {});
+  #argv(args: ExecCommandArgs, background: boolean): string[] {
+    if (args.tty && !background) {
+      throw new SandboxUnsupportedFeatureError('a terminal command must run with execCommand, where write_stdin reaches it; run exec without tty', {});
     }
     return [args.shell ?? '/bin/sh', args.login ? '-lc' : '-c', args.cmd];
   }
 
   #execBody(args: ExecCommandArgs, background: boolean) {
     return {
-      cmd: this.#argv(args),
+      cmd: this.#argv(args, background),
       workdir: args.workdir,
       env: this.state.environment && Object.keys(this.state.environment).length > 0 ? this.state.environment : undefined,
       run_as: runAsArg(args.runAs),
       background: background || undefined,
+      // A terminal command runs in the background, where write_stdin
+      // reaches it (ADR-20261027090013 step 12).
+      tty: (background && args.tty) || undefined,
     };
   }
 
@@ -342,17 +345,14 @@ export class GregaleSandboxSession implements SandboxSession<GregaleSandboxSessi
     return formatExec({ output, wallSeconds, sessionId, maxTokens: args.maxOutputTokens });
   }
 
-  /** Polls a background command; Gregale commands take no stdin yet. */
+  /** Writes chars to a background command's stdin, if any, then polls its output. */
   async writeStdin(args: WriteStdinArgs): Promise<string> {
     const proc = this.#processes.get(args.sessionId);
     if (!proc) {
       throw new SandboxError(`no running command has session ID ${args.sessionId}`, 'pty_session_not_found', { sessionId: args.sessionId });
     }
     if (args.chars) {
-      throw new SandboxUnsupportedFeatureError(
-        'Gregale sandbox commands do not take input yet: call write_stdin with empty chars to read output, or run the command non-interactively',
-        { sessionId: args.sessionId },
-      );
+      await this.#json('POST', `/exec/${proc.handle}/input`, { json: { data: Buffer.from(args.chars).toString('base64') } });
     }
     const started = Date.now();
     const { output, exitCode } = await this.#poll(proc, args.yieldTimeMs ?? 250);
@@ -391,7 +391,7 @@ export class GregaleSandboxSession implements SandboxSession<GregaleSandboxSessi
 
   supportsPty(): boolean {
     // The shell capability offers write_stdin only to sessions with a PTY;
-    // Gregale's answers polls of background commands and refuses input.
+    // Gregale's writes to a background command's stdin and polls its output.
     return true;
   }
 

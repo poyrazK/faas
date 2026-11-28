@@ -16,7 +16,7 @@ from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlsplit
 
 from .api import Api, ApiError, Transport, to_sandbox_error
-from .commands import Commands
+from .commands import Commands, Pty
 from .connection import Connection, parse_time
 from .errors import InvalidArgumentException, NotFoundException, UnsupportedException
 from .filesystem import Filesystem
@@ -134,23 +134,6 @@ class _ClassOrInstance:
         return lambda *a, **k: self._on_instance(obj, *a, **k)
 
 
-class _Pty:
-    def _no(self, call: str) -> UnsupportedException:
-        return UnsupportedException(f"pty.{call}", "interactive terminals are not available on Gregale yet; run commands with commands.run")
-
-    def create(self, *a: Any, **k: Any) -> None:
-        raise self._no("create")
-
-    def send_stdin(self, *a: Any, **k: Any) -> None:
-        raise self._no("send_stdin")
-
-    def resize(self, *a: Any, **k: Any) -> None:
-        raise self._no("resize")
-
-    def kill(self, *a: Any, **k: Any) -> None:
-        raise self._no("kill")
-
-
 class Sandbox:
     """A Gregale sandbox session behind E2B's names.
 
@@ -181,7 +164,6 @@ class Sandbox:
     ) -> None:
         self._port_visibility = port_visibility
         self._ports: Dict[int, Dict[str, Any]] = {}
-        self.pty = _Pty()
         if _conn is not None:
             self._attach(_conn)
             return
@@ -224,6 +206,7 @@ class Sandbox:
         self.sandbox_id = conn.sandbox_id
         self.files = Filesystem(conn)
         self.commands = Commands(conn)
+        self.pty = Pty(self.commands)
 
     @classmethod
     def create(cls, template: Optional[str] = None, **opts: Any) -> "Sandbox":

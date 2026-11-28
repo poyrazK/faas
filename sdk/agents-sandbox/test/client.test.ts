@@ -34,6 +34,7 @@ class FakeGregale {
   ports: Record<string, unknown>[] = [];
   deleted = 0;
   background = new Map<string, { out: string; polls: number; finishAfter: number }>();
+  inputs: { handle: string; data: string }[] = [];
   browserUp = false;
 
   fetch = async (input: string | URL | Request, init: RequestInit = {}): Promise<Response> => {
@@ -126,6 +127,11 @@ class FakeGregale {
         this.hydrated.push(new Uint8Array(body as Uint8Array));
         return json(200, { bytes: 1, entries: 1 });
     }
+    const typed = /^\/exec\/(c\d+)\/input$/.exec(sub);
+    if (method === 'POST' && typed) {
+      this.inputs.push({ handle: typed[1]!, data: Buffer.from(JSON.parse(text).data, 'base64').toString() });
+      return json(200, { handle: typed[1], argv: [], running: true });
+    }
     const out = /^\/exec\/(c\d+)$/.exec(sub);
     if (method === 'GET' && out) {
       const cmd = this.background.get(out[1]!)!;
@@ -208,11 +214,12 @@ test('commands run to completion or yield a session ID that write_stdin polls', 
   const quick = await session.execCommand({ cmd: 'ls', yieldTimeMs: 2_000 });
   assert.match(quick, /Process exited with code 3/);
   assert.match(quick, /ran ls/);
-  const server = await session.execCommand({ cmd: 'npm run server', yieldTimeMs: 0 });
+  const server = await session.execCommand({ cmd: 'npm run server', yieldTimeMs: 0, tty: true });
   assert.match(server, /Process running with session ID 1/);
   assert.match(server, /listening/);
-  await assert.rejects(session.writeStdin({ sessionId: 1, chars: 'q' }), SandboxUnsupportedFeatureError);
-  const done = await session.writeStdin({ sessionId: 1, yieldTimeMs: 5_000 });
+  assert.equal((fake.commands.at(-1) as { tty?: boolean }).tty, true);
+  const done = await session.writeStdin({ sessionId: 1, chars: 'q', yieldTimeMs: 5_000 });
+  assert.deepEqual(fake.inputs, [{ handle: 'c2', data: 'q' }]);
   assert.match(done, /Process exited with code 3/);
   await assert.rejects(session.writeStdin({ sessionId: 1 }), /no running command/);
   assert.equal(session.supportsPty(), true);

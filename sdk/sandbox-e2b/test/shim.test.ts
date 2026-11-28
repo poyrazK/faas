@@ -1,8 +1,9 @@
 // adr: 20261027090013 §12 — E2B-style code runs on Gregale by changing the
 // import and the API key: Sandbox.create/connect/list/kill, commands in the
 // foreground (streamed when callbacks are given) and background, files in
-// and outside /workspace, ports and their preview tokens; unsupported calls
-// fail with an error naming the call and the alternative.
+// and outside /workspace, ports and their preview tokens, terminals and
+// command input (step 12); unsupported calls fail with an error naming the
+// call and the alternative.
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -11,7 +12,17 @@ import { CommandExitError, NotFoundError, Sandbox, SandboxNotFoundError, Unsuppo
 const API = 'https://api.gregale.test';
 const ID = '0b0e6a1c-2f6a-4c8e-9d43-6f3f1d2a9b10';
 
-type Exec = { cmd: string[]; env?: Record<string, string>; run_as?: string; workdir?: string; timeout_ms?: number; background?: boolean };
+type Exec = {
+  cmd: string[];
+  env?: Record<string, string>;
+  run_as?: string;
+  workdir?: string;
+  timeout_ms?: number;
+  background?: boolean;
+  tty?: boolean;
+  rows?: number;
+  cols?: number;
+};
 
 class FakeGregale {
   state = 'queued';
@@ -22,6 +33,7 @@ class FakeGregale {
   files = new Map<string, Uint8Array>();
   ports: Record<string, unknown>[] = [];
   background = new Map<string, { out: string; polls: number; finishAfter: number; exit: number; killed?: boolean }>();
+  inputs: { handle: string; data?: string; eof?: boolean; rows?: number; cols?: number }[] = [];
 
   fetch = async (input: string | URL | Request, init: RequestInit = {}): Promise<Response> => {
     const url = new URL(String(input));
@@ -68,7 +80,8 @@ class FakeGregale {
       const script = req.cmd.at(-1) ?? '';
       if (req.background) {
         const handle = `c${this.background.size + 1}`;
-        this.background.set(handle, { out: 'serving\n', polls: 0, finishAfter: script.includes('server') ? 100 : 1, exit: 0 });
+        const out = req.tty ? '$ ' : 'serving\n';
+        this.background.set(handle, { out, polls: 0, finishAfter: script.includes('server') || req.tty ? 100 : 1, exit: 0 });
         return json(202, { handle, exit_code: 0, wall_time_ms: 0 });
       }
       const exit = script.includes('false') ? 1 : 0;
@@ -81,6 +94,13 @@ class FakeGregale {
     }
     if (method === 'GET' && sub === '/exec') {
       return json(200, { commands: [...this.background].map(([handle, c]) => ({ handle, argv: ['/bin/bash', '-l', '-c', 'npm run server'], running: c.polls < c.finishAfter && !c.killed })) });
+    }
+    const toInput = /^\/exec\/(c\d+)\/input$/.exec(sub);
+    if (toInput && method === 'POST') {
+      const c = this.background.get(toInput[1]!);
+      if (!c) return json(404, { code: 'sandbox_entry_not_found', status: 404 });
+      this.inputs.push({ handle: toInput[1]!, ...JSON.parse(text) });
+      return json(200, { handle: toInput[1], argv: [], running: true });
     }
     const one = /^\/exec\/(c\d+)$/.exec(sub);
     if (one) {
@@ -258,6 +278,39 @@ test('unsupported calls name the call and the alternative', async () => {
   const { opts } = setup();
   const sbx = await Sandbox.create(opts);
   await assert.rejects(sbx.betaPause(), (err) => err instanceof UnsupportedError && /freeze on their own/.test(err.message));
-  await assert.rejects(sbx.pty.create(), (err) => err instanceof UnsupportedError && err.call === 'pty.create');
-  await assert.rejects(sbx.commands.sendStdin(), UnsupportedError);
+  await assert.rejects(sbx.commands.run('cat', { stdin: true }), (err) => err instanceof UnsupportedError && /background: true/.test(err.message));
+});
+
+test('a terminal is a background command on a pty, driven through its input', async () => {
+  const { fake, opts } = setup();
+  const sbx = await Sandbox.create(opts);
+  const seen: Uint8Array[] = [];
+  const term = await sbx.pty.create({ cols: 80, rows: 24, onData: (d) => void seen.push(d) });
+  const exec = fake.execs.at(-1)!;
+  assert.deepEqual([exec.tty, exec.background, exec.rows, exec.cols, exec.cmd], [true, true, 24, 80, ['/bin/bash', '-i', '-l']]);
+  await sbx.pty.sendInput(term.pid, new TextEncoder().encode('ls\n'));
+  await sbx.pty.resize(term.pid, { cols: 120, rows: 40 });
+  assert.deepEqual(fake.inputs, [
+    { handle: 'c1', data: Buffer.from('ls\n').toString('base64') },
+    { handle: 'c1', rows: 40, cols: 120 },
+  ]);
+  for (let i = 0; i < 50 && seen.length === 0; i++) await new Promise((r) => setTimeout(r, 10));
+  assert.equal(Buffer.from(seen[0]!).toString(), '$ ');
+  assert.equal(await sbx.pty.kill(term.pid), true);
+  await assert.rejects(term.wait(), CommandExitError);
+});
+
+test('background commands take stdin and its end', async () => {
+  const { fake, opts } = setup();
+  const sbx = await Sandbox.create(opts);
+  const cat = await sbx.commands.run('cat', { background: true, stdin: true });
+  await sbx.commands.sendStdin(cat.pid, 'hello');
+  await cat.sendStdin(' world');
+  await sbx.commands.closeStdin(cat.pid);
+  assert.deepEqual(fake.inputs, [
+    { handle: 'c1', data: Buffer.from('hello').toString('base64') },
+    { handle: 'c1', data: Buffer.from(' world').toString('base64') },
+    { handle: 'c1', eof: true },
+  ]);
+  await assert.rejects(sbx.commands.sendStdin(42, 'x'), NotFoundError);
 });
