@@ -94,10 +94,13 @@ var ManagedValkeyEvictionPolicies = []string{
 }
 
 // ManagedValkeyBlockedCommands are renamed away inside Valkey: nothing, the
-// platform included, ever needs them on a cache.
+// platform included, ever needs them on a cache. MIGRATE opens a connection
+// from the cache VM to any host and port the client names, which made the
+// cache a blind reachability probe of internal and metadata addresses (prod
+// hunt r83, 2026-11-28).
 var ManagedValkeyBlockedCommands = []string{
 	"DEBUG", "MODULE", "SHUTDOWN", "SAVE", "BGSAVE", "BGREWRITEAOF",
-	"FAILOVER", "CLUSTER", "ACL", "MONITOR",
+	"FAILOVER", "CLUSTER", "ACL", "MONITOR", "MIGRATE",
 }
 
 // ManagedValkeyClientDeniedCommands are refused by the service proxy for
