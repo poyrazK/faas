@@ -2676,8 +2676,8 @@ heartbeat:
 		// The caller ctx is already done; the notice is shutdown work.
 		announceRestart(context.WithoutCancel(ctx), store, adoptionReport.NodeID, log)
 	}
-	//nolint:contextcheck // the caller ctx is already done; evacuation is shutdown work.
 	evacuateStarted := time.Now()
+	//nolint:contextcheck // the caller ctx is already done; evacuation is shutdown work.
 	impl.EvacuateSandboxes(context.WithoutCancel(ctx), vmmdgrpc.SandboxEvacuateWait, log)
 	if cfg.AdoptRunningVMs && adoptionReport != nil && time.Since(evacuateStarted) > time.Second {
 		//nolint:contextcheck // the caller ctx is already done; the notice is shutdown work.

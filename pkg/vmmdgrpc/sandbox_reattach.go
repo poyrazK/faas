@@ -8,6 +8,7 @@ package vmmdgrpc
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -137,13 +138,29 @@ func (s *Server) StopDetachingSandboxes(ctx context.Context) int {
 	s.sandboxDetachMu.Lock()
 	s.sandboxStopping = true
 	s.sandboxDetachMu.Unlock()
-	n := 0
+	var kept []*detachedSandbox
 	s.sandboxDetached.Range(func(k, _ any) bool {
 		if v, ok := s.sandboxDetached.LoadAndDelete(k); ok {
-			s.destroyDetached(ctx, v.(*detachedSandbox))
-			n++
+			kept = append(kept, v.(*detachedSandbox))
 		}
 		return true
 	})
+	// In parallel: the stop must fit systemd's stop timeout.
+	var wg sync.WaitGroup
+	for _, d := range kept {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.destroyDetached(ctx, d)
+		}()
+	}
+	wg.Wait()
+	return len(kept)
+}
+
+// DetachedSandboxes counts the VMs kept for a reattach.
+func (s *Server) DetachedSandboxes() int {
+	n := 0
+	s.sandboxDetached.Range(func(_, _ any) bool { n++; return true })
 	return n
 }

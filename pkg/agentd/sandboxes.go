@@ -504,7 +504,7 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 	switch code := status.Code(recvErr); {
 	case ctx.Err() != nil:
 		// The replica is stopping; the lease lapses and the sweeper decides.
-	case claim.Reattach != nil && !ready && !reattachRetryable(code):
+	case claim.Reattach != nil && !ready && reattachFinal(code):
 		// Nothing to reattach to, or a reattach that cannot succeed (an
 		// older schedd or vmmd that booted afresh, a session outside the
 		// plan): each claim moves the grace, so trying again would never
@@ -1135,10 +1135,17 @@ func (s *Sandboxes) finish(ctx context.Context, claim agentstore.SandboxClaim, e
 	s.log.Info("agentd: sandbox ended", "sandbox_id", claim.ID, "state", end.state, "outcome", end.code)
 }
 
-// reattachRetryable reports a reattach failure another claim may get past:
-// schedd or vmmd unreachable, or no room to book the VM yet.
-func reattachRetryable(code codes.Code) bool {
-	return code == codes.Unavailable || code == codes.DeadlineExceeded || code == codes.ResourceExhausted
+// reattachFinal reports a reattach failure no later claim gets past: no VM
+// to take over, a session outside the plan, or a schedd or vmmd that booted
+// afresh (Internal) or cannot reattach. Anything else (Unavailable,
+// Canceled during a restart, a stream that ended cleanly) tries again.
+func reattachFinal(code codes.Code) bool {
+	switch code {
+	case codes.NotFound, codes.Internal, codes.FailedPrecondition, codes.InvalidArgument,
+		codes.Unimplemented, codes.DataLoss, codes.PermissionDenied:
+		return true
+	}
+	return false
 }
 
 // pauseLost returns a persistent session whose VM ended unexpectedly to

@@ -136,13 +136,13 @@ func TestSandboxNotDetachableEndsWithItsStream(t *testing.T) {
 // the old one is destroyed first, and its grace never touches the new one.
 func TestSandboxRestartReplacesTheDetachedVM(t *testing.T) {
 	vmm := newSandboxRunVMM()
-	cli := newReattachClient(t, vmm, 300*time.Millisecond)
+	cli, srv := newReattachServer(t, vmm, 300*time.Millisecond)
 	_, cancel, _, err := openSandbox(t, cli, detachableStart())
 	if err != nil {
 		t.Fatal(err)
 	}
 	cancel()
-	time.Sleep(50 * time.Millisecond)
+	waitUntil(t, func() bool { return srv.DetachedSandboxes() == 1 })
 	stream, _, ev, err := openSandbox(t, cli, detachableStart())
 	if err != nil || ev.GetBooted() == nil {
 		t.Fatalf("second boot = %v %v", ev, err)
@@ -171,7 +171,7 @@ func TestStoppingVMMDKeepsNoDetachedSandbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	cancel()
-	time.Sleep(100 * time.Millisecond)
+	waitUntil(t, func() bool { return srv.DetachedSandboxes() == 1 })
 	if n := srv.StopDetachingSandboxes(context.Background()); n != 1 {
 		t.Fatalf("destroyed %d detached VMs, want 1", n)
 	}

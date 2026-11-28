@@ -58,7 +58,8 @@ func TestPersistentSandboxReattachesAfterItsStreamIsLost(t *testing.T) {
 
 // A reattach that finds no VM, or that cannot succeed, ends the wait: each
 // claim moves the grace, so another try would never end. A session with a
-// volume resumes cold from it; one without fails as vm_lost.
+// volume resumes cold from it; one without fails as vm_lost. One cut short
+// is left for the next claim.
 func TestPersistentSandboxWhoseReattachFailsIsNotRetried(t *testing.T) {
 	for _, tc := range []struct {
 		name, script string
@@ -70,6 +71,8 @@ func TestPersistentSandboxWhoseReattachFailsIsNotRetried(t *testing.T) {
 		{"refused with a volume", "lose-vm-refused", 10, agentstore.SandboxPaused, ""},
 		{"gone without a volume", "lose-vm-gone", 0, agentstore.SandboxFailed, "vm_lost"},
 		{"refused without a volume", "lose-vm-refused", 0, agentstore.SandboxFailed, "vm_lost"},
+		// A reattach cut by a restarting schedd is tried again.
+		{"canceled", "lose-vm-canceled", 0, agentstore.SandboxReady, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, store := openStore(t)

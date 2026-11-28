@@ -222,16 +222,16 @@ func (s *Server) RunSandbox(stream vmmdpb.Vmmd_RunSandboxServer) error {
 		return grpcerr.ToStatus(problem)
 	}
 	ctx := stream.Context()
+	// A VM of this instance kept for a reattach that never came is
+	// destroyed before a new one prepares its volume or takes its name; its
+	// grace timer would otherwise destroy the new one.
+	s.dropDetachedSandbox(ctx, wake.Instance)
 	if volumeGB > 0 {
 		if err := s.prepareSandboxVolume(ctx, &wake, volumeGB, volumeBackupID, first.GetStart().GetVolumeSourceSandboxId()); err != nil {
 			opErr = err
 			return err
 		}
 	}
-	// A VM of this instance kept for a reattach that never came is
-	// destroyed before a new one takes its name; its grace timer would
-	// otherwise destroy the new one.
-	s.dropDetachedSandbox(ctx, wake.Instance)
 	inst, err := sandboxVMM.WakeSandbox(ctx, wake)
 	if err != nil {
 		opErr = err
