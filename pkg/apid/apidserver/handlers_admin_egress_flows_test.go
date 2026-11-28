@@ -24,6 +24,15 @@ func TestParseEgressFlowFilter(t *testing.T) {
 	if prob != nil || !f.To.Equal(now) || !f.From.Equal(now.Add(-24*time.Hour)) || f.Limit != 200 || f.Remote.IsValid() {
 		t.Fatalf("defaults = %+v, %v", f, prob)
 	}
+	if f.Blocked != nil {
+		t.Fatalf("default verdict filter = %v, want both", *f.Blocked)
+	}
+	if f, prob = parse("verdict=blocked"); prob != nil || f.Blocked == nil || !*f.Blocked {
+		t.Fatalf("verdict=blocked = %+v, %v", f, prob)
+	}
+	if f, prob = parse("verdict=allowed"); prob != nil || f.Blocked == nil || *f.Blocked {
+		t.Fatalf("verdict=allowed = %+v, %v", f, prob)
+	}
 	if f, prob = parse("remote=198.51.100.10"); prob != nil || f.Remote != netip.MustParsePrefix("198.51.100.10/32") {
 		t.Fatalf("host remote = %v, %v", f.Remote, prob)
 	}
@@ -33,7 +42,7 @@ func TestParseEgressFlowFilter(t *testing.T) {
 	}
 	for _, bad := range []string{
 		"remote=not-an-ip", "from=yesterday", "from=2026-09-29T13:00:00Z",
-		"from=2026-07-01T00:00:00Z", "limit=0", "limit=1001",
+		"from=2026-07-01T00:00:00Z", "limit=0", "limit=1001", "verdict=dropped",
 	} {
 		if _, prob := parse(bad); prob == nil || prob.Code != api.CodeValidation {
 			t.Errorf("%q: problem = %v, want validation", bad, prob)
@@ -67,6 +76,58 @@ func TestAdminEgressFlows_LookupByAddress(t *testing.T) {
 	if len(resp.Flows) != 1 || resp.Flows[0].AccountID != "acct-1" || resp.Flows[0].RemoteIP != "198.51.100.10" ||
 		resp.Flows[0].RemotePort != 443 || resp.Flows[0].Node != "fsn-2" || resp.Truncated {
 		t.Fatalf("response = %+v, want the one acct-1 flow", resp)
+	}
+	if resp.Flows[0].Protocol != "tcp" || resp.Flows[0].Blocked {
+		t.Fatalf("allowed flow = %+v, want tcp and not blocked", resp.Flows[0])
+	}
+}
+
+func TestAdminEgressFlows_BlockedVerdict(t *testing.T) {
+	e := apidserver.NewIssueCreditEnv(t, api.ScopesAdminOnly, "ops@example.com", "ops@example.com")
+	mem := (*e.Store())
+	at := (*apidserver.TimeNow)().UTC().Add(-time.Hour)
+	if err := mem.InsertEgressFlows(context.Background(), []state.EgressFlowRecord{
+		{ObservedAt: at, NodeName: "bhs-2", AccountID: "acct-1", AppID: "app-1", InstanceID: "i-1",
+			RemoteIP: netip.MustParseAddr("198.51.100.10"), RemotePort: 443},
+		{ObservedAt: at, NodeName: "bhs-2", AccountID: "acct-1", AppID: "app-1", InstanceID: "i-1",
+			RemoteIP: netip.MustParseAddr("10.0.0.5"), RemotePort: 161, Protocol: "udp", Blocked: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		verdict string
+		want    []string
+	}{{"blocked", []string{"10.0.0.5"}}, {"allowed", []string{"198.51.100.10"}}, {"", []string{"198.51.100.10", "10.0.0.5"}}} {
+		req := httptest.NewRequest(http.MethodGet, "/v1/admin/egress-flows?account_id=acct-1&verdict="+tc.verdict, nil)
+		e.AddAdminSession(t, req)
+		rec := httptest.NewRecorder()
+		(*e.H()).ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%q: status %d: %s", tc.verdict, rec.Code, rec.Body)
+		}
+		var resp api.EgressFlowLogResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, f := range resp.Flows {
+			got = append(got, f.RemoteIP)
+			if f.Blocked != (f.RemoteIP == "10.0.0.5") {
+				t.Fatalf("%q: flow %+v has the wrong verdict", tc.verdict, f)
+			}
+		}
+		if len(got) != len(tc.want) {
+			t.Fatalf("%q: flows = %v, want %v", tc.verdict, got, tc.want)
+		}
+	}
+	blocked := httptest.NewRequest(http.MethodGet, "/v1/admin/egress-flows?verdict=blocked", nil)
+	e.AddAdminSession(t, blocked)
+	rec := httptest.NewRecorder()
+	(*e.H()).ServeHTTP(rec, blocked)
+	var resp api.EgressFlowLogResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil || len(resp.Flows) != 1 ||
+		resp.Flows[0].Protocol != "udp" || resp.Flows[0].RemotePort != 161 {
+		t.Fatalf("blocked flow = %+v, %v", resp, err)
 	}
 }
 

@@ -142,7 +142,7 @@ func TestNftCommandsPrivateFirewallRulesFailClosed(t *testing.T) {
 	if !containsCommand(joined, "iifname gpn-p00001 ip saddr { 10.42.8.0/24 } ip daddr 10.0.0.2 meta l4proto tcp ct original proto-dst 443 accept") {
 		t.Fatalf("protocol-aware ingress rule missing: %v", joined)
 	}
-	if !containsCommand(joined, "iifname tap0 ip daddr { 10.42.8.0/24 } drop") || !containsCommand(joined, "iifname gpn-p00001 drop") {
+	if !containsCommand(joined, "iifname tap0 ip daddr { 10.42.8.0/24 } goto egress_drop") || !containsCommand(joined, "iifname gpn-p00001 drop") {
 		t.Fatalf("firewall rules did not install terminal drops: %v", joined)
 	}
 }

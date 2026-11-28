@@ -5570,6 +5570,8 @@ type EgressFlowLog struct {
 	InstanceID string
 	RemoteIp   netip.Addr
 	RemotePort int32
+	Blocked    bool
+	Protocol   string
 }
 
 type EgressPolicy struct {

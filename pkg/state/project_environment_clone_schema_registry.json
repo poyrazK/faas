@@ -6867,10 +6867,12 @@
     "columns": [
       "account_id",
       "app_id",
+      "blocked",
       "id",
       "instance_id",
       "node_name",
       "observed_at",
+      "protocol",
       "remote_ip",
       "remote_port"
     ],

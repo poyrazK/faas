@@ -179,7 +179,7 @@ func rowHasSMTPPort(argv, port string) bool {
 		if !strings.Contains(row, port) {
 			continue
 		}
-		if !strings.Contains(row, "} drop") {
+		if !strings.Contains(row, "} drop") && !strings.Contains(row, "} goto "+netns.EgressDropChain) {
 			continue
 		}
 		return true

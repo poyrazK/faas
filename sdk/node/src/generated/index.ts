@@ -615,6 +615,7 @@ export type { CreateManagedPostgresBindingRequest } from './models/CreateManaged
 export type { CreateManagedPostgresDatabaseRequest } from './models/CreateManagedPostgresDatabaseRequest.js';
 export type { CreateManagedPostgresMaskedBranchRequest } from './models/CreateManagedPostgresMaskedBranchRequest.js';
 export type { CreateManagedRealtimeEndpointRequest } from './models/CreateManagedRealtimeEndpointRequest.js';
+export type { CreateMCPContractOverrideRequest } from './models/CreateMCPContractOverrideRequest.js';
 export type { CreateMCPReadinessMaintenanceRequest } from './models/CreateMCPReadinessMaintenanceRequest.js';
 export type { CreateMigrationCutoverRequest } from './models/CreateMigrationCutoverRequest.js';
 export type { CreateMigrationVerificationRequest } from './models/CreateMigrationVerificationRequest.js';
@@ -1811,6 +1812,12 @@ export type { MCPCatalogObserverStatus } from './models/MCPCatalogObserverStatus
 export type { MCPCatalogReceipt } from './models/MCPCatalogReceipt.js';
 export type { MCPConnectionHealthIssue } from './models/MCPConnectionHealthIssue.js';
 export type { MCPConnectionHealthSnapshot } from './models/MCPConnectionHealthSnapshot.js';
+export type { MCPContractChange } from './models/MCPContractChange.js';
+export type { MCPContractChangedWebhookPayload } from './models/MCPContractChangedWebhookPayload.js';
+export type { MCPContractChangelogEntry } from './models/MCPContractChangelogEntry.js';
+export type { MCPContractCheck } from './models/MCPContractCheck.js';
+export type { MCPContractOverride } from './models/MCPContractOverride.js';
+export type { MCPContractResponse } from './models/MCPContractResponse.js';
 export type { MCPInstanceHealthProbeResponse } from './models/MCPInstanceHealthProbeResponse.js';
 export type { MCPInstanceProtocolProbeRequest } from './models/MCPInstanceProtocolProbeRequest.js';
 export type { MCPInstanceProtocolProbeResponse } from './models/MCPInstanceProtocolProbeResponse.js';

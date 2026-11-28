@@ -19,3 +19,14 @@
   - **NFLOG to userspace for every new flow.** Complete and precise, but it needs a per-namespace netlink listener in vmmd and a new dependency. The set-and-diff approach reuses the poll that already runs.
   - **Persisting the conntrack snapshot.** It is capped at 32 endpoints and misses short flows.
   - **Host-side logging after NAT.** It loses the instance identity.
+
+## Addendum (2026-11-28): blocked attempts
+
+- **Context:** The log recorded only flows that got out. When an account was investigated for abuse, its egress counters showed SMTP and RFC1918 drops, but not which addresses and ports it tried, so operators could not tell a mail-sending or internal-probing workload from a misconfigured one.
+- **Decision:**
+  1. Each instance netns gets a regular `egress_drop` chain per family. Its first rule records guest TCP and UDP new flows in a dynamic `egress_blocked` set keyed by destination address, protocol and port (`addr . inet_proto . inet_service`, same 10-minute idle timeout and 65,535 entries as `egress_flows`); its second rule is an unconditional `drop`. A full set fails the update and the drop still runs.
+  2. The policy drops jump to it (`goto egress_drop`) instead of dropping inline: the per-CIDR internal, link-local and metadata denies, unmatched private-network destinations, non-TCP traffic, the SMTP ports, the DNS gate, the port policy and the terminal allowlist drop. Their named counters are unchanged. Rate, flood and conntrack-cap drops stay inline and unrecorded: their destinations are usually legitimate and a flood would only churn the set.
+  3. vmmd's existing poll also lists `egress_blocked` and writes new pairs to `egress_flow_log` with `blocked = true` and the protocol. The table gains `blocked` (default false) and `protocol` (default `tcp`), so older writers and rows read as allowed TCP flows.
+  4. `GET /v1/admin/egress-flows` returns `protocol` and `blocked` and accepts `verdict=allowed|blocked`; `gregalectl accounts egress-flows --verdict blocked` filters the same way.
+- **Consequences:** ICMP is still dropped without a record (it has no port). Namespaces created before the change have no set and log no blocked rows until the instance is recycled. A blocked pair is written once per 10 minutes of repeated attempts, so rows show what was tried, not how often; `vmmd_egress_denied_total{class}` keeps the volume.
+- **Rejected:** kernel `log` rules shipped through journald (logging from instance namespaces needs the host-wide `nf_log_all_netns` sysctl, and the lines would land in a second store with its own retention and access rules) and NFLOG (rejected above).

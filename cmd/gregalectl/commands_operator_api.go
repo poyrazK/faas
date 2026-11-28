@@ -19,6 +19,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -447,6 +448,7 @@ func cmdAccountsEgressFlows(args []string) int {
 	fs := flag.NewFlagSet(label, flag.ContinueOnError)
 	remote := fs.String("remote", "", "remote IP address or CIDR")
 	accountID := fs.String("account-id", "", "account id (uuid)")
+	verdict := fs.String("verdict", "", "allowed or blocked (default: both)")
 	from := fs.String("from", "", "window start, RFC 3339 (default: 24h before --to)")
 	to := fs.String("to", "", "window end, RFC 3339 (default: now)")
 	limit := fs.Int("limit", 0, "maximum rows (default 200, max 1000)")
@@ -463,6 +465,14 @@ func cmdAccountsEgressFlows(args []string) int {
 			return 2
 		}
 		query.Set("account_id", id)
+	}
+	switch value := strings.TrimSpace(*verdict); value {
+	case "":
+	case "allowed", "blocked":
+		query.Set("verdict", value)
+	default:
+		_, _ = fmt.Fprintf(osStderr, "gregalectl %s: --verdict must be allowed or blocked\n", label)
+		return 2
 	}
 	for name, value := range map[string]string{"from": *from, "to": *to} {
 		if value == "" {
@@ -494,8 +504,16 @@ func cmdAccountsEgressFlows(args []string) int {
 		return emitOperatorJSON(response)
 	}
 	for _, f := range response.Flows {
-		_, _ = fmt.Fprintf(osStdout, "observed_at=%s node=%s account_id=%s app_id=%s remote=%s:%d\n",
-			f.ObservedAt.UTC().Format(time.RFC3339), f.Node, f.AccountID, f.AppID, f.RemoteIP, f.RemotePort)
+		verdict, protocol := "allowed", f.Protocol
+		if f.Blocked {
+			verdict = "blocked"
+		}
+		if protocol == "" {
+			protocol = "tcp"
+		}
+		_, _ = fmt.Fprintf(osStdout, "observed_at=%s verdict=%s node=%s account_id=%s app_id=%s instance_id=%s remote=%s %s\n",
+			f.ObservedAt.UTC().Format(time.RFC3339), verdict, f.Node, f.AccountID, f.AppID, f.InstanceID, protocol,
+			net.JoinHostPort(f.RemoteIP, strconv.Itoa(f.RemotePort)))
 	}
 	if response.Truncated {
 		_, _ = fmt.Fprintln(osStdout, "truncated=true (narrow the window or filter to see more)")

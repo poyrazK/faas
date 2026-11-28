@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A destination address and TCP port a tenant guest opened a new flow to.
+ * A destination address and port a tenant guest opened a new flow to, or tried to and was blocked.
  */
 export type EgressFlowLogEntry = {
   observed_at: string;
@@ -13,5 +13,10 @@ export type EgressFlowLogEntry = {
   instance_id: string;
   remote_ip: string;
   remote_port: number;
+  protocol: 'tcp' | 'udp';
+  /**
+   * The egress policy dropped this attempt.
+   */
+  blocked: boolean;
 };
 

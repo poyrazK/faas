@@ -6307,6 +6307,7 @@ func (c *Client) ListInvoices(ctx context.Context, month, before string, limit i
 type EgressFlowQuery struct {
 	Remote    string // IP address or CIDR
 	AccountID string
+	Verdict   string // "allowed", "blocked" or "" for both
 	From, To  time.Time
 	Limit     int
 }
@@ -6320,6 +6321,9 @@ func (c *Client) ListEgressFlows(ctx context.Context, q EgressFlowQuery) (Egress
 	}
 	if q.AccountID != "" {
 		v.Set("account_id", q.AccountID)
+	}
+	if q.Verdict != "" {
+		v.Set("verdict", q.Verdict)
 	}
 	if !q.From.IsZero() {
 		v.Set("from", q.From.UTC().Format(time.RFC3339))

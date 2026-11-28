@@ -33,7 +33,7 @@ func TestEgressFlowLoggerWritesNewPairsOnce(t *testing.T) {
 		return sets[ns], nil
 	}
 	ops := wire.NewOpsMetrics("vmmd")
-	l := newEgressFlowLogger(store, list, "fsn-2", ops, nil)
+	l := newEgressFlowLogger(store, list, noDrops, "fsn-2", ops, nil)
 	live := map[string]fcvm.LiveEgressInstance{
 		"i-1":   {AppID: "app-1", AccountID: "acct-1", Netns: "fc-1"},
 		"i-bad": {AppID: "app-2", AccountID: "acct-2", Netns: "fc-bad"},
@@ -70,5 +70,68 @@ func TestEgressFlowLoggerWritesNewPairsOnce(t *testing.T) {
 	l.tick(context.Background(), t0.Add(13*time.Minute), live)
 	if _, ok := l.seen["i-1"]; ok {
 		t.Fatal("state kept for a gone instance")
+	}
+}
+
+func noDrops(context.Context, string) ([]netns.EgressFlow, error) { return nil, nil }
+
+// Blocked attempts from egress_blocked are logged as blocked rows with their
+// protocol, once per pair while it stays in the set, independently of the
+// allowed flows. A failed drop listing does not cost an instance its
+// allowed flows.
+func TestEgressFlowLoggerWritesBlockedAttempts(t *testing.T) {
+	store := state.NewMemStore()
+	flows := map[string][]netns.EgressFlow{}
+	drops := map[string][]netns.EgressFlow{}
+	list := func(_ context.Context, ns string) ([]netns.EgressFlow, error) { return flows[ns], nil }
+	listDrops := func(_ context.Context, ns string) ([]netns.EgressFlow, error) {
+		if ns == "fc-bad" {
+			return nil, errors.New("nft exec failed")
+		}
+		return drops[ns], nil
+	}
+	l := newEgressFlowLogger(store, list, listDrops, "bhs-2", nil, nil)
+	live := map[string]fcvm.LiveEgressInstance{
+		"i-1":   {AppID: "app-1", AccountID: "acct-1", Netns: "fc-1"},
+		"i-bad": {AppID: "app-2", AccountID: "acct-2", Netns: "fc-bad"},
+	}
+	smtp := netns.EgressFlow{Addr: netip.MustParseAddr("198.51.100.25"), Protocol: "tcp", Port: 25}
+	internal := netns.EgressFlow{Addr: netip.MustParseAddr("10.0.0.5"), Protocol: "udp", Port: 161}
+	t0 := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+
+	flows["fc-1"] = []netns.EgressFlow{flow("198.51.100.10", 443)}
+	flows["fc-bad"] = []netns.EgressFlow{flow("203.0.113.1", 443)}
+	drops["fc-1"] = []netns.EgressFlow{smtp}
+	l.tick(context.Background(), t0, live)
+	drops["fc-1"] = []netns.EgressFlow{smtp, internal}
+	l.tick(context.Background(), t0.Add(15*time.Second), live)
+
+	yes, no := true, false
+	blocked, err := store.ListEgressFlows(context.Background(), state.EgressFlowFilter{Blocked: &yes, From: t0, To: t0.Add(time.Hour), Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocked) != 2 {
+		t.Fatalf("blocked rows = %+v, want smtp then internal", blocked)
+	}
+	if got := blocked[0]; !got.Blocked || got.Protocol != "udp" || got.RemoteIP != internal.Addr || got.RemotePort != 161 ||
+		got.AccountID != "acct-1" || got.InstanceID != "i-1" || got.NodeName != "bhs-2" {
+		t.Fatalf("newest blocked row = %+v", got)
+	}
+	if got := blocked[1]; got.Protocol != "tcp" || got.RemotePort != 25 || !got.ObservedAt.Equal(t0) {
+		t.Fatalf("oldest blocked row = %+v", got)
+	}
+	allowed, err := store.ListEgressFlows(context.Background(), state.EgressFlowFilter{Blocked: &no, From: t0, To: t0.Add(time.Hour), Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(allowed) != 2 || allowed[0].Blocked || allowed[0].Protocol != "tcp" {
+		t.Fatalf("allowed rows = %+v, want one per instance", allowed)
+	}
+
+	delete(live, "i-1")
+	l.tick(context.Background(), t0.Add(time.Minute), live)
+	if _, ok := l.seenDrops["i-1"]; ok {
+		t.Fatal("drop state kept for a gone instance")
 	}
 }

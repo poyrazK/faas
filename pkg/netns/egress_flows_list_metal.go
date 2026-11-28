@@ -14,22 +14,33 @@ import (
 // reads as no flows rather than an error, so pre-upgrade instances do not
 // spam the poll log until they are recycled.
 func ListEgressFlowsInNetns(ctx context.Context, netnsName string) ([]EgressFlow, error) {
+	return listEgressSetInNetns(ctx, netnsName, EgressFlowSet, parseEgressFlowSet)
+}
+
+// ListEgressDropsInNetns lists one instance namespace's egress_blocked sets:
+// guest TCP and UDP new flows a policy rule blocked. Namespaces created
+// before the set existed read as empty.
+func ListEgressDropsInNetns(ctx context.Context, netnsName string) ([]EgressFlow, error) {
+	return listEgressSetInNetns(ctx, netnsName, EgressBlockedSet, parseEgressBlockedSet)
+}
+
+func listEgressSetInNetns(ctx context.Context, netnsName, set string, parse func([]byte) ([]EgressFlow, error)) ([]EgressFlow, error) {
 	if netnsName == "" {
-		return nil, fmt.Errorf("list egress flows: empty netns")
+		return nil, fmt.Errorf("list %s: empty netns", set)
 	}
 	var flows []EgressFlow
 	for _, family := range []string{"ip", "ip6"} {
 		var stderr bytes.Buffer
-		cmd := exec.CommandContext(ctx, "ip", "netns", "exec", netnsName, "nft", "-j", "list", "set", family, "faas", EgressFlowSet)
+		cmd := exec.CommandContext(ctx, "ip", "netns", "exec", netnsName, "nft", "-j", "list", "set", family, "faas", set)
 		cmd.Stderr = &stderr
 		out, err := cmd.Output()
 		if err != nil {
 			if bytes.Contains(stderr.Bytes(), []byte("No such file or directory")) {
 				continue
 			}
-			return flows, fmt.Errorf("list egress flows %s %s: %w: %s", netnsName, family, err, bytes.TrimSpace(stderr.Bytes()))
+			return flows, fmt.Errorf("list %s %s %s: %w: %s", set, netnsName, family, err, bytes.TrimSpace(stderr.Bytes()))
 		}
-		parsed, err := parseEgressFlowSet(out)
+		parsed, err := parse(out)
 		if err != nil {
 			return flows, err
 		}

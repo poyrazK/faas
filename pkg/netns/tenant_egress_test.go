@@ -70,11 +70,11 @@ func TestTenantEgressRuleOrder(t *testing.T) {
 		lineIndex(t, lines, "rule ip faas forward iifname tap0 ip daddr 10.100.0.1 udp dport 53 accept"),
 		lineIndex(t, lines, "rule ip faas forward iifname tap0 ip daddr 10.0.0.0/8"),
 		lineIndex(t, lines, "rule ip faas forward iifname tap0 ct state new limit rate over 10/second burst 40 packets counter name faas_egress_rate drop"),
-		lineIndex(t, lines, "rule ip faas forward iifname tap0 meta l4proto != tcp counter name faas_egress_denied drop"),
+		lineIndex(t, lines, "rule ip faas forward iifname tap0 meta l4proto != tcp counter name faas_egress_denied goto egress_drop"),
 		lineIndex(t, lines, "rule ip faas forward iifname tap0 ip daddr { 1.2.3.0/24 }"),
-		lineIndex(t, lines, "rule ip faas forward iifname tap0 tcp dport {", "} drop"),
-		lineIndex(t, lines, "rule ip faas forward iifname tap0 tcp dport != @egress_ports counter name faas_egress_denied drop"),
-		lineIndex(t, lines, "rule ip faas forward iifname tap0 counter name deny_allowlist drop"),
+		lineIndex(t, lines, "rule ip faas forward iifname tap0 tcp dport {", "} goto egress_drop"),
+		lineIndex(t, lines, "rule ip faas forward iifname tap0 tcp dport != @egress_ports counter name faas_egress_denied goto egress_drop"),
+		lineIndex(t, lines, "rule ip faas forward iifname tap0 counter name deny_allowlist goto egress_drop"),
 	}
 	for i := 1; i < len(v4); i++ {
 		if v4[i-1] >= v4[i] {
@@ -198,7 +198,7 @@ func TestTenantEgressDNSGate(t *testing.T) {
 	for _, tc := range []struct{ family, addrType string }{{"ip", "ipv4_addr"}, {"ip6", "ipv6_addr"}} {
 		lineIndex(t, lines, "add counter "+tc.family+" faas faas_egress_unresolved")
 		lineIndex(t, lines, "add set "+tc.family+" faas egress_resolved { type "+tc.addrType+" ; flags timeout ; size 65535 ; }")
-		gate := lineIndex(t, lines, "rule "+tc.family+" faas forward iifname tap0 ct state new "+tc.family+" daddr != @egress_resolved counter name faas_egress_unresolved drop")
+		gate := lineIndex(t, lines, "rule "+tc.family+" faas forward iifname tap0 ct state new "+tc.family+" daddr != @egress_resolved counter name faas_egress_unresolved goto egress_drop")
 		port := lineIndex(t, lines, "rule "+tc.family+" faas forward iifname tap0 tcp dport != @egress_ports")
 		if gate >= port {
 			t.Fatalf("%s: DNS gate (%d) must precede the port policy (%d)", tc.family, gate, port)

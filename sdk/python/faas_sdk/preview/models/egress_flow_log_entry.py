@@ -7,12 +7,14 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.egress_flow_log_entry_protocol import EgressFlowLogEntryProtocol, check_egress_flow_log_entry_protocol
+
 T = TypeVar("T", bound="EgressFlowLogEntry")
 
 
 @_attrs_define
 class EgressFlowLogEntry:
-    """A destination address and TCP port a tenant guest opened a new flow to."""
+    """A destination address and port a tenant guest opened a new flow to, or tried to and was blocked."""
 
     observed_at: datetime.datetime
     node: str
@@ -21,6 +23,9 @@ class EgressFlowLogEntry:
     instance_id: str
     remote_ip: str
     remote_port: int
+    protocol: EgressFlowLogEntryProtocol
+    blocked: bool
+    """The egress policy dropped this attempt."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -38,6 +43,10 @@ class EgressFlowLogEntry:
 
         remote_port = self.remote_port
 
+        protocol: str = self.protocol
+
+        blocked = self.blocked
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -49,6 +58,8 @@ class EgressFlowLogEntry:
                 "instance_id": instance_id,
                 "remote_ip": remote_ip,
                 "remote_port": remote_port,
+                "protocol": protocol,
+                "blocked": blocked,
             }
         )
 
@@ -71,6 +82,10 @@ class EgressFlowLogEntry:
 
         remote_port = d.pop("remote_port")
 
+        protocol = check_egress_flow_log_entry_protocol(d.pop("protocol"))
+
+        blocked = d.pop("blocked")
+
         egress_flow_log_entry = cls(
             observed_at=observed_at,
             node=node,
@@ -79,6 +94,8 @@ class EgressFlowLogEntry:
             instance_id=instance_id,
             remote_ip=remote_ip,
             remote_port=remote_port,
+            protocol=protocol,
+            blocked=blocked,
         )
 
         egress_flow_log_entry.additional_properties = d

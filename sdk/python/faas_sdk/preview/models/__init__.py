@@ -1128,6 +1128,7 @@ from .create_managed_realtime_endpoint_request_auth_mode import CreateManagedRea
 from .create_managed_realtime_endpoint_request_auth_required_claims import (
     CreateManagedRealtimeEndpointRequestAuthRequiredClaims,
 )
+from .create_mcp_contract_override_request import CreateMCPContractOverrideRequest
 from .create_mcp_readiness_maintenance_request import CreateMCPReadinessMaintenanceRequest
 from .create_migration_cutover_request import CreateMigrationCutoverRequest
 from .create_migration_verification_request import CreateMigrationVerificationRequest
@@ -1827,6 +1828,7 @@ from .edge_waf_review_response import EdgeWAFReviewResponse
 from .egress_circuit_breaker_policy import EgressCircuitBreakerPolicy
 from .egress_circuit_breaker_policy_state import EgressCircuitBreakerPolicyState
 from .egress_flow_log_entry import EgressFlowLogEntry
+from .egress_flow_log_entry_protocol import EgressFlowLogEntryProtocol
 from .egress_flow_log_response import EgressFlowLogResponse
 from .egress_overage_request import EgressOverageRequest
 from .egress_overage_response import EgressOverageResponse
@@ -2988,6 +2990,7 @@ from .list_dev_bridges_response import ListDevBridgesResponse
 from .list_durable_entity_registry_response_200 import ListDurableEntityRegistryResponse200
 from .list_edge_rule_events_outcome import ListEdgeRuleEventsOutcome
 from .list_edge_rule_lists_response import ListEdgeRuleListsResponse
+from .list_egress_flows_verdict import ListEgressFlowsVerdict
 from .list_env_values import ListEnvValues
 from .list_environment_git_releases_request import ListEnvironmentGitReleasesRequest
 from .list_environment_git_releases_response import ListEnvironmentGitReleasesResponse
@@ -3464,6 +3467,16 @@ from .mcp_connection_health_issue import MCPConnectionHealthIssue
 from .mcp_connection_health_issue_kind import MCPConnectionHealthIssueKind
 from .mcp_connection_health_snapshot import MCPConnectionHealthSnapshot
 from .mcp_connection_health_snapshot_counts import MCPConnectionHealthSnapshotCounts
+from .mcp_contract_change import MCPContractChange
+from .mcp_contract_change_severity import MCPContractChangeSeverity
+from .mcp_contract_changed_webhook_payload import MCPContractChangedWebhookPayload
+from .mcp_contract_changed_webhook_payload_verdict import MCPContractChangedWebhookPayloadVerdict
+from .mcp_contract_changelog_entry import MCPContractChangelogEntry
+from .mcp_contract_changelog_entry_verdict import MCPContractChangelogEntryVerdict
+from .mcp_contract_check import MCPContractCheck
+from .mcp_contract_check_verdict import MCPContractCheckVerdict
+from .mcp_contract_override import MCPContractOverride
+from .mcp_contract_response import MCPContractResponse
 from .mcp_instance_health_probe_response import MCPInstanceHealthProbeResponse
 from .mcp_instance_protocol_probe_request import MCPInstanceProtocolProbeRequest
 from .mcp_instance_protocol_probe_request_protocol_version import MCPInstanceProtocolProbeRequestProtocolVersion
@@ -5803,6 +5816,7 @@ from .put_managed_postgres_custom_role_request import PutManagedPostgresCustomRo
 from .put_managed_postgres_custom_role_request_default_for_item import PutManagedPostgresCustomRoleRequestDefaultForItem
 from .put_managed_postgres_custom_role_request_granted_to_item import PutManagedPostgresCustomRoleRequestGrantedToItem
 from .put_mcp_listing_request import PutMCPListingRequest
+from .put_mcp_listing_request_contract import PutMCPListingRequestContract
 from .put_operation_webhook_binding_request import PutOperationWebhookBindingRequest
 from .put_operation_webhook_binding_request_mode import PutOperationWebhookBindingRequestMode
 from .put_outbound_ai_feedback_request import PutOutboundAIFeedbackRequest
@@ -8702,6 +8716,7 @@ __all__ = (
     "CreateManagedRealtimeEndpointRequestAuthAlgorithmsItem",
     "CreateManagedRealtimeEndpointRequestAuthMode",
     "CreateManagedRealtimeEndpointRequestAuthRequiredClaims",
+    "CreateMCPContractOverrideRequest",
     "CreateMCPReadinessMaintenanceRequest",
     "CreateMigrationCutoverRequest",
     "CreateMigrationVerificationRequest",
@@ -9384,6 +9399,7 @@ __all__ = (
     "EgressCircuitBreakerPolicy",
     "EgressCircuitBreakerPolicyState",
     "EgressFlowLogEntry",
+    "EgressFlowLogEntryProtocol",
     "EgressFlowLogResponse",
     "EgressOverageRequest",
     "EgressOverageResponse",
@@ -10495,6 +10511,7 @@ __all__ = (
     "ListDurableEntityRegistryResponse200",
     "ListEdgeRuleEventsOutcome",
     "ListEdgeRuleListsResponse",
+    "ListEgressFlowsVerdict",
     "ListEnvironmentGitReleasesRequest",
     "ListEnvironmentGitReleasesResponse",
     "ListEnvValues",
@@ -10923,6 +10940,16 @@ __all__ = (
     "MCPConnectionHealthIssueKind",
     "MCPConnectionHealthSnapshot",
     "MCPConnectionHealthSnapshotCounts",
+    "MCPContractChange",
+    "MCPContractChangedWebhookPayload",
+    "MCPContractChangedWebhookPayloadVerdict",
+    "MCPContractChangelogEntry",
+    "MCPContractChangelogEntryVerdict",
+    "MCPContractChangeSeverity",
+    "MCPContractCheck",
+    "MCPContractCheckVerdict",
+    "MCPContractOverride",
+    "MCPContractResponse",
     "MCPInstanceHealthProbeResponse",
     "MCPInstanceProtocolProbeRequest",
     "MCPInstanceProtocolProbeRequestProtocolVersion",
@@ -13090,6 +13117,7 @@ __all__ = (
     "PutManagedPostgresCustomRoleRequestDefaultForItem",
     "PutManagedPostgresCustomRoleRequestGrantedToItem",
     "PutMCPListingRequest",
+    "PutMCPListingRequestContract",
     "PutOperationWebhookBindingRequest",
     "PutOperationWebhookBindingRequestMode",
     "PutOutboundAIFeedbackRequest",

@@ -224,3 +224,22 @@ Each row names the node, account, app and instance. Pick the rows whose node own
 address A. Widen `--remote` to the reported CIDR if the report names a range.
 Then hold the account (`gregalectl accounts abuse-hold place`) and reply to the report
 with the action taken.
+
+## What a tenant tried and was blocked from
+
+The same log also keeps the attempts the egress policy blocked: internal and
+metadata addresses, mail ports (25/465/587), ports outside the plan, destinations
+never resolved through the platform resolver, and anything outside an app's
+allowlist. Blocked rows carry `verdict=blocked` and the protocol (TCP or UDP):
+
+```
+gregalectl accounts egress-flows --account-id <id> --verdict blocked --from <T-1h>
+```
+
+Port 25/465/587 rows mean the workload tried to send mail; `10.*`, `172.16.*`,
+`192.168.*`, `100.64.*` or `169.254.*` rows mean it probed internal or metadata
+addresses. A pair is logged once and again only after 10 minutes without another
+attempt, so the rows show which destinations were tried, not how often; the
+`vmmd_egress_denied_total{class}` counters give the volume. Rate- and flood-limited
+connections, and ICMP, are counted but not logged. Instances started before this
+was deployed log no blocked rows until they are recycled.

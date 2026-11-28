@@ -132,6 +132,30 @@ func TestOperatorEgressFlowsQuery(t *testing.T) {
 	}
 }
 
+func TestOperatorEgressFlowsBlocked(t *testing.T) {
+	at := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+	seen := operatorAPIServer(t, api.EgressFlowLogResponse{Flows: []api.EgressFlowLogEntry{
+		{ObservedAt: at, Node: "bhs-2", AccountID: testAccountID, AppID: "app-1", InstanceID: "i-1",
+			RemoteIP: "2001:db8::25", RemotePort: 587, Protocol: "tcp", Blocked: true},
+	}})
+	out, stderr, restore := captureOperatorIO()
+	defer restore()
+	if code := run([]string{"accounts", "egress-flows", "--account-id", testAccountID, "--verdict", "blocked"}); code != 0 {
+		t.Fatalf("run = %d, stderr=%s", code, stderr.String())
+	}
+	if got := (*seen)[0]; got.query != "account_id="+testAccountID+"&verdict=blocked" {
+		t.Fatalf("request = %+v", got)
+	}
+	want := "observed_at=2026-11-28T12:00:00Z verdict=blocked node=bhs-2 account_id=" + testAccountID +
+		" app_id=app-1 instance_id=i-1 remote=tcp [2001:db8::25]:587\n"
+	if out.String() != want {
+		t.Fatalf("stdout = %q, want %q", out.String(), want)
+	}
+	if code := run([]string{"accounts", "egress-flows", "--verdict", "dropped"}); code != 2 {
+		t.Fatalf("bad verdict run = %d, want 2", code)
+	}
+}
+
 func TestOperatorPostgresUsageImportPreviewThenApply(t *testing.T) {
 	seen := operatorAPIServer(t, api.ManagedPostgresUsageImportResult{Revision: "rev-1"})
 	_, stderr, restore := captureOperatorIO()

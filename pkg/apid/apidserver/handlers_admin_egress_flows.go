@@ -17,10 +17,11 @@ const (
 )
 
 // listEgressFlows is GET /v1/admin/egress-flows (ADR-371): the egress flow
-// log filtered by remote address or CIDR (remote), account (account_id)
-// and a [from, to) window, newest first. It answers "which tenant
-// connected to <ip> at <time>" when a provider reports traffic from the
-// platform's egress address.
+// log filtered by remote address or CIDR (remote), account (account_id),
+// verdict (allowed or blocked) and a [from, to) window, newest first. It
+// answers "which tenant connected to <ip> at <time>" when a provider reports
+// traffic from the platform's egress address, and "what did this tenant try
+// that the egress policy blocked" (SMTP, internal addresses, other ports).
 func (s *server) listEgressFlows(w http.ResponseWriter, r *http.Request, _ state.Account) {
 	filter, prob := parseEgressFlowFilter(r, timeNow().UTC())
 	if prob != nil {
@@ -42,6 +43,7 @@ func (s *server) listEgressFlows(w http.ResponseWriter, r *http.Request, _ state
 		resp.Flows = append(resp.Flows, api.EgressFlowLogEntry{
 			ObservedAt: row.ObservedAt, Node: row.NodeName, AccountID: row.AccountID, AppID: row.AppID,
 			InstanceID: row.InstanceID, RemoteIP: row.RemoteIP.String(), RemotePort: int(row.RemotePort),
+			Protocol: row.Protocol, Blocked: row.Blocked,
 		})
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -53,6 +55,16 @@ func parseEgressFlowFilter(r *http.Request, now time.Time) (state.EgressFlowFilt
 		return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad egress flow query", detail)
 	}
 	f := state.EgressFlowFilter{AccountID: strings.TrimSpace(q.Get("account_id")), To: now, Limit: egressFlowDefaultLimit}
+	switch strings.TrimSpace(q.Get("verdict")) {
+	case "":
+	case "allowed":
+		f.Blocked = new(bool)
+	case "blocked":
+		blocked := true
+		f.Blocked = &blocked
+	default:
+		return f, bad("verdict must be allowed or blocked")
+	}
 	if remote := strings.TrimSpace(q.Get("remote")); remote != "" {
 		if strings.Contains(remote, "/") {
 			p, err := netip.ParsePrefix(remote)

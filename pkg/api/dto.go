@@ -13844,7 +13844,8 @@ type CustomMetricListResponse struct {
 }
 
 // EgressFlowLogEntry is one ADR-371 egress flow log row: a destination
-// address and TCP port a tenant guest opened a new flow to.
+// address and port a tenant guest opened a new flow to or, when Blocked,
+// tried to and the egress policy dropped. Protocol is "tcp" or "udp".
 type EgressFlowLogEntry struct {
 	ObservedAt time.Time `json:"observed_at"`
 	Node       string    `json:"node"`
@@ -13853,6 +13854,8 @@ type EgressFlowLogEntry struct {
 	InstanceID string    `json:"instance_id"`
 	RemoteIP   string    `json:"remote_ip"`
 	RemotePort int       `json:"remote_port"`
+	Protocol   string    `json:"protocol"`
+	Blocked    bool      `json:"blocked"`
 }
 
 // EgressFlowLogResponse is GET /v1/admin/egress-flows. Truncated is true
