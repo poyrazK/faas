@@ -536,3 +536,66 @@ app-wide indexes and full clones copy consumers, keys and plan assignments.
   per-environment identity in that release, which also lets a full clone
   copy workflows disabled.
 
+
+## Amendment 2026-11-28: the contract release for consumers and alert rules
+
+Status: accepted.
+
+### Problem
+
+Release step 3 above drops the app-wide consumer, key and alert rule
+indexes and lets a full clone copy them. Three questions were open: what a
+copy carries, what keeps a copied credential from outliving production's,
+and what a clone does with rules that point at production's own objects.
+
+### Decision
+
+- **Contract.** `20261128105922100_stage_identity_contract` drops
+  `api_consumers_app_external_ref_uniq`, `consumer_keys_app_prefix_idx`,
+  `consumer_keys_unique_name` and `alert_rules_app_name_uniq`
+  concurrently. Every writer since rc.385 targets the per-environment
+  indexes, and gateway key lookups filter by environment, so N-1 runs
+  beside it. A stage may now reuse production's external reference, key
+  names and rule names.
+- **Consumers.** A full clone copies the source environment's active
+  consumers that no platform tenant manages, with their active, unexpired
+  keys (same name, prefix, scopes, expiry and secret) and their plan
+  assignments (plans stay app-wide and shared). The capture holds no
+  secret: the copy reads the hash from the source key in the clone's
+  transaction and skips a key revoked since capture. Usage, statements,
+  credits, trials and identity links stay with the source. Tenant-managed
+  consumers stay in production, where the tenant's lifecycle governs
+  them.
+- **Revocation follows the copy.** Revoking a production consumer or key
+  revokes the stage consumers with its external reference, or the stage
+  keys with its prefix (`api_consumer_revocation_cascade`,
+  `consumer_key_revocation_cascade`). These are triggers, so every revoke
+  path (API, self-service close, N-1 apid) cascades. A stage's own
+  revocation never reaches production.
+- **Alert rules.** A full clone copies the source's app rules paused
+  (disabled, observation off, state `ok`, no history), with their
+  notification channels. A rule that names an SLO, a synthetic check, an
+  edge rule or an event subscription, or reads an environment's anomaly
+  baseline, stays with the source, because the stage has none of those to
+  point at. The clone result counts the rules it left behind.
+- **Quotas.** Copied keys and rules count against the plan's caps
+  (`ConsumerKeysPerApp`/`PerAccount`, `AlertRuleLimitPerApp`/`PerAccount`)
+  under the billing subject's quota lock, as a cron copy does. A copy that
+  would pass one refuses the clone.
+- **Admission and publication.** `api_consumers`, `consumer_keys`,
+  `api_consumer_plan_assignments`, `alert_rules` and `alert_rule_channels`
+  declare capture and materialize; `api_consumer_plans` is shared. A source
+  with consumers or rules on a project app outside the captured workloads
+  is refused. Publication proves that the stage holds exactly the captured
+  consumers, plans and rules (every rule paused). A key may be missing, or a
+  copy revoked, only when its source has been revoked since.
+- Consumer billing policies, rate cards and sign-up settings still have no
+  clone strategy, so a monetized source stays refused until a later slice.
+
+### Consequences
+
+- A client's production key works on a full clone's stage host from the
+  start, and stops working there when production revokes it.
+- Stored workflows keep `stored_workflows_pkey (app_id, name)`; their side
+  tables move to the per-environment identity next, and the following
+  release drops that key and lets a clone copy workflows disabled.

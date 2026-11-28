@@ -63,7 +63,7 @@ func TestPgCloneCopiesConsumersAndPausedAlertRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := s.AssignAPIConsumerPlan(ctx, APIConsumerPlanAssignment{AccountID: account.ID, AppID: app.ID, ConsumerID: consumer.ID,
-		PlanID: plan.ID, EffectiveFrom: time.Now().Add(-time.Hour).UTC().Truncate(time.Microsecond)}); err != nil {
+		PlanID: plan.ID, EffectiveFrom: time.Now().Add(-time.Hour).UTC().Truncate(time.Minute)}); err != nil {
 		t.Fatal(err)
 	}
 	rule, err := s.CreateAlertRule(ctx, AlertRule{AccountID: account.ID, AppID: app.ID, Name: "errors", Enabled: true,
