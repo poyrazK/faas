@@ -1,5 +1,8 @@
 -- filename: 20261127074004247_sandbox_session_forks.sql
 -- migration-compat: contract
+-- +goose NO TRANSACTION
+
+-- +goose Up
 -- ADR-20261122132055 §3: forks. A fork is a queued session forked_from its
 -- source that restores fork_capture_id: the source's live fork capture, or
 -- its pause capture when it was paused. apid sets fork_requested_at on a
@@ -22,9 +25,6 @@
 -- old one dropped; the index builds concurrently. Every step is re-runnable.
 -- Contract only because it drops a unique index (the old live-capture one,
 -- no ON CONFLICT target): a full release applies it.
--- +goose NO TRANSACTION
-
--- +goose Up
 SET lock_timeout = '5s';
 -- Both tables hold at most a few thousand rows.
 SET statement_timeout = '10min';
