@@ -385,3 +385,10 @@ func lookupProblem(r *http.Request, err error) *api.Problem {
 func writeLookupError(w http.ResponseWriter, r *http.Request, err error) {
 	api.WriteProblem(w, lookupProblem(r, err))
 }
+
+// AddressedApp is the app a request's URL addresses, resolved as Wrap
+// resolves it, for a check that runs after Wrap authorized the request.
+// addressed is false for a route that names no app.
+func AddressedApp(r *http.Request, store Store, actorID string) (app state.App, addressed bool, err error) {
+	return addressedApp(r, store, actorID)
+}

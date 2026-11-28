@@ -524,6 +524,10 @@ func (s *server) bindRedisCache(w http.ResponseWriter, r *http.Request, acct sta
 		s.refuseRedisChange(w, r, cacheApp, api.ErrValidation("a cache cannot be bound to itself"), nil)
 		return
 	}
+	if s.isManagedCacheApp(r.Context(), target.ID) {
+		s.refuseRedisChange(w, r, cacheApp, api.ErrValidation(target.Slug+" is a managed Redis cache; a cache cannot be bound to another cache"), nil)
+		return
+	}
 	if problem := s.grantRedisCache(r.Context(), acct, cacheApp, target); problem != nil {
 		s.refuseRedisChange(w, r, cacheApp, problem, nil)
 		return

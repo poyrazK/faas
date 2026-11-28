@@ -85,7 +85,7 @@ func (s *server) authVerifiedLimited(next accountHandler) http.HandlerFunc {
 // The handler account remains the storage/quota subject, while the request
 // principal remains the actor for scope, MFA, verification and audit checks.
 func (s *server) authorizeAppResource(next accountHandler) accountHandler {
-	return s.supportAccessGate(accountHandler(appaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), projectaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), postgresaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), func() *managedpostgres.Service { return s.managedPostgres }, objectaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), queueaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), taskexecution.Wrap(s.store, middleware.AccountHandler(s.monetizationAccount(next))))))))))
+	return s.supportAccessGate(accountHandler(appaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), projectaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), postgresaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), func() *managedpostgres.Service { return s.managedPostgres }, objectaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), queueaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), taskexecution.Wrap(s.store, middleware.AccountHandler(s.refuseManagedCacheAppChange(s.monetizationAccount(next)))))))))))
 }
 
 func (s *server) authorizeDashboardProject(next http.Handler, w http.ResponseWriter, r *http.Request, actor state.Account) {
@@ -121,6 +121,10 @@ func (s *server) authorizeDashboardApp(next http.Handler, w http.ResponseWriter,
 	gate := r.WithContext(middleware.WithPrincipal(r.Context(), actor, nil, nil))
 	if _, problem := appaccess.Authorize(gate, s.store, loadOrgAuditFrom(s.audit), actor, app); problem != nil {
 		api.WriteProblem(w, problem)
+		return
+	}
+	if problem := s.managedCacheAppProblem(gate, app); problem != nil {
+		s.refuseRedis(w, gate, problem, nil, "app_id", app.ID)
 		return
 	}
 	// The handlers read the decision from the gated request: the principal
