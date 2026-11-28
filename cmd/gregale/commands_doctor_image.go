@@ -58,7 +58,7 @@ func registerDoctorImageFlags(fs *flag.FlagSet) *doctorImageFlags {
 	fs.StringVar(&f.user, "registry-user", "", "registry username (requires --registry-password-stdin)")
 	fs.BoolVar(&f.passwordStdin, "registry-password-stdin", false, "read registry password or token from stdin")
 	fs.StringVar(&f.dockerConfig, "docker-config", "", "use the image registry's credentials from this Docker config.json or its directory")
-	fs.BoolVar(&f.boot, "boot", false, "with --image, run the image with local Docker and check it starts, serves HTTP on 0.0.0.0:$PORT and stays up")
+	fs.BoolVar(&f.boot, "boot", false, "with --image, run the image with local Docker and check it starts, serves HTTP (or gRPC health) on 0.0.0.0:$PORT and stays up")
 	fs.StringVar(&f.envFile, "env-file", "", "with --boot, pass KEY=VALUE lines from this file to the container, docker env-file format")
 	fs.IntVar(&f.ramMB, "ram", 0, "with --boot, memory limit in MB (default: --app's RAM, else your plan's default for a new app)")
 	fs.StringVar(&f.healthPath, "healthcheck-path", "", "with --boot, probe this readiness path instead of / and require 2xx, as Gregale does (for example /healthz)")

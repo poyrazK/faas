@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
@@ -85,7 +86,7 @@ func TestDoctorBootGRPCNothingListening(t *testing.T) {
 	docker := newFakeBootDocker(t)
 	docker.write(t, "addr", closedAddr(t))
 	_, report, _ := runDoctorBoot(t, bootInspector("3000/tcp"), "--healthcheck-grpc", "--json")
-	if c := bootCheck(t, report, "boot-listener"); c.Status != "error" || !strings.Contains(c.Hint, "Nothing answered gRPC") {
+	if c := bootCheck(t, report, "boot-listener"); c.Status != "error" || !strings.Contains(c.Hint, "Nothing answered plaintext gRPC") {
 		t.Fatalf("boot-listener = %+v", c)
 	}
 }
@@ -100,5 +101,38 @@ func TestDoctorBootGRPCFlagValidation(t *testing.T) {
 		if code, _, _ := runDoctorBoot(t, bootInspector("3000/tcp"), args...); code == 0 {
 			t.Errorf("%q accepted", args)
 		}
+	}
+}
+
+// An app that binds late in the window is still seen: reconnects keep the
+// poll's pace instead of gRPC's growing backoff (1 s, 2.6 s, ...).
+func TestDoctorBootGRPCLateListener(t *testing.T) {
+	docker := newFakeBootDocker(t)
+	main.SetDoctorBootTimings(t.Cleanup, 2500*time.Millisecond, 50*time.Millisecond, 20*time.Millisecond)
+	addr := closedAddr(t)
+	docker.write(t, "addr", addr)
+	srv := grpc.NewServer()
+	healthpb.RegisterHealthServer(srv, health.NewServer())
+	t.Cleanup(srv.Stop)
+	time.AfterFunc(1200*time.Millisecond, func() {
+		l, err := net.Listen("tcp", addr)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		_ = srv.Serve(l)
+	})
+	_, report, _ := runDoctorBoot(t, bootInspector("3000/tcp"), "--healthcheck-grpc", "--json")
+	if c := bootCheck(t, report, "boot-grpc-health"); c.Status != "ok" {
+		t.Fatalf("boot-grpc-health = %+v", c)
+	}
+}
+
+func TestDoctorBootGRPCExitedFixNamesGRPC(t *testing.T) {
+	docker := newFakeBootDocker(t)
+	docker.write(t, "state", "false 1 false")
+	_, report, _ := runDoctorBoot(t, bootInspector("3000/tcp"), "--healthcheck-grpc", "--json")
+	if c := bootCheck(t, report, "boot-start"); c.Status != "error" || !strings.Contains(c.Fix, "serve plaintext gRPC") {
+		t.Fatalf("boot-start = %+v", c)
 	}
 }

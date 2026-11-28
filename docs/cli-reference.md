@@ -154,7 +154,7 @@ Traffic: --rollout MODE. Retry failed: gregale release attempt retry SESSION_ID
 | `--image <REF>` | deploy a digest-pinned container image |  |
 | `--docker-config <PATH>` | with --image, save the credential `docker login` stored for the image&#39;s registry (config.json or its directory, credential helpers included) to the app before deploying |  |
 | `--local-image <NAME>` | deploy a linux/amd64 image from this machine&#39;s Docker without a registry (uploads `docker save` output) |  |
-| `--boot` | with --local-image, first run the image with local Docker (as `doctor --boot` does) and stop before saving or uploading it if it crashes, listens on the wrong address, runs out of memory or fails --healthcheck-path or its HEALTHCHECK |  |
+| `--boot` | with --local-image, first run the image with local Docker (as `doctor --boot` does) and stop before saving or uploading it if it crashes, listens on the wrong address, runs out of memory or fails --healthcheck-path, --healthcheck-grpc or its HEALTHCHECK |  |
 | `--boot-env-file <FILE>` | with --boot, KEY=VALUE lines for the local boot only (docker env-file format); nothing in it is uploaded |  |
 | `--image-archive <PATH>` | deploy a linux/amd64 image from a `docker save` archive without a registry |  |
 | `--tarball <PATH>` | deploy from a source tarball |  |
@@ -263,7 +263,7 @@ Check local source, an image or project prerequisites before deploying
 | `--registry-user <USER>` | without --project: registry username; requires --registry-password-stdin |  |
 | `--registry-password-stdin` | without --project: read the registry password or token from stdin |  |
 | `--docker-config <PATH>` | without --project: with --image, use the credentials `docker login` stored for the image&#39;s registry, from this config.json or its directory |  |
-| `--boot` | without --project: with --image, also run the image with local Docker and check it starts, answers GET / on 0.0.0.0:$PORT and stays up |  |
+| `--boot` | without --project: with --image, also run the image with local Docker and check it starts, answers GET / on 0.0.0.0:$PORT (gRPC health with --healthcheck-grpc) and stays up |  |
 | `--env-file <FILE>` | without --project: with --boot, pass KEY=VALUE lines from this file to the container |  |
 | `--ram <MB>` | without --project: with --boot, the container&#39;s memory limit in MB (default: --app&#39;s RAM, else your plan&#39;s default for a new app) |  |
 | `--healthcheck-path <PATH>` | without --project: with --boot, probe this readiness path instead of / and require 2xx |  |

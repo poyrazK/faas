@@ -2230,7 +2230,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	fs := newFlagSet("deploy", flag.ContinueOnError)
 	image := fs.String("image", "", "digest-pinned image reference")
 	localImageName := fs.String("local-image", "", "deploy a linux/amd64 image from this machine's Docker without a registry")
-	bootLocalImage := fs.Bool("boot", false, "with --local-image, first run the image with local Docker and stop the deploy if it crashes, listens on the wrong address, runs out of memory or fails its health check")
+	bootLocalImage := fs.Bool("boot", false, "with --local-image, first run the image with local Docker and stop the deploy if it crashes, listens on the wrong address, runs out of memory or fails its HTTP or gRPC health check")
 	bootEnvFile := fs.String("boot-env-file", "", "with --boot, KEY=VALUE lines for the local boot only, docker env-file format; nothing in it is uploaded")
 	dockerConfigPath := fs.String("docker-config", "", "with --image, save the credential `docker login` stored for the image's registry to the app")
 	imageArchivePath := fs.String("image-archive", "", "deploy a linux/amd64 image from a `docker save` archive without a registry")

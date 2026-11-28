@@ -62,6 +62,14 @@ type doctorBootOptions struct {
 	grpcService string
 }
 
+// protocol is what the boot expects the app to serve on $PORT.
+func (o doctorBootOptions) protocol() string {
+	if o.grpcHealth {
+		return "plaintext gRPC"
+	}
+	return "HTTP"
+}
+
 // envFileFlag is the flag that passes env vars to the boot container.
 func (o doctorBootOptions) envFileFlag() string {
 	if o.deploy {
@@ -365,7 +373,7 @@ func (b doctorBoot) stayUp(ctx context.Context) doctorCheck {
 func (b doctorBoot) exitedCheck(ctx context.Context, name string, st doctorBootState) doctorCheck {
 	c := doctorCheck{Name: name, Status: "error", Code: "boot_exited",
 		Hint: fmt.Sprintf("The container exited with code %d after %s.", st.exitCode, bootSeconds(time.Since(b.started))),
-		Fix:  "Read the container output; an app that needs env vars to start can get them with " + b.opts.envFileFlag() + ". A request-serving app must keep running and serve HTTP on 0.0.0.0:$PORT; a one-off task belongs in `gregale run`."}
+		Fix:  "Read the container output; an app that needs env vars to start can get them with " + b.opts.envFileFlag() + ". A request-serving app must keep running and serve " + b.opts.protocol() + " on 0.0.0.0:$PORT; a one-off task belongs in `gregale run`."}
 	if st.oomKilled {
 		c.Code, c.Hint = "boot_oom_killed", fmt.Sprintf("The container was killed for running out of memory after %s.", bootSeconds(time.Since(b.started)))
 		if b.opts.memoryMB > 0 {
@@ -387,13 +395,12 @@ func (b doctorBoot) exitedCheck(ctx context.Context, name string, st doctorBootS
 // check reports the generic contract.
 func (b doctorBoot) listenerProblem(ctx context.Context) doctorCheck {
 	port := b.opts.port
-	protocol := "HTTP"
-	if b.opts.grpcHealth {
-		protocol = "gRPC"
-	}
 	c := doctorCheck{Name: "boot-listener", Status: "error", Code: "boot_not_listening",
-		Hint: fmt.Sprintf("Nothing answered %s on 0.0.0.0:%d ($PORT) within %s.", protocol, port, bootSeconds(doctorBootStartupTimeout)),
-		Fix:  "Bind 0.0.0.0 and read PORT. A worker without an HTTP listener deploys in worker mode."}
+		Hint: fmt.Sprintf("Nothing answered %s on 0.0.0.0:%d ($PORT) within %s.", b.opts.protocol(), port, bootSeconds(doctorBootStartupTimeout)),
+		Fix:  "Bind 0.0.0.0 and read PORT. A worker without a listener deploys in worker mode."}
+	if b.opts.grpcHealth {
+		c.Fix = "Serve plaintext gRPC on 0.0.0.0 at $PORT. A worker without a listener deploys in worker mode."
+	}
 	out, err := b.docker.run(ctx, "exec", b.name, "cat", "/proc/net/tcp", "/proc/net/tcp6")
 	if err != nil && out == "" {
 		return c

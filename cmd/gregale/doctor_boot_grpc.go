@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
@@ -17,16 +18,28 @@ import (
 // grpc.health.v1.Health/Check with the configured service (empty: the whole
 // server), until it answers SERVING or the startup window ends.
 
-// doctorBootGRPCProbe is the outcome of polling the health service.
+// doctorBootGRPCOutcome is what one health probe got.
+type doctorBootGRPCOutcome int
+
+const (
+	// grpcNoAnswer: no connection or no gRPC answer.
+	grpcNoAnswer doctorBootGRPCOutcome = iota
+	// grpcAnswered: a Check response, SERVING or not.
+	grpcAnswered
+	// grpcUnimplemented: the server answers gRPC without the health service.
+	grpcUnimplemented
+	// grpcUnknownService: the health server does not know the service (yet).
+	grpcUnknownService
+)
+
+// doctorBootGRPCProbe is the outcome of polling the health service. The
+// verdict follows the last probe, as Gregale's probe would see it then.
 type doctorBootGRPCProbe struct {
 	serving bool
-	// answers counts Check responses; last is the latest status among them.
-	answers int
-	last    healthpb.HealthCheckResponse_ServingStatus
-	// unimplemented: the server answers gRPC without the health service.
-	unimplemented bool
-	// unknownService: the health server does not know the service (yet).
-	unknownService bool
+	last    doctorBootGRPCOutcome
+	// answers counts Check responses; lastStatus is the latest of them.
+	answers    int
+	lastStatus healthpb.HealthCheckResponse_ServingStatus
 }
 
 // grpcServiceLabel names what the probe asks about.
@@ -46,7 +59,7 @@ func (b doctorBoot) checkGRPC(ctx context.Context) []doctorCheck {
 	if exited != nil {
 		return []doctorCheck{b.exitedCheck(ctx, "boot-start", *exited)}
 	}
-	if !probe.serving && probe.answers == 0 && !probe.unimplemented && !probe.unknownService {
+	if !probe.serving && probe.last == grpcNoAnswer {
 		return []doctorCheck{
 			{Name: "boot-start", Status: "ok", Detail: "container running" + b.memoryNote()},
 			b.listenerProblem(ctx),
@@ -68,26 +81,40 @@ func (b doctorBoot) checkGRPC(ctx context.Context) []doctorCheck {
 
 func (b doctorBoot) grpcHealthCheck(p doctorBootGRPCProbe) doctorCheck {
 	label := b.opts.grpcServiceLabel()
+	window := bootSeconds(doctorBootStartupTimeout)
 	switch {
 	case p.serving:
 		return doctorCheck{Name: "boot-grpc-health", Status: "ok", Detail: fmt.Sprintf("Health/Check for %s → SERVING", label)}
-	case p.unimplemented:
+	case p.last == grpcUnimplemented:
 		return doctorCheck{Name: "boot-grpc-health", Status: "error", Code: "boot_grpc_health_missing",
-			Hint: "The app answers gRPC but does not implement grpc.health.v1.Health. Gregale's readiness probe calls Health/Check and would never see SERVING, so the deploy would fail.",
+			Hint: fmt.Sprintf("The app answers gRPC but, after %s, does not implement grpc.health.v1.Health. Gregale's readiness probe calls Health/Check and would never see SERVING, so the deploy would fail.", window),
 			Fix:  "Register the standard gRPC health service (grpc-go: google.golang.org/grpc/health NewServer; grpc-java: HealthStatusManager; Python: grpcio-health-checking) and set it to SERVING once the app can serve."}
-	case p.answers > 0:
-		return doctorCheck{Name: "boot-grpc-health", Status: "error", Code: "boot_grpc_health_failed",
-			Hint: fmt.Sprintf("Health/Check for %s answered %d times, last %s, and never SERVING within %s. Gregale routes to an instance only once it answers SERVING.", label, p.answers, p.last, bootSeconds(doctorBootStartupTimeout)),
-			Fix:  "Set the health status to SERVING once the app can serve, and check that the service name matches --healthcheck-grpc-service."}
-	default:
+	case p.last == grpcUnknownService:
 		return doctorCheck{Name: "boot-grpc-health", Status: "error", Code: "boot_grpc_service_unknown",
-			Hint: fmt.Sprintf("The health server does not know %s (NOT_FOUND) after %s.", label, bootSeconds(doctorBootStartupTimeout)),
+			Hint: fmt.Sprintf("The health server still does not know %s (NOT_FOUND) after %s.", label, window),
 			Fix:  "Register that service name with the health server and set it to SERVING, or pass the name the app registers with --healthcheck-grpc-service (empty checks the whole server)."}
+	default:
+		return doctorCheck{Name: "boot-grpc-health", Status: "error", Code: "boot_grpc_health_failed",
+			Hint: fmt.Sprintf("Health/Check for %s answered %d times, last %s, and never SERVING within %s. Gregale routes to an instance only once it answers SERVING.", label, p.answers, p.lastStatus, window),
+			Fix:  "Set the health status to SERVING once the app can serve, and check that the service name matches --healthcheck-grpc-service."}
 	}
 }
 
-// waitForGRPC polls Health/Check until SERVING, the container exits, the
-// server shows it lacks the health service, or the startup window ends.
+// doctorBootGRPCDial connects to the published port. Reconnects keep the
+// poll's pace: Docker's port proxy accepts and drops connections until the
+// app listens, and gRPC's default backoff (up to 120 s) would sleep through
+// an app that binds late in the window.
+func doctorBootGRPCDial(addr string) (*grpc.ClientConn, error) {
+	return grpc.NewClient("passthrough:///"+addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithConnectParams(grpc.ConnectParams{
+			Backoff:           backoff.Config{BaseDelay: doctorBootPoll, Multiplier: 1, MaxDelay: doctorBootPoll},
+			MinConnectTimeout: 2 * time.Second,
+		}))
+}
+
+// waitForGRPC polls Health/Check until SERVING, the container exits or the
+// startup window ends.
 func (b doctorBoot) waitForGRPC(ctx context.Context) (doctorBootGRPCProbe, *doctorBootState, error) {
 	deadline := time.Now().Add(doctorBootStartupTimeout)
 	var probe doctorBootGRPCProbe
@@ -107,8 +134,7 @@ func (b doctorBoot) waitForGRPC(ctx context.Context) (doctorBootGRPCProbe, *doct
 		}
 		if conn == nil {
 			if addr := b.publishedAddr(ctx); addr != "" {
-				conn, err = grpc.NewClient("passthrough:///"+addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-				if err != nil {
+				if conn, err = doctorBootGRPCDial(addr); err != nil {
 					return probe, nil, fmt.Errorf("create gRPC client: %w", err)
 				}
 			}
@@ -127,26 +153,25 @@ func (b doctorBoot) waitForGRPC(ctx context.Context) (doctorBootGRPCProbe, *doct
 	}
 }
 
-// grpcProbeOnce makes one Check and records it; true ends the wait.
+// grpcProbeOnce makes one Check and records it; true means SERVING. Every
+// other outcome keeps polling to the deadline, as Gregale's probe does: a
+// proxy started first can answer UNIMPLEMENTED until the app is up, and
+// grpc-go's health server answers NOT_FOUND until the app sets the status.
 func (b doctorBoot) grpcProbeOnce(ctx context.Context, conn *grpc.ClientConn, probe *doctorBootGRPCProbe) bool {
 	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	resp, err := healthpb.NewHealthClient(conn).Check(probeCtx, &healthpb.HealthCheckRequest{Service: b.opts.grpcService})
-	if err == nil {
+	switch {
+	case err == nil:
+		probe.last, probe.lastStatus = grpcAnswered, resp.GetStatus()
 		probe.answers++
-		probe.last = resp.GetStatus()
-		probe.serving = probe.last == healthpb.HealthCheckResponse_SERVING
-		return probe.serving
+		probe.serving = probe.lastStatus == healthpb.HealthCheckResponse_SERVING
+	case status.Code(err) == codes.Unimplemented:
+		probe.last = grpcUnimplemented
+	case status.Code(err) == codes.NotFound:
+		probe.last = grpcUnknownService
+	default:
+		probe.last = grpcNoAnswer
 	}
-	switch status.Code(err) {
-	case codes.Unimplemented:
-		// No health service: registering one later is not something apps do.
-		probe.unimplemented = true
-		return true
-	case codes.NotFound:
-		// grpc-go's health server answers NOT_FOUND until the app sets
-		// the service's status, which it may do once initialized.
-		probe.unknownService = true
-	}
-	return false
+	return probe.serving
 }

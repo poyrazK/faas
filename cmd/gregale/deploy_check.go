@@ -286,7 +286,7 @@ func deploymentCheckCommand() cliSub {
 		{Name: "registry-user", Short: "without --project: registry username; requires --registry-password-stdin", Value: "USER"},
 		{Name: "registry-password-stdin", Short: "without --project: read the registry password or token from stdin", Bool: true},
 		{Name: "docker-config", Short: "without --project: with --image, use the credentials `docker login` stored for the image's registry, from this config.json or its directory", Value: "PATH"},
-		{Name: "boot", Short: "without --project: with --image, also run the image with local Docker and check it starts, answers GET / on 0.0.0.0:$PORT and stays up", Bool: true},
+		{Name: "boot", Short: "without --project: with --image, also run the image with local Docker and check it starts, answers GET / on 0.0.0.0:$PORT (gRPC health with --healthcheck-grpc) and stays up", Bool: true},
 		{Name: "env-file", Short: "without --project: with --boot, pass KEY=VALUE lines from this file to the container", Value: "FILE"},
 		{Name: "ram", Short: "without --project: with --boot, the container's memory limit in MB (default: --app's RAM, else your plan's default for a new app)", Value: "MB"},
 		{Name: "healthcheck-path", Short: "without --project: with --boot, probe this readiness path instead of / and require 2xx", Value: "PATH"},
