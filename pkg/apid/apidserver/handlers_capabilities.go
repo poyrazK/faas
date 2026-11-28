@@ -74,7 +74,7 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 			if flagKey, ok := platformflags.FlagForCapability(capabilities.Capabilities[i].Key); ok {
 				available = available && s.platformFlagFor(flagKey, flagSubject(r, acct))
 			}
-		case "app-tasks", "interactive-app-sessions", "tcp-listeners", "udp-listeners", dataAPICapability, api.ManagedValkeyCapability:
+		case "app-tasks", "interactive-app-sessions", "tcp-listeners", "udp-listeners", dataAPICapability, api.ManagedValkeyCapability, "ai-access-tokens":
 			// Prod findings 2026-11-15 #25: these were listed as available
 			// while their runtime was off and every request was refused.
 			available = s.capabilityRuntimeReady(capabilities.Capabilities[i].Key)
@@ -106,6 +106,11 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 			available = false
 		}
 		applyCapabilityRuntimeAvailability(&capabilities.Capabilities[i], available)
+		// Name the host only when it is what is missing; a preview flag that
+		// is off keeps the generic detail.
+		if c := &capabilities.Capabilities[i]; c.Key == "ai-access-tokens" && c.UnavailableReason == api.CapabilityUnavailableRuntime && !s.aiAccessTokenHostEnabled {
+			c.UnavailableDetail = aiAccessTokenHostOffDetail
+		}
 	}
 	applyParentRuntimeAvailability(capabilities.Capabilities)
 	capabilities.HiddenCapabilities = withMonetizationVisibility(mergeHiddenCapabilities(s.hiddenCapabilities(flagSubject(r, acct)),
@@ -196,6 +201,8 @@ func (s *server) capabilityRuntimeReady(key string) bool {
 		return s.tcpListenersEnabled
 	case "udp-listeners":
 		return s.udpListenersEnabled
+	case "ai-access-tokens":
+		return s.aiAccessTokenHostEnabled
 	case dataAPICapability:
 		return s.managedPostgres != nil && s.managedPostgresBindings != nil && s.notif != nil
 	case api.ManagedValkeyCapability:
@@ -248,6 +255,12 @@ func applyCapabilityRuntimeAvailability(capability *api.CapabilityStatus, availa
 	capability.UnavailableReason = api.CapabilityUnavailableRuntime
 	capability.UnavailableDetail = runtimeUnavailableDetail(capability.Key)
 }
+
+// aiAccessTokenHostOffDetail explains AI access tokens on an installation
+// whose edge does not serve the AI gateway's public host (prod hunt
+// 2026-11-28: ai.gregale.dev answered "No such app").
+const aiAccessTokenHostOffDetail = "The AI gateway's public host is not enabled on this Gregale installation, so an AI access token cannot be used from outside it. " +
+	"Apps on Gregale reach the AI gateway without one. Contact support if you need access from elsewhere."
 
 // runtimeUnavailableDetail explains a capability this installation does not
 // run. Public TCP and UDP listeners are easy to confuse with private TCP

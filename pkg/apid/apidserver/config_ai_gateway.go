@@ -62,3 +62,18 @@ func (s *server) aiGateway(next accountHandler) accountHandler {
 		next(w, r, acct)
 	}
 }
+
+// aiAccessTokenHost refuses creating an AI access token on an installation
+// whose edge does not serve the AI gateway's public host: the token would
+// have nowhere to be used (prod hunt 2026-11-28). Listing and revoking stay
+// open so existing tokens can be cleaned up.
+func (s *server) aiAccessTokenHost(next accountHandler) accountHandler {
+	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		if !s.aiAccessTokenHostEnabled {
+			api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "outbound_ai_gateway_unavailable",
+				"AI access tokens unavailable", aiAccessTokenHostOffDetail))
+			return
+		}
+		next(w, r, acct)
+	}
+}
