@@ -607,14 +607,15 @@ passwords from a user who forgot theirs:
 Alike events share one entry with a count: wrong passwords for one account
 from one network in one minute, or every attempt one spent budget refused
 for one account from one network until it reopened. `captcha_pass` is
-recorded only when GoTrue did not refuse the CAPTCHA. An entry names the network (an IPv4 /24 or IPv6 /48),
+recorded only when GoTrue accepted the CAPTCHA and went on to check the
+password. An entry names the network (an IPv4 /24 or IPv6 /48),
 never the address, and keeps a digest of the first address it saw (the
 same address always gives the same digest); it does not count how many
 addresses in the network took part. A wrong password for an address no account has
 is recorded without a user.
 
 On the dashboard's **Security** tab, search for a kind such as `held` or a
-network such as `203.0.113.0/24`. A user's panel shows their recent events
+network such as `203.0.113.0/24` (an address, an IPv4 /24 or an IPv6 /48). A user's panel shows their recent events
 and, while a budget still holds them, what holds them and until when. From
 a terminal:
 

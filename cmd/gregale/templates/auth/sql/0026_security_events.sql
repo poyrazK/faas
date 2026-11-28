@@ -1,5 +1,5 @@
 -- Security events (ADR-1190). What the front's sign-in protection did, for
--- the owner to read on the dashboard's Activity tab and with `gregale auth
+-- the owner to read on the dashboard's Security tab and with `gregale auth
 -- activity --security`: wrong passwords and codes, holds, passes past the
 -- account budget (a CAPTCHA or a trusted network), message limits and
 -- new-device alerts. GoTrue's audit log records none of these.

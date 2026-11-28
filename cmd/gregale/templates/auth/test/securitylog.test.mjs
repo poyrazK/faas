@@ -48,10 +48,12 @@ async function harness(t, options) {
       if (req.url.startsWith('/token')) {
         if (parsed.password === 'right') return res.end(JSON.stringify({ access_token: 't', user: { id: user, email: 'ann@example.com' } }))
         if (!parsed.gotrue_meta_security) { res.statusCode = 400; return res.end('{"error_code":"captcha_failed"}') }
+        if (parsed.password === 'flood') { res.statusCode = 429; return res.end('{"error_code":"over_request_rate_limit"}') }
         res.statusCode = 400
         return res.end('{"error_code":"invalid_credentials"}')
       }
       if (req.url.startsWith('/factors/')) { res.statusCode = 422; return res.end('{"error_code":"mfa_verification_failed"}') }
+      if (parsed.refuse) { res.statusCode = 422; return res.end('{"error_code":"validation_failed"}') }
       res.end('{}')
     })
   })
@@ -80,6 +82,7 @@ test('names a request\'s network, never its address', () => {
   assert.equal(networkFilter('2001:DB8:0:0:0:0:0:0/48'), '2001:db8::/48')
   assert.equal(networkFilter('203.0.113.0/24'), '203.0.113.0/24')
   assert.equal(networkFilter('203.0.113.77'), '203.0.113.0/24')
+  for (const wider of ['10.0.0.0/16', '2001:db8::/32', '203.0.113.0/24/1', 'nope']) assert.equal(networkFilter(wider), null, wider)
   assert.equal(networkLabel(''), null)
   assert.equal(networkLabel('not an address'), null)
 })
@@ -115,8 +118,9 @@ test('wrong passwords, holds and a CAPTCHA pass are recorded by network', async 
   assert.ok(passes.length > 0)
   assert.equal(passes[0].detail.budget, 'password_account')
   assert.equal(passes[0].subject, 'email:ann@example.com')
-  // GoTrue refusing the CAPTCHA is no pass.
+  // GoTrue refusing the CAPTCHA, or refusing before it checks one, is no pass.
   await post(base, '/token?grant_type=password', { email: 'ann@example.com', password: 'wrong', gotrue_meta_security: null }, '192.0.2.200')
+  await post(base, '/token?grant_type=password', { email: 'ann@example.com', password: 'flood' }, '192.0.2.201')
   await settle()
   assert.equal(securityLog.events.filter(event => event.kind === 'captcha_pass').length, passes.length)
 })
@@ -197,6 +201,7 @@ test('waiting alike events merge into one write, and a full queue drops and repo
   await Promise.resolve()
   const merged = []
   for (let i = 0; i < 5; i++) merged.push(log.record('password_failed', { userId: user, alike }))
+  assert.equal(new Set(merged).size, 1, 'merged events share one promise')
   for (let i = 0; i < limits.securityEventsQueued; i++) log.record('password_failed', { userId: user, alike: [String(i)] })
   assert.equal(calls.length, 1, 'one writer')
   clock = 61000
@@ -230,7 +235,7 @@ test('the admin API pages security events and checks its filters', async () => {
   assert.deepEqual(page, { entries: [{ id: '2' }], more: true, page: 1, per_page: 1 })
   assert.deepEqual(seen.args, [user, 'held', '203.0.113.0/24', 2, 0])
   assert.match(seen.sql, /e\.user_id = \$1::uuid/, 'the user filter can use its index')
-  for (const bad of [{ kind: 'nope' }, { user: 'x' }, { network: "1'; DROP" }, { per_page: '0' }, { page: '0' }]) {
+  for (const bad of [{ kind: 'nope' }, { user: 'x' }, { network: "1'; DROP" }, { network: '10.0.0.0/16' }, { per_page: '0' }, { page: '0' }]) {
     await assert.rejects(securityEvents(query, new URLSearchParams(bad)), JSON.stringify(bad))
   }
   assert.equal(requiredScope('GET', ['security-events']), 'users:read')
@@ -242,4 +247,17 @@ test('reads how long security events are kept, with bounds', () => {
   assert.equal(securityConfig({}).logDays, 30)
   assert.equal(securityConfig({ AUTH_SECURITY_LOG_DAYS: '365' }).logDays, 365)
   for (const value of ['0', '366', '1e2', '-1']) assert.throws(() => securityConfig({ AUTH_SECURITY_LOG_DAYS: value }), value)
+})
+
+test('a trusted network\'s pass of a message budget is recorded only once GoTrue takes the request', async t => {
+  const securityLog = memoryLog(), attempts = memoryAttempts()
+  const sends = createSends({ attempts, pool: null, budgets: messageBudgets({ messagesPerRecipient: 1 }), trusted: async () => true })
+  const base = await harness(t, { attempts, sends, securityLog })
+  await post(base, '/otp', { email: 'ann@example.com' })
+  await post(base, '/otp', { email: 'ann@example.com' })
+  await settle()
+  assert.equal(securityLog.events.filter(event => event.kind === 'trusted_pass').length, 1)
+  await post(base, '/otp', { email: 'ann@example.com', refuse: true })
+  await settle()
+  assert.equal(securityLog.events.filter(event => event.kind === 'trusted_pass').length, 1, 'a request GoTrue refused passed nothing')
 })

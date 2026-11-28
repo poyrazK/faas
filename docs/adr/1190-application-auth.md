@@ -190,8 +190,10 @@ limits (`429 too_many_messages`) and new-device alerts sent. A row stands
 for alike events and counts them: failures and passes per account, network
 and minute; refusals per spent budget, account and network until the budget's
 window ends (the dedupe key is derived in SQL from the budget's
-`window_ends_at`); a CAPTCHA pass is recorded after GoTrue's answer, unless
-it is `captcha_failed`. It names the network
+`window_ends_at`, or the minute when that row is already gone); a CAPTCHA
+pass is recorded only when GoTrue went on to judge the password, and a
+trusted network's pass of a message budget only once GoTrue took the
+request. It names the network
 (IPv4 /24, IPv6 /48) and a 16-byte HMAC of the address keyed from the JWT
 secret, never the address (owner's choice: enough to group one source,
 less personal data); the account comes from the sign-in subject or token,
@@ -205,8 +207,9 @@ so recording takes at most one of the front's two pool connections and never
 waits on its own row locks; past `AuthSecurityEventsQueued` waiting rows
 events are dropped and counted (`security_events_dropped`, at most once a
 minute). Shutdown waits up to two seconds for the queue. A row keeps the
-first address's digest; network filters accept any spelling and compare
-the compressed label. Owners read
+first address's digest; network filters take an address, IPv4 /24 or IPv6
+/48 in any spelling and compare the compressed label (other prefixes are
+refused). Owners read
 them with `GET /admin/v1/security-events` (`users:read`; filters user, kind,
 network), `gregale auth activity --security` and the dashboard's Security
 tab; `GET /admin/v1/users/<id>` adds `holds`, the user's spent budgets whose

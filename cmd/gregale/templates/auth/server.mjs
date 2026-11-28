@@ -191,7 +191,8 @@ export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bo
     if (!signIns || !session || serverAgent(req.headers['user-agent'])) return
     const address = clientAddress(req), userAgent = req.headers['user-agent']
     signIns.record({ ...session, address, userAgent, alert, trust })
-      .then(alerted => alerted && securityLog?.record('new_device_alert', { userId: session.userId, address, detail: { device: deviceLabel(userAgent) } }), logFailure('sign_in_record_failed'))
+      .then(alerted => alerted && securityLog?.record('new_device_alert', { userId: session.userId, address, detail: { device: deviceLabel(userAgent) } }))
+      .catch(logFailure('sign_in_record_failed'))
   }
   return http.createServer((req, res) => {
     // A third-party OAuth client's token is good here only for userinfo.
@@ -372,7 +373,9 @@ async function guardAttempt({ req, res, path, upstreamPort, body, oauth, attempt
     } catch (err) {
       logFailure('attempt_budget_failed')(err)
     }
-    if (captchaWaived && status < 500 && answer && typeof answer === 'object' && answer.error_code !== 'captcha_failed') securityLog?.record('captcha_pass', { ...who, address, alike, detail: { budget: 'password_account' } })
+    // GoTrue judged the password (right or wrong) only after it accepted the
+    // CAPTCHA; its rate-limit and validation refusals come before that.
+    if (captchaWaived && (result === 'success' || result === 'failure')) securityLog?.record('captcha_pass', { ...who, address, alike, detail: { budget: 'password_account' } })
     if (result === 'failure') securityLog?.record(kind === 'password' ? 'password_failed' : 'code_failed', { ...who, address, alike })
     if (status === 200) signedIn(req, sessionFromAnswer(answer))
   }
@@ -384,7 +387,7 @@ async function guardAttempt({ req, res, path, upstreamPort, body, oauth, attempt
 // refusal shows was not spent is given back.
 async function forwardSend({ req, res, path, upstreamPort, body, oauth, signedIn, send, sends, smsCountries, bearer, securityLog }) {
   if (smsCountries && !bodyAllowed(body, smsCountries)) return problem(res, 422, 'sms_country_not_allowed')
-  let taken = []
+  let taken = [], passes = []
   if (send) {
     let recipients
     try {
@@ -402,6 +405,7 @@ async function forwardSend({ req, res, path, upstreamPort, body, oauth, signedIn
         return limited(res, 'too_many_messages', budget, count, wait, { error_code: 'too_many_messages', scope: name })
       }
       taken = result.taken
+      passes = result.passes ?? []
     } catch (err) {
       logFailure('message_budget_failed')(err)
       return problem(res, 503, 'auth_unavailable')
@@ -415,6 +419,9 @@ async function forwardSend({ req, res, path, upstreamPort, body, oauth, signedIn
     // An email or phone change GoTrue applied without writing to anyone
     // (the same value, or no confirmation needed) sent nothing.
     if (status >= 400 || (send?.user && status === 200 && !answer?.new_email && !answer?.new_phone)) await giveBack()
+    // A trusted network's pass of a spent recipient budget, once GoTrue took
+    // the request.
+    else for (const recipient of passes) securityLog?.record('trusted_pass', { subject: recipient, address: clientAddress(req), alike: [recipient, 'messages', networkLabel(clientAddress(req))], detail: { budget: 'message_recipient' } })
     if (status === 200) signedIn(req, sessionFromAnswer(answer))
   }
   upstreamRequest(req, res, path, upstreamPort, { ...headers, 'content-length': String(body.length) }, { oauth, observe, signedIn, onError: giveBack }).end(body)
@@ -584,7 +591,7 @@ export function start(env = process.env) {
     // /settings/v1/admin-keys/<ID> for each key it finds among the secrets.
     settings: config.settings, adminKeys: adminKeySummary(adminKeys), smsCountries: config.smsCountries, scim, oauth, serviceAccounts, attempts,
     // Trusted networks and new-device alerts, and message budgets.
-    signIns, sends: createSends({ attempts, pool, budgets: messageBudgets(config.security), trusted: signIns.trusted, events: securityLog }), captcha: config.captcha !== null, securityLog })
+    signIns, sends: createSends({ attempts, pool, budgets: messageBudgets(config.security), trusted: signIns.trusted }), captcha: config.captcha !== null, securityLog })
   // Lifecycle events publish after requests that may change users, and
   // once at startup for anything recorded while the app was parked.
   const lifecycle = lifecycleConfig(env)

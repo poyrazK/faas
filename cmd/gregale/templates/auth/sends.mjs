@@ -1,6 +1,5 @@
 import { addressBucket, budgetKey, goLower } from './attempts.mjs'
 import { limits } from './config.mjs'
-import { networkLabel } from './securitylog.mjs'
 import { normalizePhone } from './sms.mjs'
 
 // Message budgets (ADR-1190). Every sign-in code, magic link, password reset
@@ -91,7 +90,7 @@ export function inbox(recipient) {
 // request, or, when that overspent a budget, the budget's name, the count
 // before this request and the seconds until it reopens; a refused request
 // gives back what it counted, so refusals do not prolong a wait.
-export function createSends({ attempts, pool, budgets, trusted = null, events = null }) {
+export function createSends({ attempts, pool, budgets, trusted = null }) {
   return {
     // recipients lists who a request may send to: from its body, or the
     // signed-in user for a re-authentication or a phone factor's challenge.
@@ -110,7 +109,7 @@ export function createSends({ attempts, pool, budgets, trusted = null, events = 
       if (recipients.length === 0) return { taken: [] }
       const entries = [...(budgets.network ? [{ name: 'network', key: budgetKey('message-network', addressBucket(address)), budget: budgets.network }] : []),
         ...recipients.map(recipient => ({ name: 'recipient', recipient, key: budgetKey('message-recipient', inbox(recipient)), budget: budgets.recipient }))]
-      const taken = []
+      const taken = [], passed = []
       try {
         for (const entry of entries) {
           const { count, wait } = await attempts.take(entry)
@@ -123,13 +122,15 @@ export function createSends({ attempts, pool, budgets, trusted = null, events = 
             await attempts.release(taken)
             return { refused: { name: entry.name, key: entry.key, recipient: entry.recipient ?? null, budget: entry.budget, count: count - 1, wait } }
           }
-          events?.record('trusted_pass', { subject: entry.recipient, address, alike: [entry.recipient, 'messages', networkLabel(address)], detail: { budget: 'message_recipient' } })
+          passed.push(entry.recipient)
         }
       } catch (err) {
         if (taken.length) await attempts.release(taken).catch(() => {})
         throw err
       }
-      return { taken }
+      // passes lists the recipients a trusted network passed, for the
+      // caller to record once the request goes ahead.
+      return { taken, passes: passed }
     },
     release: taken => taken.length ? attempts.release(taken) : Promise.resolve(),
   }

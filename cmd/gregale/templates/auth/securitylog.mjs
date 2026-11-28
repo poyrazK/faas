@@ -44,10 +44,16 @@ function compressIPv6(groups) {
   return `${hex.slice(0, best).join(':')}::${hex.slice(best + bestLength).join(':')}`
 }
 
-// networkFilter reads a network an owner typed: an address or network in
-// any IPv4 or IPv6 spelling becomes the label it is stored under.
+// networkFilter reads a network an owner typed: an address, an IPv4 /24 or
+// an IPv6 /48, in any spelling, becomes the label it is stored under; any
+// other prefix is refused (null), since events are stored by /24 and /48.
 export function networkFilter(text) {
-  return networkLabel(text.split('/')[0]) ?? text.toLowerCase()
+  const [address, prefix, extra] = text.split('/')
+  if (extra !== undefined) return null
+  const label = networkLabel(address)
+  if (!label) return null
+  if (prefix !== undefined && prefix !== (label.includes(':') ? '48' : '24')) return null
+  return label
 }
 
 // addressDigest groups requests from one address without storing it: a
@@ -77,7 +83,8 @@ const insertStatement = `INSERT INTO gregale_auth.security_events AS e (kind, us
       WHEN $3 = 'email' THEN (SELECT id FROM auth.users WHERE email = $4 AND NOT is_sso_user LIMIT 1)
       WHEN $3 = 'phone' THEN (SELECT id FROM auth.users WHERE phone = $4 LIMIT 1) END,
     $5, $6, $7::jsonb,
-    COALESCE($8, sha256($9::bytea || $10::bytea || convert_to((SELECT window_ends_at FROM gregale_auth.attempt_budgets WHERE key = $9)::text, 'UTF8'))),
+    COALESCE($8, sha256($9::bytea || $10::bytea || convert_to((SELECT window_ends_at FROM gregale_auth.attempt_budgets WHERE key = $9)::text, 'UTF8')),
+      sha256($9::bytea || $10::bytea || convert_to(date_trunc('minute', now())::text, 'UTF8'))),
     $9, $11)
   ON CONFLICT (dedupe) DO UPDATE SET count = e.count + EXCLUDED.count, last_at = now(), detail = EXCLUDED.detail`
 
@@ -87,7 +94,9 @@ const insertStatement = `INSERT INTO gregale_auth.security_events AS e (kind, us
 // minute; hold is the key of the attempt budget a refusal spent, which makes
 // the refusals by it of one account from one network, until it reopens, one
 // row (an address's budget refuses many accounts; an account's, many
-// networks). A row keeps the digest of the first address it saw.
+// networks); if the budget's row is already gone when the write runs (a
+// success cleared it, or it was pruned), its refusals group by minute
+// instead. A row keeps the digest of the first address it saw.
 //
 // One writer at a time drains a queue, so recording takes at most one of
 // the front's pool connections and never waits on its own row locks; alike
@@ -114,7 +123,7 @@ export function createSecurityLog({ pool, secret, log = console.error, now = Dat
       } catch (err) {
         log(JSON.stringify({ level: 'error', event: 'security_event_failed', kind: entry.args[0], sqlstate: err?.code ?? null }))
       }
-      for (const done of entry.waiting) done()
+      entry.done()
     }
     writing = null
     report()
@@ -130,22 +139,24 @@ export function createSecurityLog({ pool, secret, log = console.error, now = Dat
       const dedupe = alike ? createHash('sha256').update(JSON.stringify([kind, ...alike, Math.floor(now() / 60000)])).digest() : null
       const holder = hold ? createHash('sha256').update(JSON.stringify([kind, user ?? subject, network])).digest() : null
       const id = dedupe ? dedupe.toString('hex') : hold ? `${hold.toString('hex')}:${holder.toString('hex')}` : `once:${unique++}`
+      // A merged event shares its entry's one promise, so an attack grows a
+      // count, not the memory held for it.
       let entry = queue.get(id)
       if (entry) {
         entry.count++
         entry.args[6] = JSON.stringify(detail)
-      } else {
-        if (queue.size >= limits.securityEventsQueued) {
-          dropped++
-          report()
-          return Promise.resolve()
-        }
-        entry = { args: [kind, user, type, value, network, address ? digest(address) : null, JSON.stringify(detail), dedupe, hold, holder], count: 1, waiting: [] }
-        queue.set(id, entry)
+        return entry.written
       }
-      const written = new Promise(resolve => entry.waiting.push(resolve))
+      if (queue.size >= limits.securityEventsQueued) {
+        dropped++
+        report()
+        return Promise.resolve()
+      }
+      entry = { args: [kind, user, type, value, network, address ? digest(address) : null, JSON.stringify(detail), dedupe, hold, holder], count: 1 }
+      entry.written = new Promise(resolve => { entry.done = resolve })
+      queue.set(id, entry)
       writing ??= Promise.resolve().then(drain)
-      return written
+      return entry.written
     },
     // settled waits for the queue to be written (tests and shutdown).
     settled: () => writing ?? Promise.resolve(),
@@ -161,12 +172,13 @@ export async function securityEvents(query, params) {
   const user = params.get('user') ?? '', kind = params.get('kind') ?? '', network = params.get('network') ?? ''
   if (user && !uuid.test(user)) throw new HTTPError(400, 'invalid_id')
   if (kind && !securityKinds.includes(kind)) throw new HTTPError(400, 'invalid_kind')
-  if (network && (network.length > 64 || !/^[0-9a-f.:/]+$/i.test(network))) throw new HTTPError(400, 'invalid_network')
+  const filter = network && network.length <= 64 && /^[0-9a-f.:/[\]]+$/i.test(network) ? networkFilter(network) : null
+  if (network && !filter) throw new HTTPError(400, 'invalid_network')
   const rows = await query(`SELECT e.id::text AS id, e.kind, e.user_id, u.email, u.phone, e.network, encode(e.address_hash, 'hex') AS address_id,
       e.detail, e.count, e.first_at, e.last_at
     FROM gregale_auth.security_events e LEFT JOIN auth.users u ON u.id = e.user_id
     WHERE ($1::uuid IS NULL OR e.user_id = $1::uuid) AND ($2 = '' OR e.kind = $2) AND ($3 = '' OR e.network = $3)
-    ORDER BY e.last_at DESC, e.id DESC LIMIT $4 OFFSET $5`, [user ? user.toLowerCase() : null, kind, network ? networkFilter(network) : '', perPage + 1, (page - 1) * perPage])
+    ORDER BY e.last_at DESC, e.id DESC LIMIT $4 OFFSET $5`, [user ? user.toLowerCase() : null, kind, network ? filter : '', perPage + 1, (page - 1) * perPage])
   return { entries: rows.slice(0, perPage), more: rows.length > perPage, page, per_page: perPage }
 }
 
