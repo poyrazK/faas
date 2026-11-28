@@ -124,6 +124,12 @@ func (s *Service) ExecuteBucketOperation(ctx context.Context, st state.ObjectBuc
 // the bucket's journal holds the customer's creation request. Recovery reads
 // the same journal, so a retry never drops it (ADR-20261119065000).
 func (s *Service) createProviderBucket(ctx context.Context, backend objectstorage.Backend, b state.ObjectBucket) error {
+	if b.EnvironmentCloneOperationID != "" {
+		// An environment clone's target bucket is reserved without a
+		// creation request, and the owner lookup hides it until the clone is
+		// ready, so there is no journal to read.
+		return backend.Provider.CreateBucket(ctx, b.PhysicalName)
+	}
 	// An unreadable journal must not create the bucket without the flag.
 	locked, err := objectLockRequired(ctx, s.Host.Store(), b)
 	if err != nil {

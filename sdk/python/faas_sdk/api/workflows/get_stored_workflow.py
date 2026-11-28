@@ -8,13 +8,21 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.problem import Problem
 from ...models.stored_workflow_response import StoredWorkflowResponse
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     slug: str,
     name: str,
+    *,
+    environment: str | Unset = UNSET,
 ) -> dict[str, Any]:
+
+    params: dict[str, Any] = {}
+
+    params["environment"] = environment
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "get",
@@ -22,6 +30,7 @@ def _get_kwargs(
             slug=quote(str(slug), safe=""),
             name=quote(str(name), safe=""),
         ),
+        "params": params,
     }
 
     return _kwargs
@@ -107,12 +116,14 @@ def sync_detailed(
     name: str,
     *,
     client: AuthenticatedClient | Client,
+    environment: str | Unset = UNSET,
 ) -> Response[Problem | StoredWorkflowResponse]:
     """Read a stored workflow draft and its published definition.
 
     Args:
         slug (str):
         name (str):
+        environment (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -125,6 +136,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         name=name,
+        environment=environment,
     )
 
     response = client.get_httpx_client().request(
@@ -139,12 +151,14 @@ def sync(
     name: str,
     *,
     client: AuthenticatedClient | Client,
+    environment: str | Unset = UNSET,
 ) -> Problem | StoredWorkflowResponse | None:
     """Read a stored workflow draft and its published definition.
 
     Args:
         slug (str):
         name (str):
+        environment (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -158,6 +172,7 @@ def sync(
         slug=slug,
         name=name,
         client=client,
+        environment=environment,
     ).parsed
 
 
@@ -166,12 +181,14 @@ async def asyncio_detailed(
     name: str,
     *,
     client: AuthenticatedClient | Client,
+    environment: str | Unset = UNSET,
 ) -> Response[Problem | StoredWorkflowResponse]:
     """Read a stored workflow draft and its published definition.
 
     Args:
         slug (str):
         name (str):
+        environment (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -184,6 +201,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         slug=slug,
         name=name,
+        environment=environment,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -196,12 +214,14 @@ async def asyncio(
     name: str,
     *,
     client: AuthenticatedClient | Client,
+    environment: str | Unset = UNSET,
 ) -> Problem | StoredWorkflowResponse | None:
     """Read a stored workflow draft and its published definition.
 
     Args:
         slug (str):
         name (str):
+        environment (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -216,5 +236,6 @@ async def asyncio(
             slug=slug,
             name=name,
             client=client,
+            environment=environment,
         )
     ).parsed

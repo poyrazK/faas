@@ -12842,6 +12842,7 @@ paths:
   /v1/apps/{slug}/workflows/stored:
     parameters:
       - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/StoredWorkflowEnvironment'
     get:
       tags:
         - workflows
@@ -12961,6 +12962,7 @@ paths:
   /v1/apps/{slug}/workflows/stored/{name}:
     parameters:
       - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/StoredWorkflowEnvironment'
       - name: name
         in: path
         required: true
@@ -13031,6 +13033,8 @@ paths:
           $ref: '#/components/responses/StoredWorkflowInvalid'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
         '503':
           $ref: '#/components/responses/ServerError'
       requestBody:
@@ -13065,6 +13069,8 @@ paths:
           $ref: '#/components/responses/StoredWorkflowInvalid'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
         '503':
           $ref: '#/components/responses/ServerError'
       parameters:
@@ -13218,6 +13224,7 @@ paths:
   /v1/apps/{slug}/workflows/stored/{name}/revisions:
     parameters:
       - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/StoredWorkflowEnvironment'
       - name: name
         in: path
         required: true
@@ -13253,6 +13260,7 @@ paths:
   /v1/apps/{slug}/workflows/stored/{name}/revisions/{version}:
     parameters:
       - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/StoredWorkflowEnvironment'
       - name: name
         in: path
         required: true
@@ -13538,6 +13546,7 @@ paths:
   /v1/apps/{slug}/workflows/stored/{name}/publish:
     parameters:
       - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/StoredWorkflowEnvironment'
       - name: name
         in: path
         required: true
@@ -13576,6 +13585,8 @@ paths:
           $ref: '#/components/responses/StoredWorkflowInvalid'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
         '503':
           $ref: '#/components/responses/ServerError'
       requestBody:
@@ -13590,6 +13601,7 @@ paths:
   /v1/apps/{slug}/workflows/stored/{name}/enabled:
     parameters:
       - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/StoredWorkflowEnvironment'
       - name: name
         in: path
         required: true
@@ -13628,6 +13640,8 @@ paths:
           $ref: '#/components/responses/StoredWorkflowInvalid'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
         '503':
           $ref: '#/components/responses/ServerError'
       requestBody:
@@ -13787,6 +13801,12 @@ paths:
   /v1/apps/{slug}/workflows/{name}/runs:
     parameters:
       - $ref: '#/components/parameters/Slug'
+      - name: environment
+        in: query
+        required: false
+        description: Project environment slug. Starts the run on that stage's live deployment with the stage's own stored workflows; omitted or production is production.
+        schema:
+          type: string
       - name: name
         in: path
         required: true
@@ -28384,6 +28404,12 @@ components:
         type: string
         example: '</v1/uploads>; rel="successor-version", <https://github.com/poyrazK/faas/blob/main/docs/adr/115-local-tarball-deploy-trust-root.md>; rel="deprecation"'
   parameters:
+    StoredWorkflowEnvironment:
+      name: environment
+      in: query
+      required: false
+      schema: {type: string}
+      description: Project environment slug. Omitted or production is production. A stage's stored workflows are its own; it runs its manual and schedule workflows on its own deployment. A workflow is reached only through its own environment.
     ReleaseSandboxID:
       name: sandbox
       in: path

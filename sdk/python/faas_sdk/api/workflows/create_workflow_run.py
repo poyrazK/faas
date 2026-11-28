@@ -16,11 +16,18 @@ def _get_kwargs(
     name: str,
     *,
     body: Any | Unset = UNSET,
+    environment: str | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(idempotency_key, Unset):
         headers["Idempotency-Key"] = idempotency_key
+
+    params: dict[str, Any] = {}
+
+    params["environment"] = environment
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -28,6 +35,7 @@ def _get_kwargs(
             slug=quote(str(slug), safe=""),
             name=quote(str(name), safe=""),
         ),
+        "params": params,
     }
 
     if not isinstance(body, Unset):
@@ -110,6 +118,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: Any | Unset = UNSET,
+    environment: str | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[Problem | WorkflowRunResponse]:
     """Start a durable workflow run.
@@ -126,6 +135,7 @@ def sync_detailed(
     Args:
         slug (str):
         name (str):
+        environment (str | Unset):
         idempotency_key (str | Unset):
         body (Any | Unset):
 
@@ -141,6 +151,7 @@ def sync_detailed(
         slug=slug,
         name=name,
         body=body,
+        environment=environment,
         idempotency_key=idempotency_key,
     )
 
@@ -157,6 +168,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: Any | Unset = UNSET,
+    environment: str | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> Problem | WorkflowRunResponse | None:
     """Start a durable workflow run.
@@ -173,6 +185,7 @@ def sync(
     Args:
         slug (str):
         name (str):
+        environment (str | Unset):
         idempotency_key (str | Unset):
         body (Any | Unset):
 
@@ -189,6 +202,7 @@ def sync(
         name=name,
         client=client,
         body=body,
+        environment=environment,
         idempotency_key=idempotency_key,
     ).parsed
 
@@ -199,6 +213,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: Any | Unset = UNSET,
+    environment: str | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[Problem | WorkflowRunResponse]:
     """Start a durable workflow run.
@@ -215,6 +230,7 @@ async def asyncio_detailed(
     Args:
         slug (str):
         name (str):
+        environment (str | Unset):
         idempotency_key (str | Unset):
         body (Any | Unset):
 
@@ -230,6 +246,7 @@ async def asyncio_detailed(
         slug=slug,
         name=name,
         body=body,
+        environment=environment,
         idempotency_key=idempotency_key,
     )
 
@@ -244,6 +261,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: Any | Unset = UNSET,
+    environment: str | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
 ) -> Problem | WorkflowRunResponse | None:
     """Start a durable workflow run.
@@ -260,6 +278,7 @@ async def asyncio(
     Args:
         slug (str):
         name (str):
+        environment (str | Unset):
         idempotency_key (str | Unset):
         body (Any | Unset):
 
@@ -277,6 +296,7 @@ async def asyncio(
             name=name,
             client=client,
             body=body,
+            environment=environment,
             idempotency_key=idempotency_key,
         )
     ).parsed

@@ -3695,6 +3695,7 @@ export type { StoredWorkflowCheckEvidence } from './models/StoredWorkflowCheckEv
 export type { StoredWorkflowCheckExclusion } from './models/StoredWorkflowCheckExclusion.js';
 export type { StoredWorkflowCheckExpectation } from './models/StoredWorkflowCheckExpectation.js';
 export type { StoredWorkflowCheckScenario } from './models/StoredWorkflowCheckScenario.js';
+export type { StoredWorkflowEnvironment } from './models/StoredWorkflowEnvironment.js';
 export type { StoredWorkflowFailurePolicy } from './models/StoredWorkflowFailurePolicy.js';
 export type { StoredWorkflowFailurePolicyResponse } from './models/StoredWorkflowFailurePolicyResponse.js';
 export type { StoredWorkflowFailureTransition } from './models/StoredWorkflowFailureTransition.js';

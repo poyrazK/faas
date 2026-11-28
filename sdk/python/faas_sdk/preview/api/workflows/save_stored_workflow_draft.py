@@ -9,7 +9,7 @@ from ...client import AuthenticatedClient, Client
 from ...models.problem import Problem
 from ...models.save_stored_workflow_draft_request import SaveStoredWorkflowDraftRequest
 from ...models.stored_workflow_response import StoredWorkflowResponse
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
@@ -17,8 +17,15 @@ def _get_kwargs(
     name: str,
     *,
     body: SaveStoredWorkflowDraftRequest,
+    environment: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+
+    params: dict[str, Any] = {}
+
+    params["environment"] = environment
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "put",
@@ -26,6 +33,7 @@ def _get_kwargs(
             slug=quote(str(slug), safe=""),
             name=quote(str(name), safe=""),
         ),
+        "params": params,
     }
 
     _kwargs["json"] = body.to_dict()
@@ -89,6 +97,11 @@ def _parse_response(
 
         return response_429
 
+    if response.status_code == 501:
+        response_501 = Problem.from_dict(response.json())
+
+        return response_501
+
     if response.status_code == 503:
         response_503 = Problem.from_dict(response.json())
 
@@ -117,12 +130,14 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: SaveStoredWorkflowDraftRequest,
+    environment: str | Unset = UNSET,
 ) -> Response[Problem | StoredWorkflowResponse]:
     """Save a draft with optimistic version checking; running definitions stay unchanged.
 
     Args:
         slug (str):
         name (str):
+        environment (str | Unset):
         body (SaveStoredWorkflowDraftRequest): Draft definition and the revision that the caller
             edited.
 
@@ -138,6 +153,7 @@ def sync_detailed(
         slug=slug,
         name=name,
         body=body,
+        environment=environment,
     )
 
     response = client.get_httpx_client().request(
@@ -153,12 +169,14 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: SaveStoredWorkflowDraftRequest,
+    environment: str | Unset = UNSET,
 ) -> Problem | StoredWorkflowResponse | None:
     """Save a draft with optimistic version checking; running definitions stay unchanged.
 
     Args:
         slug (str):
         name (str):
+        environment (str | Unset):
         body (SaveStoredWorkflowDraftRequest): Draft definition and the revision that the caller
             edited.
 
@@ -175,6 +193,7 @@ def sync(
         name=name,
         client=client,
         body=body,
+        environment=environment,
     ).parsed
 
 
@@ -184,12 +203,14 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: SaveStoredWorkflowDraftRequest,
+    environment: str | Unset = UNSET,
 ) -> Response[Problem | StoredWorkflowResponse]:
     """Save a draft with optimistic version checking; running definitions stay unchanged.
 
     Args:
         slug (str):
         name (str):
+        environment (str | Unset):
         body (SaveStoredWorkflowDraftRequest): Draft definition and the revision that the caller
             edited.
 
@@ -205,6 +226,7 @@ async def asyncio_detailed(
         slug=slug,
         name=name,
         body=body,
+        environment=environment,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -218,12 +240,14 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: SaveStoredWorkflowDraftRequest,
+    environment: str | Unset = UNSET,
 ) -> Problem | StoredWorkflowResponse | None:
     """Save a draft with optimistic version checking; running definitions stay unchanged.
 
     Args:
         slug (str):
         name (str):
+        environment (str | Unset):
         body (SaveStoredWorkflowDraftRequest): Draft definition and the revision that the caller
             edited.
 
@@ -241,5 +265,6 @@ async def asyncio(
             name=name,
             client=client,
             body=body,
+            environment=environment,
         )
     ).parsed
