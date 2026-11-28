@@ -552,7 +552,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		retry := retryAfterSeconds(decision.RetryAfter)
-		if traceRejection(decision.Reason) {
+		if traceRejection(decision.Reason) || strings.HasSuffix(decision.Reason, ReasonReservationSuffix) {
+			// Retrying the same call cannot succeed: a trace cap, or a
+			// reservation larger than the budget left until it resets.
 			retry = ""
 		}
 		w.Header().Set("X-Gregale-Outbound-Rejection", decision.Reason)
@@ -1265,7 +1267,8 @@ func admissionRefusalProblem(reason string) (code, title string) {
 	case reason == ReasonRate || reason == ReasonConcurrency || reason == ReasonRequestsPerMinute || reason == ReasonTokensPerMinute:
 		return "outbound_rate_limited", "Outbound integration rate limit reached"
 	case reason == ReasonCircuitOpen || reason == ReasonProviderCooldown:
-		return "outbound_provider_cooling_down", "The provider is cooling down after failing calls"
+		// The code the provider-requested cooldown already uses.
+		return "outbound_provider_cooldown", "The provider is cooling down after failing calls"
 	}
 	return "outbound_budget_exhausted", "Outbound integration budget is exhausted"
 }

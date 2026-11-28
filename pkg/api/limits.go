@@ -3618,6 +3618,11 @@ const (
 	// the catalog, or this for a model the catalog does not know (prod hunt
 	// 2026-11-28).
 	OutboundAIUnknownModelInputReserveTokens int64 = 200_000
+	// The most answers (n, best_of, candidateCount, completions prompts) a
+	// call's reservation counts, so a hostile count cannot overflow it;
+	// providers refuse far fewer (OpenAI: 128). Untyped: it bounds int and
+	// float counts.
+	OutboundAIReserveChoicesMax = 1 << 16
 	// Per-app AI guardrails on a binding (ADR-991).
 	MaxOutboundAIRequestsPerMinute       = 100_000
 	MaxOutboundAITokensPerMinute   int64 = 1_000_000_000

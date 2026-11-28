@@ -272,7 +272,8 @@ func readAICallFacts(endpoint aiEndpoint, body []byte) aiCallFacts {
 	case aiFormatAnthropic:
 		facts.ceilingKnown, facts.outputCeiling = true, jsonInt(fields["max_tokens"])
 	case aiFormatGemini:
-		facts.ceilingKnown, facts.outputCeiling = true, jsonInt(jsonObjectField(fields["generationConfig"], "maxOutputTokens"))
+		// The Gemini JSON API takes snake_case names too.
+		facts.ceilingKnown, facts.outputCeiling = true, jsonInt(geminiGenerationField(fields, "maxOutputTokens", "max_output_tokens"))
 	case aiFormatBedrockConverse:
 		facts.ceilingKnown, facts.outputCeiling = true, jsonInt(jsonObjectField(fields["inferenceConfig"], "maxTokens"))
 	case aiFormatBedrockInvoke:
@@ -296,24 +297,26 @@ func readAICallFacts(endpoint aiEndpoint, body []byte) aiCallFacts {
 	if endpoint.generation {
 		facts.tools = readToolReserve(endpoint, facts.model, fields)
 		if endpoint.media == aiMediaNone {
-			facts.choices, facts.storedContext = readChoicesAndContext(endpoint, fields, body)
+			facts.choices, facts.storedContext = readChoicesAndContext(endpoint, fields)
 		}
 	}
 	return facts
 }
 
-// aiChoicesMax bounds the choices a reservation multiplies by, so a hostile
-// count cannot overflow it; providers refuse far fewer (OpenAI: 128).
-const aiChoicesMax = 1 << 16
+// aiChoicesMax bounds the choices a reservation multiplies by.
+const aiChoicesMax = api.OutboundAIReserveChoicesMax
 
 // readChoicesAndContext reads how many answers a generation call asks for
 // and whether it continues context stored at the provider.
-func readChoicesAndContext(endpoint aiEndpoint, fields map[string]json.RawMessage, body []byte) (int64, bool) {
+func readChoicesAndContext(endpoint aiEndpoint, fields map[string]json.RawMessage) (int64, bool) {
 	choices := int64(1)
 	stored := false
 	switch endpoint.format {
 	case aiFormatOpenAI:
 		choices = max(choices, jsonCount(fields["n"]), jsonCount(fields["best_of"]))
+		// The legacy completions endpoint answers each prompt of an array
+		// prompt n times.
+		choices = min(choices*promptCount(fields["prompt"]), aiChoicesMax)
 		if jsonString(fields["previous_response_id"]) != "" {
 			stored = true
 		}
@@ -326,14 +329,14 @@ func readChoicesAndContext(endpoint aiEndpoint, fields map[string]json.RawMessag
 			stored = true
 		}
 	case aiFormatGemini:
-		choices = max(choices, jsonCount(jsonObjectField(fields["generationConfig"], "candidateCount")))
+		choices = max(choices, jsonCount(geminiGenerationField(fields, "candidateCount", "candidate_count")))
 		if jsonString(fields["cachedContent"]) != "" || jsonString(fields["cached_content"]) != "" {
 			stored = true
 		}
 	}
 	// An uploaded file (OpenAI input_file, Anthropic document source) is
 	// input the body only names.
-	if bytes.Contains(body, []byte(`"file_id"`)) {
+	if namesUploadedFile(fields) {
 		stored = true
 	}
 	if choices == 1 {
@@ -341,6 +344,87 @@ func readChoicesAndContext(endpoint aiEndpoint, fields map[string]json.RawMessag
 		choices = 0
 	}
 	return min(choices, aiChoicesMax), stored
+}
+
+// geminiGenerationField reads a generation config field under its
+// camelCase or snake_case name; the Gemini JSON API accepts both for the
+// object and its fields.
+func geminiGenerationField(fields map[string]json.RawMessage, camel, snake string) json.RawMessage {
+	for _, config := range []json.RawMessage{fields["generationConfig"], fields["generation_config"]} {
+		for _, name := range []string{camel, snake} {
+			if value := jsonObjectField(config, name); value != nil {
+				return value
+			}
+		}
+	}
+	return nil
+}
+
+// promptCount is how many prompts a legacy completions prompt holds: an
+// array of strings or of token arrays is one prompt each, anything else one.
+func promptCount(raw json.RawMessage) int64 {
+	var items []json.RawMessage
+	if len(raw) == 0 || raw[0] != '[' || json.Unmarshal(raw, &items) != nil || len(items) == 0 {
+		return 1
+	}
+	if first := bytes.TrimSpace(items[0]); len(first) > 0 && first[0] != '"' && first[0] != '[' {
+		// One prompt given as a token array.
+		return 1
+	}
+	return int64(min(len(items), aiChoicesMax))
+}
+
+// aiFileSearchDepth bounds how deep namesUploadedFile looks.
+const aiFileSearchDepth = 12
+
+// namesUploadedFile reports whether a request's messages or input name an
+// uploaded file: an object with a non-empty string file_id. Tool
+// definitions are skipped (a parameter schema may declare a file_id
+// property), and text that merely mentions "file_id" is a string, not a key.
+func namesUploadedFile(fields map[string]json.RawMessage) bool {
+	for name, raw := range fields {
+		switch name {
+		case "tools", "functions", "tool_choice", "response_format", "text", "toolConfig", "tool_config":
+			continue
+		}
+		if rawNamesFile(raw, aiFileSearchDepth) {
+			return true
+		}
+	}
+	return false
+}
+
+func rawNamesFile(raw json.RawMessage, depth int) bool {
+	raw = bytes.TrimSpace(raw)
+	if depth == 0 || len(raw) == 0 {
+		return false
+	}
+	switch raw[0] {
+	case '{':
+		var object map[string]json.RawMessage
+		if json.Unmarshal(raw, &object) != nil {
+			return false
+		}
+		if jsonString(object["file_id"]) != "" {
+			return true
+		}
+		for _, value := range object {
+			if rawNamesFile(value, depth-1) {
+				return true
+			}
+		}
+	case '[':
+		var items []json.RawMessage
+		if json.Unmarshal(raw, &items) != nil {
+			return false
+		}
+		for _, item := range items {
+			if rawNamesFile(item, depth-1) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // jsonCount reads a count that saturates at aiChoicesMax rather than

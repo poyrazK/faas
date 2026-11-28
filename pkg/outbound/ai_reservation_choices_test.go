@@ -39,6 +39,12 @@ func TestReservationCountsEveryAnswer(t *testing.T) {
 		{"candidateCount", gemini, "/v1beta/models/gemini-2.5-pro:generateContent",
 			`{"generationConfig":{"maxOutputTokens":100,"candidateCount":4}}`, 400},
 		{"hostile count is bounded", openai, "/v1/chat/completions", `{"model":"gpt-4o","max_tokens":1,"n":99999999999}`, aiChoicesMax},
+		// Review of #8198: the Gemini JSON API takes snake_case names too.
+		{"candidate_count", gemini, "/v1beta/models/gemini-2.5-pro:generateContent",
+			`{"generation_config":{"max_output_tokens":100,"candidate_count":4}}`, 400},
+		// The legacy completions endpoint answers each prompt of an array n times.
+		{"prompt array", openai, "/v1/completions", `{"model":"gpt-4o","max_tokens":100,"n":2,"prompt":["a","b","c"]}`, 600},
+		{"token array is one prompt", openai, "/v1/completions", `{"model":"gpt-4o","max_tokens":100,"prompt":[1,2,3]}`, 100},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			plan, rejection := planForTest(t, tc.integration, "", tc.path, tc.body)
@@ -105,6 +111,11 @@ func TestStoredContextReservesTheContextWindow(t *testing.T) {
 		{"unknown model", "/v1/responses", `{"model":"private-x","max_output_tokens":10,"previous_response_id":"resp_1"}`, api.OutboundAIUnknownModelInputReserveTokens},
 		{"legacy completion prompt text", "/v1/completions", `{"model":"gpt-4o","max_tokens":10,"prompt":"hello"}`, 0},
 		{"plain chat", "/v1/chat/completions", `{"model":"gpt-4o","max_tokens":10,"messages":[]}`, 0},
+		// Review of #8198: text that mentions file_id, or a tool parameter
+		// named file_id, is not an uploaded file.
+		{"file_id in text", "/v1/chat/completions", `{"model":"gpt-4o","max_tokens":10,"messages":[{"role":"user","content":"what does \"file_id\": \"x\" mean?"}]}`, 0},
+		{"file_id tool parameter", "/v1/chat/completions", `{"model":"gpt-4o","max_tokens":10,"messages":[],"tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object","properties":{"file_id":{"type":"string"}}}}}]}`, 0},
+		{"anthropic document source", "/v1/chat/completions", `{"model":"gpt-4o","max_tokens":10,"messages":[{"role":"user","content":[{"type":"document","source":{"type":"file","file_id":"file_1"}}]}]}`, window},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			plan, rejection := planForTest(t, integration, "", tc.path, tc.body)
@@ -117,6 +128,12 @@ func TestStoredContextReservesTheContextWindow(t *testing.T) {
 			}
 			if plan.reserve.estimate.InputTokens != want {
 				t.Fatalf("reserved input = %d, want %d", plan.reserve.estimate.InputTokens, want)
+			}
+			// Review of #8198: only the cost reserves the context window;
+			// token guardrails check the body estimate, or every continued
+			// conversation would be refused by a tokens-per-minute guard.
+			if bodyInput := int64((len(tc.body) + 3) / 4); plan.reserve.tokens != bodyInput+10 {
+				t.Fatalf("reserved tokens = %d, want the body estimate %d + output 10", plan.reserve.tokens, bodyInput)
 			}
 		})
 	}

@@ -41,7 +41,7 @@ func TestBudgetRefusalKinds(t *testing.T) {
 		ReasonDailyCostLimit + ReasonReservationSuffix: "outbound_ai_reservation_exceeds_budget",
 		ReasonRequestsPerMinute:                        "outbound_rate_limited",
 		ReasonConcurrency:                              "outbound_rate_limited",
-		ReasonProviderCooldown:                         "outbound_provider_cooling_down",
+		ReasonProviderCooldown:                         "outbound_provider_cooldown",
 		ReasonTraceCallLimit:                           "outbound_budget_exhausted",
 	} {
 		if code, _ := admissionRefusalProblem(reason); code != want {

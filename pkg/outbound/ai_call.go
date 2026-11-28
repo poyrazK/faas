@@ -173,6 +173,11 @@ func estimateAIReservation(r *http.Request, integration Integration, plan *aiCal
 	// does not show; it reserves the model's context window (prod hunt
 	// 2026-11-28: a previous_response_id call costing USD 0.60 was admitted
 	// with USD 0.085 left under the cap).
+	// Only the cost reserves it: the token reservation, which token-per-minute
+	// and daily token guardrails check, keeps the body estimate, as it keeps
+	// the default output, so a continued conversation is not refused by every
+	// token guardrail smaller than a context window.
+	rateInputTokens := min(estimate.InputTokens, api.OutboundAIMaxTokensPerResponse)
 	if plan.endpoint.generation && plan.facts.storedContext {
 		estimate.InputTokens = max(estimate.InputTokens, modelInputReserve(integration, plan.facts.model))
 	}
@@ -190,7 +195,7 @@ func estimateAIReservation(r *http.Request, integration Integration, plan *aiCal
 		rateTokens *= choices
 	}
 	cost := aiCallCostMillicents(integration, estimate)
-	return aiReservation{tokens: estimate.InputTokens + rateTokens, cost: cost, estimate: estimate}
+	return aiReservation{tokens: rateInputTokens + rateTokens, cost: cost, estimate: estimate}
 }
 
 // modelOutputReserve is what a generation call that names no output ceiling

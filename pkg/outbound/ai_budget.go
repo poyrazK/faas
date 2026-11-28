@@ -150,9 +150,10 @@ func aiBudgetExhausted(utcNow time.Time, state aiBudgetState, limits aiBudgetLim
 const ReasonReservationSuffix = "_reservation"
 
 // aiBudgetHeldRetry is the Retry-After of a call refused because calls in
-// flight hold the budget it needs: they settle within seconds, not at the
-// budget's reset.
-const aiBudgetHeldRetry = time.Second
+// flight hold the budget it needs: most settle within seconds, not at the
+// budget's reset; a few stream for minutes, so clients back off rather than
+// retry each second.
+const aiBudgetHeldRetry = 5 * time.Second
 
 // aiMinuteState is an app's usage in the current UTC minute.
 type aiMinuteState struct {
