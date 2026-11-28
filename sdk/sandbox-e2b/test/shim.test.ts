@@ -35,6 +35,7 @@ class FakeGregale {
   background = new Map<string, { out: string; polls: number; finishAfter: number; exit: number; killed?: boolean }>();
   inputs: { handle: string; data?: string; eof?: boolean; rows?: number; cols?: number }[] = [];
   sessionEnv?: Record<string, string>;
+  code: Record<string, unknown>[] = [];
 
   fetch = async (input: string | URL | Request, init: RequestInit = {}): Promise<Response> => {
     const url = new URL(String(input));
@@ -126,6 +127,33 @@ class FakeGregale {
       });
     }
     switch (`${method} ${sub}`) {
+      case 'POST /code': {
+        const req = JSON.parse(text);
+        this.code.push(req);
+        const exec = {
+          results: [
+            { data: { 'image/png': 'iVBORw0KGgo=', 'text/plain': '<Figure>' } },
+            { data: { 'text/plain': '42' }, is_main_result: true },
+          ],
+          logs: { stdout: ['hi\n'], stderr: [] },
+          ...(req.code.includes('1/0') ? { error: { name: 'ZeroDivisionError', value: 'division by zero', traceback: 'Traceback' } } : {}),
+          execution_count: 2,
+        };
+        if (headers.get('Accept') === 'text/event-stream') {
+          const body = `event: stdout\ndata: "hi\\n"\n\nevent: result\ndata: ${JSON.stringify({ ...exec, logs: { stdout: [], stderr: [] } })}\n\n`;
+          return new Response(body, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+        }
+        return json(200, exec);
+      }
+      case 'POST /code/contexts':
+        this.code.push({ create: JSON.parse(text) });
+        return json(201, { id: 'abc123', language: 'python', cwd: '/workspace' });
+      case 'GET /code/contexts':
+        return json(200, { contexts: [{ id: 'default', language: 'python', cwd: '/workspace' }] });
+      case 'POST /code/contexts/abc123/restart':
+      case 'DELETE /code/contexts/abc123':
+        this.code.push({ [method]: sub });
+        return json(200, {});
       case 'PUT /env':
         this.sessionEnv = JSON.parse(text).env;
         return json(200, { names: Object.keys(this.sessionEnv ?? {}).sort() });
@@ -305,6 +333,35 @@ test('a terminal is a background command on a pty, driven through its input', as
   assert.equal(Buffer.from(seen[0]!).toString(), '$ ');
   assert.equal(await sbx.pty.kill(term.pid), true);
   await assert.rejects(term.wait(), CommandExitError);
+});
+
+test('runCode answers results, logs, errors and the value; contexts are managed', async () => {
+  const { fake, opts } = setup();
+  const sbx = await Sandbox.create('code-interpreter', opts);
+  assert.deepEqual(fake.created, { preset: 'code-interpreter' });
+  const exec = await sbx.runCode('x + 2');
+  assert.equal(exec.text, '42');
+  assert.equal(exec.executionCount, 2);
+  assert.deepEqual(exec.logs, { stdout: ['hi\n'], stderr: [] });
+  assert.equal(exec.results[0]!.png, 'iVBORw0KGgo=');
+  assert.deepEqual(exec.results[0]!.formats(), ['text', 'png']);
+  const seen: string[] = [];
+  const failed = await sbx.runCode('1/0', {
+    onStdout: (m) => void seen.push(`out:${m.line}`),
+    onResult: (r) => void seen.push(`result:${r.text}`),
+    onError: (e) => void seen.push(`error:${e.name}`),
+  });
+  assert.equal(failed.error?.name, 'ZeroDivisionError');
+  assert.deepEqual(seen, ['out:hi\n', 'result:<Figure>', 'result:42', 'error:ZeroDivisionError']);
+  assert.deepEqual(failed.logs.stdout, ['hi\n']);
+  const ctx = await sbx.createCodeContext({ cwd: '/workspace/app' });
+  await sbx.runCode('y = 1', { context: ctx, timeoutMs: 5_000 });
+  assert.deepEqual(fake.code.at(-1), { code: 'y = 1', context: 'abc123', timeout_ms: 5_000 });
+  assert.deepEqual((await sbx.listCodeContexts()).map((c) => c.id), ['default']);
+  await sbx.restartCodeContext(ctx);
+  await sbx.removeCodeContext('abc123');
+  assert.deepEqual(fake.code.slice(-2), [{ POST: '/code/contexts/abc123/restart' }, { DELETE: '/code/contexts/abc123' }]);
+  await assert.rejects(sbx.runCode('1', { envs: { A: '1' } }), UnsupportedError);
 });
 
 test('background commands take stdin and its end', async () => {

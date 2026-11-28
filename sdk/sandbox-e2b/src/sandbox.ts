@@ -3,13 +3,14 @@
 // moves by changing the import and the API key.
 
 import { Api, toSandboxError, type ApiOptions } from './api.js';
+import { CodeInterpreter, type Context, type Execution, type RunCodeOpts } from './code.js';
 import { Commands, Pty } from './commands.js';
 import { Connection, type SandboxView } from './connection.js';
 import { InvalidArgumentError, NotFoundError, UnsupportedError } from './errors.js';
 import { Filesystem } from './filesystem.js';
 
 /** The harness presets a template name may be. */
-const PRESETS = new Set(['codex', 'opencode', 'claude-code']);
+const PRESETS = new Set(['codex', 'opencode', 'claude-code', 'code-interpreter']);
 /** Template names E2B code commonly passes for the stock image. */
 const DEFAULT_TEMPLATES = new Set(['base', 'default']);
 
@@ -17,7 +18,8 @@ export type ConnectionOpts = ApiOptions & { requestTimeoutMs?: number; signal?: 
 
 export type SandboxOpts = ConnectionOpts & {
   /**
-   * A preset (codex, opencode, claude-code), "base" for the default preset,
+   * A preset (codex, opencode, claude-code, code-interpreter for runCode),
+   * "base" for the default preset,
    * or the name of a template built with `gregale sandbox template publish`.
    */
   template?: string;
@@ -123,6 +125,7 @@ export class Sandbox {
   readonly files: Filesystem;
   readonly commands: Commands;
   readonly pty: Pty;
+  readonly #code: CodeInterpreter;
   readonly #conn: Connection;
   readonly #portVisibility: 'private' | 'public';
   readonly #ports = new Map<number, PortView>();
@@ -134,6 +137,7 @@ export class Sandbox {
     this.files = new Filesystem(conn);
     this.commands = new Commands(conn);
     this.pty = new Pty(this.commands);
+    this.#code = new CodeInterpreter(conn);
     this.#portVisibility = portVisibility;
   }
 
@@ -235,6 +239,32 @@ export class Sandbox {
    * command gets under its own envs. It is kept in the session's memory, not
    * stored; an empty object clears it. Answers the names now set.
    */
+  /**
+   * Runs code in a code context's Jupyter kernel; the session must come from
+   * template 'code-interpreter'. Variables and imports persist between runs
+   * of one context.
+   */
+  async runCode(code: string, opts?: RunCodeOpts): Promise<Execution> {
+    return this.#code.runCode(code, opts);
+  }
+
+  /** Creates a code context: its own kernel, in cwd (default /workspace). */
+  async createCodeContext(opts?: { cwd?: string; language?: string; signal?: AbortSignal }): Promise<Context> {
+    return this.#code.createCodeContext(opts);
+  }
+
+  async listCodeContexts(opts?: { signal?: AbortSignal }): Promise<Context[]> {
+    return this.#code.listCodeContexts(opts);
+  }
+
+  async restartCodeContext(ctx: Context | string, opts?: { signal?: AbortSignal }): Promise<void> {
+    return this.#code.restartCodeContext(ctx, opts);
+  }
+
+  async removeCodeContext(ctx: Context | string, opts?: { signal?: AbortSignal }): Promise<void> {
+    return this.#code.removeCodeContext(ctx, opts);
+  }
+
   async setEnvs(envs: Record<string, string>, opts: { signal?: AbortSignal } = {}): Promise<string[]> {
     const res = await this.#conn.json<{ names: string[] }>('PUT', '/env', { json: { env: envs }, signal: opts.signal });
     return res.names;

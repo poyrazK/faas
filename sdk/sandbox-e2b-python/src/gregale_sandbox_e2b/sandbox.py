@@ -16,13 +16,14 @@ from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlsplit
 
 from .api import Api, ApiError, Transport, to_sandbox_error
+from .code import CodeInterpreter, Context, Execution
 from .commands import Commands, Pty
 from .connection import Connection, parse_time
 from .errors import InvalidArgumentException, NotFoundException, UnsupportedException
 from .filesystem import Filesystem
 
 #: The harness presets a template name may be.
-PRESETS = {"codex", "opencode", "claude-code"}
+PRESETS = {"codex", "opencode", "claude-code", "code-interpreter"}
 #: Template names E2B code commonly passes for the stock image.
 DEFAULT_TEMPLATES = {"base", "default"}
 
@@ -210,6 +211,7 @@ class Sandbox:
         self.files = Filesystem(conn)
         self.commands = Commands(conn)
         self.pty = Pty(self.commands)
+        self._code = CodeInterpreter(conn)
 
     @classmethod
     def create(cls, template: Optional[str] = None, **opts: Any) -> "Sandbox":
@@ -299,6 +301,29 @@ class Sandbox:
         cls(_conn=Connection(_ApiOpts(**opts).api(), sandbox_id))._set_timeout(timeout)
 
     set_timeout = _ClassOrInstance(_set_timeout, _set_timeout_by_id)
+
+    def run_code(self, code: str, **opts: Any) -> Execution:
+        """Runs code in a code context's Jupyter kernel.
+
+        The session must come from template "code-interpreter". Variables and
+        imports persist between runs of one context. Takes E2B's language,
+        context, on_stdout, on_stderr, on_result, on_error, timeout and
+        request_timeout.
+        """
+        return self._code.run_code(code, **opts)
+
+    def create_code_context(self, cwd: Optional[str] = None, language: Optional[str] = None, request_timeout: Optional[float] = None) -> Context:
+        """Creates a code context: its own kernel, in cwd (default /workspace)."""
+        return self._code.create_code_context(cwd, language, request_timeout)
+
+    def list_code_contexts(self, request_timeout: Optional[float] = None) -> List[Context]:
+        return self._code.list_code_contexts(request_timeout)
+
+    def restart_code_context(self, context: Any, request_timeout: Optional[float] = None) -> None:
+        self._code.restart_code_context(context, request_timeout)
+
+    def remove_code_context(self, context: Any, request_timeout: Optional[float] = None) -> None:
+        self._code.remove_code_context(context, request_timeout)
 
     def set_envs(self, envs: Dict[str, str], request_timeout: Optional[float] = None) -> List[str]:
         """Gregale only: replaces the session's environment.
