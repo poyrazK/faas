@@ -442,6 +442,7 @@ var PublishRuntimeCaptureTestReceipt = publishRuntimeCaptureTestReceipt
 var PublishWorkflowEvent = publishWorkflowEvent
 var QualificationSmokeReceiptMatchesRequest = qualificationSmokeReceiptMatchesRequest
 var QualifyHistoricalAlertEvidence = qualifyHistoricalAlertEvidence
+var QualifyBootFailureEvidence = qualifyBootFailureEvidence
 var QueueCanaryStatus = queueCanaryStatus
 var QueueHealthFixtureLease = queueHealthFixtureLease
 var QueueHealthRun = queueHealthRun
