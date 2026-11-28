@@ -59,7 +59,7 @@ A new daemon, `agentproxyd`, runs on the gateway host. It is a transparent TCP p
 
 - The proxy logs every connection with: node, account, session or run, source address, destination name and address, the port, bytes each way, duration, and why it ended or was refused.
 - It writes one JSON line per connection, message `agent_egress_connection`, to its own journal namespace on the gateway host (`LogNamespace=agentproxyd`). The gateway host gets no database access.
-- *Amended in PR 3:* the draft said the log shipper already carries the journal off the host. It does not: the gateway host is outside the private network and runs no shipper, so the log stays on the gateway. Its namespace is persistent and kept 30 days (the ADR-371 flow log's retention), apart from the host journal's 7-day bound. Shipping it off the host needs a path to Loki and a logs leaf for the gateway; that is a follow-up.
+- *Amended in PR 3:* the draft said the log shipper already carries the journal off the host. It does not: the gateway host is outside the private network and runs no shipper, so the log stays on the gateway. Its namespace is persistent and kept 30 days (the ADR-371 flow log's retention), apart from the host journal's 7-day bound. Shipping it off the host needs a path to Loki and a logs leaf for the gateway; the amendment of 2026-11-19 below decides both.
 - So an abuse report naming a public address and a time maps to one session within minutes: the proxy log gives the session directly, and vmmd's flow log (ADR-371) and the session's domain log (ADR-20261117091026 §4) confirm it.
 
 ### Limits (`pkg/api/limits.go`)
@@ -86,6 +86,110 @@ These are starting values. A headless browser opens about six connections per ho
 2. **PR 2:** `agentproxyd`, with registration, caps, blocklist and metrics. vmmd registers VMs and refuses a boot it cannot register.
 3. **PR 3:** the connection log, its retention on the gateway, and the runbook entry for abuse reports (`docs/runbooks/agent-egress-gateway.md`).
 4. **Before the switch is on:** the owner provisions the agent addresses on the gateway host. A metal check covers a web session and a registries session through `wg-agent`, a refusal with the tunnel down, and each cap's refusal. Then one node, then the fleet.
+5. **PR 4 (amendment 2026-11-19):** `wg-obs`, Alloy and the logs leaf on the gateway hosts, the connection log's 30-day Loki stream, the scrape jobs and alerts, and the runbook reading Loki. Behind the operator variable `faas_gateway_obs_enabled`; the owner moves the Loki bucket's lifecycle rule to 32 days.
+
+## Amendment 2026-11-19: the gateways' logs and metrics leave the host
+
+PR 3 left the connection log and `agentproxyd`'s metrics on the gateway: the
+gateway host is outside the private network, so it runs no journal shipper,
+holds no logs leaf, and Prometheus cannot reach it. An abuse report needs SSH
+to the gateway and `journalctl`, and nothing alerts when the proxy dies or
+starts refusing. The ADR-372 tenant gateway has the same gap: its firewall
+unit, WireGuard and login records stay on it too. This amendment covers both
+gateways, whether they share one host or not.
+
+### A1. An observability tunnel, `wg-obs`
+
+- Each gateway host gains a third WireGuard interface, `wg-obs`, with one
+  peer: the control-plane host that runs Loki and Prometheus (the first
+  `control_plane` host). The control plane is the only peer, the gateway the
+  only thing on the other end.
+- **The control plane dials out.** It has the gateway's public address as
+  the endpoint and keeps the tunnel up with a 25 s keepalive. The gateway
+  learns the control plane's address from the handshake. The control plane
+  opens no inbound port to the internet, which matters on a control plane
+  behind NAT.
+- A small private range of its own (`faas_gateway_obs_tunnel_cidr`, default
+  `10.255.254.0/29`): the control plane is `.1`, each gateway host `.2`
+  upward. It must not overlap the tenant or agent tunnel, or the private
+  network; the converge checks the addresses already on each host.
+- **What crosses it.** Gateway → control plane: Loki's push port (3100),
+  and nothing else. The control plane's firewall accepts 3100 on `wg-obs`
+  from the tunnel range. Control plane → gateway: Alloy's metrics (9080) and
+  `agentproxyd`'s metrics (9473), accepted by the gateway's own
+  `inet faas_gateway_obs` table from the control plane's tunnel address only.
+  The gateway forwards nothing into or out of `wg-obs`; the tenant and agent
+  tables already drop tunnel traffic to anything but the public interface,
+  so agent or tenant traffic can never reach the control plane this way.
+- Keys are minted on each host and never leave it, as for the egress tunnels.
+  The converge reads each host's public key and renders the peers.
+
+### A2. Alloy and a logs leaf on the gateway
+
+- The gateway runs Alloy (ADR-20261023185953), the same role and pipeline as
+  a compute node, pushing to Loki with mTLS over `wg-obs`. Its leaf is the
+  compute node's shipper leaf (`pkg/pki` `FeaturePlatformLogs`,
+  `promtail/loki-client`), issued on the control plane into a per-host
+  staging directory and copied in, exactly as for a compute node. The
+  gateway never holds the CA. `pki_renew.yml` renews it with the rest.
+- It ships the gateway units (WireGuard, the two firewall units,
+  `faas-agentproxyd`) and the host security streams (ADR-20261107203000):
+  a public, internet-facing host is where login and privilege records matter
+  most.
+- **The connection log** is read from `agentproxyd`'s own journal namespace
+  as a separate stream, `job="agent-egress-connections"`. The stored line is
+  the proxy's JSON. Only `outcome` (a closed set) becomes a label; account,
+  sandbox, addresses and names stay in the line (ADR-143).
+- **Retention.** Loki keeps that stream 30 days (`retention_stream`), the
+  same as the gateway's journal namespace and the ADR-371 flow log; every
+  other stream keeps the 14-day default. The bucket's lifecycle backstop
+  moves from 16 to 32 days; until the owner changes it, Loki holds 16 days of
+  the connection log and the gateway journal stays the record for older
+  reports.
+- **The gateway journal stays the source of truth.** Alloy is asynchronous
+  and bounded, as on every host (ADR-143): a tunnel or Loki outage longer
+  than its retries drops entries from Loki, never from the gateway's
+  30-day namespace. The runbook reads Loki first and falls back to the
+  gateway.
+
+### A3. Metrics and alerts
+
+- `agentproxyd` serves its metrics on the gateway's `wg-obs` address instead
+  of loopback. The gateway sets `net.ipv4.ip_nonlocal_bind`, so the proxy
+  and Alloy start whether or not `wg-obs` is up: the observability tunnel
+  can never stop agent egress.
+- Prometheus scrapes two jobs from file-based discovery that the converge
+  writes on the control plane: `promtail-egress-gateway` (Alloy on each
+  gateway host) and `agentproxyd`. The existing shipper alerts cover the
+  gateway's Alloy by job.
+- New alerts:
+  - `FaasAgentProxyDown` (page): `agentproxyd` unscrapeable for 3 minutes.
+    Agent web egress is refused while it is down (§3, fails closed).
+  - `FaasEgressGatewayUnreachable` (warn): a gateway host's Alloy
+    unscrapeable for 10 minutes — the host or `wg-obs` is down, and its logs
+    are not leaving it.
+  - `FaasAgentEgressRefusalSpike` (warn): refusals by `cap_*`, `blocklist`,
+    `no_sni` or `bad_destination` above 20 % of connections, and at least
+    1 per second, for 10 minutes.
+  - `FaasAgentEgressUnregisteredRefusals` (warn): `unregistered` refusals
+    above 0.2 per second for 10 minutes — registrations are not arriving.
+- The release gates that require every Prometheus target up leave the two
+  gateway jobs out: no release pipeline deploys the gateways, so a gateway
+  must not block a platform release. Their alerts cover them.
+
+### Rejected for this amendment
+
+- **Joining the gateways to the fleet overlay.** The gateway faces hostile
+  traffic; on the overlay a compromise of it could reach every node's
+  private services. One peer and one port is the whole surface.
+- **Pushing over the agent or tenant tunnel.** Their peers are the compute
+  nodes, not the control plane, and both carry tenant-controlled traffic.
+  Making the control plane a peer of either puts it on a tenant path.
+- **A public, mTLS-only Loki endpoint.** It puts Loki on the internet for
+  one or two hosts.
+- **Prometheus remote-write from the gateway.** It needs Prometheus's
+  write receiver open; scraping over the tunnel needs nothing new on the
+  control plane but the file-discovery jobs.
 
 ## Rejected alternatives
 
