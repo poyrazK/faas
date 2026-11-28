@@ -42038,6 +42038,8 @@ CREATE TABLE public.egress_flow_log (
     instance_id text NOT NULL,
     remote_ip inet NOT NULL,
     remote_port integer NOT NULL,
+    blocked boolean DEFAULT false NOT NULL,
+    protocol text DEFAULT 'tcp'::text NOT NULL,
     CONSTRAINT egress_flow_log_account_id_check CHECK ((length(account_id) <= 64)),
     CONSTRAINT egress_flow_log_app_id_check CHECK ((length(app_id) <= 64)),
     CONSTRAINT egress_flow_log_instance_id_check CHECK (((length(instance_id) >= 1) AND (length(instance_id) <= 128))),
@@ -71450,6 +71452,14 @@ ALTER TABLE ONLY public.edge_tls_certificates
 
 ALTER TABLE ONLY public.egress_flow_log
     ADD CONSTRAINT egress_flow_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: egress_flow_log egress_flow_log_protocol_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.egress_flow_log
+    ADD CONSTRAINT egress_flow_log_protocol_check CHECK ((protocol = ANY (ARRAY['tcp'::text, 'udp'::text]))) NOT VALID;
 
 
 --

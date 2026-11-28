@@ -2418,7 +2418,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-371: persist each instance's new egress destinations so an
 	// abuse report about this node's address can be traced to a tenant.
 	if flowStore, ok := store.(state.EgressFlowLogStore); ok && store != nil {
-		go runEgressFlowLog(ctx, mgr, flowStore, cfg.ComputeNode.NodeName, nil, ops, interval, log)
+		go runEgressFlowLog(ctx, mgr, flowStore, cfg.ComputeNode.NodeName, nil, nil, ops, interval, log)
 	}
 
 	// CPU sample loop (issue #279 / PR-B): drives the cpustats

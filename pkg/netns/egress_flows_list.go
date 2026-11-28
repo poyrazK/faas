@@ -8,3 +8,8 @@ import "context"
 func ListEgressFlowsInNetns(context.Context, string) ([]EgressFlow, error) {
 	return nil, nil
 }
+
+// ListEgressDropsInNetns is the non-metal stub: no namespaces, no drops.
+func ListEgressDropsInNetns(context.Context, string) ([]EgressFlow, error) {
+	return nil, nil
+}

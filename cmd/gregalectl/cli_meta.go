@@ -891,10 +891,11 @@ var cliCommands = []cliCommand{
 			},
 			{
 				Name:  "egress-flows",
-				Short: "Search the egress flow log: which account connected to an address, and when",
+				Short: "Search the egress flow log: which account connected to (or was blocked from) an address, and when",
 				Flags: []cliFlag{
 					{Name: "remote", Short: "remote IP address or CIDR"},
 					{Name: "account-id", Short: "account id (uuid)"},
+					{Name: "verdict", Short: "allowed or blocked (default: both)"},
 					{Name: "from", Short: "window start, RFC 3339"},
 					{Name: "to", Short: "window end, RFC 3339"},
 					{Name: "limit", Short: "maximum rows (1..1000)"},

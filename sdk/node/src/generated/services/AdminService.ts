@@ -424,8 +424,10 @@ export class AdminService {
   }
   /**
    * Search the egress flow log (operator-only).
-   * Destination addresses and TCP ports tenant guests opened new flows to,
-   * newest first. Filter by remote address or CIDR, account, and a
+   * Destination addresses and ports tenant guests opened new flows to,
+   * and the ones they tried to reach that the egress policy blocked
+   * (internal addresses, mail ports, ports outside the plan), newest
+   * first. Filter by remote address or CIDR, account, verdict, and a
    * [from, to) window of at most the 30-day retention. Defaults to the
    * last 24 hours and 200 rows.
    *
@@ -435,6 +437,7 @@ export class AdminService {
   public static listEgressFlows({
     remote,
     accountId,
+    verdict,
     from,
     to,
     limit,
@@ -447,6 +450,10 @@ export class AdminService {
      * Only flows from this account's instances.
      */
     accountId?: string,
+    /**
+     * Only allowed flows or only blocked attempts; both when omitted.
+     */
+    verdict?: 'allowed' | 'blocked',
     /**
      * Window start (inclusive); defaults to 24 hours before to.
      */
@@ -466,6 +473,7 @@ export class AdminService {
       query: {
         'remote': remote,
         'account_id': accountId,
+        'verdict': verdict,
         'from': from,
         'to': to,
         'limit': limit,

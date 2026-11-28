@@ -8,8 +8,10 @@ import (
 	"time"
 )
 
-// EgressFlowRecord is one destination address and TCP port a tenant guest
-// opened a new flow to (ADR-371).
+// EgressFlowRecord is one destination address and port a tenant guest
+// opened a new flow to (ADR-371), or tried to and was blocked by the egress
+// policy. Protocol is "tcp" or "udp"; empty means "tcp". Allowed flows are
+// TCP only.
 type EgressFlowRecord struct {
 	ObservedAt time.Time
 	NodeName   string
@@ -18,14 +20,25 @@ type EgressFlowRecord struct {
 	InstanceID string
 	RemoteIP   netip.Addr
 	RemotePort uint16
+	Protocol   string
+	Blocked    bool
+}
+
+// protocolOrTCP returns the record's protocol, defaulting to "tcp".
+func (r EgressFlowRecord) protocolOrTCP() string {
+	if r.Protocol == "" {
+		return "tcp"
+	}
+	return r.Protocol
 }
 
 // EgressFlowFilter selects egress flow log rows. A zero Remote matches any
 // address; an address-only lookup is a single-host prefix. From is
-// inclusive, To exclusive.
+// inclusive, To exclusive. A nil Blocked matches allowed and blocked rows.
 type EgressFlowFilter struct {
 	Remote    netip.Prefix
 	AccountID string
+	Blocked   *bool
 	From, To  time.Time
 	Limit     int
 }
@@ -54,14 +67,16 @@ func (s *PgStore) InsertEgressFlows(ctx context.Context, records []EgressFlowRec
 	n := len(records)
 	at, node, acct, app, inst, ip, port := make([]time.Time, n), make([]string, n), make([]string, n),
 		make([]string, n), make([]string, n), make([]string, n), make([]int32, n)
+	proto, blocked := make([]string, n), make([]bool, n)
 	for i, r := range records {
 		at[i], node[i], acct[i], app[i], inst[i] = r.ObservedAt.UTC(), r.NodeName, r.AccountID, r.AppID, r.InstanceID
 		ip[i], port[i] = r.RemoteIP.String(), int32(r.RemotePort)
+		proto[i], blocked[i] = r.protocolOrTCP(), r.Blocked
 	}
 	if _, err := s.pool.Exec(ctx, `
-		insert into egress_flow_log (observed_at, node_name, account_id, app_id, instance_id, remote_ip, remote_port)
-		select * from unnest($1::timestamptz[], $2::text[], $3::text[], $4::text[], $5::text[], $6::inet[], $7::int[])`,
-		at, node, acct, app, inst, ip, port); err != nil {
+		insert into egress_flow_log (observed_at, node_name, account_id, app_id, instance_id, remote_ip, remote_port, protocol, blocked)
+		select * from unnest($1::timestamptz[], $2::text[], $3::text[], $4::text[], $5::text[], $6::inet[], $7::int[], $8::text[], $9::bool[])`,
+		at, node, acct, app, inst, ip, port, proto, blocked); err != nil {
 		return fmt.Errorf("state: insert egress flows: %w", mapErr(err))
 	}
 	return nil
@@ -75,13 +90,14 @@ func (s *PgStore) ListEgressFlows(ctx context.Context, f EgressFlowFilter) ([]Eg
 		remote = &v
 	}
 	rows, err := s.pool.Query(ctx, `
-		select observed_at, node_name, account_id, app_id, instance_id, host(remote_ip), remote_port
+		select observed_at, node_name, account_id, app_id, instance_id, host(remote_ip), remote_port, protocol, blocked
 		  from egress_flow_log
 		 where ($1::cidr is null or remote_ip <<= $1::cidr)
 		   and ($2 = '' or account_id = $2)
 		   and observed_at >= $3 and observed_at < $4
+		   and ($6::bool is null or blocked = $6::bool)
 		 order by observed_at desc, id desc
-		 limit $5`, remote, f.AccountID, f.From.UTC(), f.To.UTC(), f.Limit)
+		 limit $5`, remote, f.AccountID, f.From.UTC(), f.To.UTC(), f.Limit, f.Blocked)
 	if err != nil {
 		return nil, fmt.Errorf("state: list egress flows: %w", mapErr(err))
 	}
@@ -91,7 +107,7 @@ func (s *PgStore) ListEgressFlows(ctx context.Context, f EgressFlowFilter) ([]Eg
 		var r EgressFlowRecord
 		var ip string
 		var port int32
-		if err := rows.Scan(&r.ObservedAt, &r.NodeName, &r.AccountID, &r.AppID, &r.InstanceID, &ip, &port); err != nil {
+		if err := rows.Scan(&r.ObservedAt, &r.NodeName, &r.AccountID, &r.AppID, &r.InstanceID, &ip, &port, &r.Protocol, &r.Blocked); err != nil {
 			return nil, fmt.Errorf("state: scan egress flow: %w", err)
 		}
 		r.RemoteIP, _ = netip.ParseAddr(ip)
@@ -119,6 +135,7 @@ func (m *MemStore) InsertEgressFlows(_ context.Context, records []EgressFlowReco
 	defer m.mu.Unlock()
 	for _, r := range records {
 		r.ObservedAt = r.ObservedAt.UTC()
+		r.Protocol = r.protocolOrTCP()
 		m.egressFlows = append(m.egressFlows, r)
 	}
 	return nil
@@ -135,6 +152,9 @@ func (m *MemStore) ListEgressFlows(_ context.Context, f EgressFlowFilter) ([]Egr
 			continue
 		}
 		if f.AccountID != "" && r.AccountID != f.AccountID {
+			continue
+		}
+		if f.Blocked != nil && r.Blocked != *f.Blocked {
 			continue
 		}
 		if r.ObservedAt.Before(f.From) || !r.ObservedAt.Before(f.To) {

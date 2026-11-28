@@ -321,7 +321,7 @@ func TestNftCommandsEnforceEgressPolicy(t *testing.T) {
 	// per-CIDR line.
 	denySet := NewDefaultDenySet()
 	wants := []string{
-		"iifname tap0 tcp dport { " + denySet.SMTPPortsCommaSet() + " } drop",
+		"iifname tap0 tcp dport { " + denySet.SMTPPortsCommaSet() + " } goto " + EgressDropChain,
 	}
 	for _, w := range wants {
 		if !strings.Contains(rules, w) {
@@ -503,7 +503,7 @@ func TestNftCommandsCapRuleRunsAfterEstablishedBeforeDenies(t *testing.T) {
 		wantSMTPMatch := family == "ip"
 		for i, cmd := range cmds {
 			line := strings.Join(cmd, " ")
-			if !strings.Contains(line, family+" faas") {
+			if !strings.Contains(line, family+" faas forward") {
 				continue
 			}
 			switch {

@@ -129,6 +129,10 @@ func findRuleRow(argv, needle string) string {
 // the "v6 must not have any tcp dport rule" check.
 const smtpDenyNeedle = "tcp dport { 25,465,587 } drop"
 
+// smtpDenyNeedleNetns is the per-netns form: guest-side policy drops jump
+// to the egress_drop chain, which records the attempt and drops it.
+const smtpDenyNeedleNetns = "tcp dport { 25,465,587 } goto " + netns.EgressDropChain
+
 // TestSec11a_PerNetnsArgvContainsEveryDenyCIDR — every entry in
 // NewDefaultDenySet().Entries must be in the per-netns argv AND
 // the entry's family tag must match the table family it lands
@@ -182,13 +186,13 @@ func TestSec11a_PerNetnsArgvContainsEveryDenyCIDR(t *testing.T) {
 //     could SYN to a host-loopback SMTP port successfully)
 func TestSec11a_PerNetnsArgvContainsSMTPDeny(t *testing.T) {
 	argv := splitNftCommands(t, makeConfig())
-	if !strings.Contains(argv.V4, smtpDenyNeedle) {
-		t.Errorf("v4 forward chain missing SMTP deny %q", smtpDenyNeedle)
+	if !strings.Contains(argv.V4, smtpDenyNeedleNetns) {
+		t.Errorf("v4 forward chain missing SMTP deny %q", smtpDenyNeedleNetns)
 	}
 	// The line must be on the iifname=tap0 side so it ONLY
 	// matches guest-originated packets. Pull the rule row and
 	// assert iifname tap0 is on the same row.
-	row := findRuleRow(argv.V4, smtpDenyNeedle)
+	row := findRuleRow(argv.V4, smtpDenyNeedleNetns)
 	if !strings.Contains(row, "iifname") || !strings.Contains(row, "tap0") {
 		t.Errorf("SMTP deny row missing iifname tap0 qualifier: %q", row)
 	}
@@ -211,11 +215,11 @@ func TestSec11a_PerNetnsArgvContainsSMTPDeny(t *testing.T) {
 //     one table and the SMTP rule ends up dropping v6 too
 func TestSec11a_PerNetnsArgvSMTPDenyIsV4Only(t *testing.T) {
 	argv := splitNftCommands(t, makeConfig())
-	if !strings.Contains(argv.V4, smtpDenyNeedle) {
+	if !strings.Contains(argv.V4, smtpDenyNeedleNetns) {
 		t.Errorf("v4 forward chain missing SMTP deny (v4-only invariant broken)")
 	}
-	if strings.Contains(argv.V6, smtpDenyNeedle) {
-		t.Errorf("v6 forward chain emitted SMTP deny %q — SMTP deny must be v4-only per spec §11 + ADR-023", smtpDenyNeedle)
+	if strings.Contains(argv.V6, smtpDenyNeedleNetns) {
+		t.Errorf("v6 forward chain emitted SMTP deny %q — SMTP deny must be v4-only per spec §11 + ADR-023", smtpDenyNeedleNetns)
 	}
 }
 

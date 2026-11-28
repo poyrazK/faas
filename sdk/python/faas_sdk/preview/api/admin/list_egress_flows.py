@@ -7,6 +7,7 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.egress_flow_log_response import EgressFlowLogResponse
+from ...models.list_egress_flows_verdict import ListEgressFlowsVerdict
 from ...models.problem import Problem
 from ...types import UNSET, Response, Unset
 
@@ -15,6 +16,7 @@ def _get_kwargs(
     *,
     remote: str | Unset = UNSET,
     account_id: str | Unset = UNSET,
+    verdict: ListEgressFlowsVerdict | Unset = UNSET,
     from_: datetime.datetime | Unset = UNSET,
     to: datetime.datetime | Unset = UNSET,
     limit: int | Unset = UNSET,
@@ -25,6 +27,12 @@ def _get_kwargs(
     params["remote"] = remote
 
     params["account_id"] = account_id
+
+    json_verdict: str | Unset = UNSET
+    if not isinstance(verdict, Unset):
+        json_verdict = verdict
+
+    params["verdict"] = json_verdict
 
     json_from_: str | Unset = UNSET
     if not isinstance(from_, Unset):
@@ -94,20 +102,24 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     remote: str | Unset = UNSET,
     account_id: str | Unset = UNSET,
+    verdict: ListEgressFlowsVerdict | Unset = UNSET,
     from_: datetime.datetime | Unset = UNSET,
     to: datetime.datetime | Unset = UNSET,
     limit: int | Unset = UNSET,
 ) -> Response[EgressFlowLogResponse | Problem]:
     """Search the egress flow log (operator-only).
 
-     Destination addresses and TCP ports tenant guests opened new flows to,
-    newest first. Filter by remote address or CIDR, account, and a
+     Destination addresses and ports tenant guests opened new flows to,
+    and the ones they tried to reach that the egress policy blocked
+    (internal addresses, mail ports, ports outside the plan), newest
+    first. Filter by remote address or CIDR, account, verdict, and a
     [from, to) window of at most the 30-day retention. Defaults to the
     last 24 hours and 200 rows.
 
     Args:
         remote (str | Unset):
         account_id (str | Unset):
+        verdict (ListEgressFlowsVerdict | Unset):
         from_ (datetime.datetime | Unset):
         to (datetime.datetime | Unset):
         limit (int | Unset):
@@ -123,6 +135,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         remote=remote,
         account_id=account_id,
+        verdict=verdict,
         from_=from_,
         to=to,
         limit=limit,
@@ -140,20 +153,24 @@ def sync(
     client: AuthenticatedClient | Client,
     remote: str | Unset = UNSET,
     account_id: str | Unset = UNSET,
+    verdict: ListEgressFlowsVerdict | Unset = UNSET,
     from_: datetime.datetime | Unset = UNSET,
     to: datetime.datetime | Unset = UNSET,
     limit: int | Unset = UNSET,
 ) -> EgressFlowLogResponse | Problem | None:
     """Search the egress flow log (operator-only).
 
-     Destination addresses and TCP ports tenant guests opened new flows to,
-    newest first. Filter by remote address or CIDR, account, and a
+     Destination addresses and ports tenant guests opened new flows to,
+    and the ones they tried to reach that the egress policy blocked
+    (internal addresses, mail ports, ports outside the plan), newest
+    first. Filter by remote address or CIDR, account, verdict, and a
     [from, to) window of at most the 30-day retention. Defaults to the
     last 24 hours and 200 rows.
 
     Args:
         remote (str | Unset):
         account_id (str | Unset):
+        verdict (ListEgressFlowsVerdict | Unset):
         from_ (datetime.datetime | Unset):
         to (datetime.datetime | Unset):
         limit (int | Unset):
@@ -170,6 +187,7 @@ def sync(
         client=client,
         remote=remote,
         account_id=account_id,
+        verdict=verdict,
         from_=from_,
         to=to,
         limit=limit,
@@ -181,20 +199,24 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     remote: str | Unset = UNSET,
     account_id: str | Unset = UNSET,
+    verdict: ListEgressFlowsVerdict | Unset = UNSET,
     from_: datetime.datetime | Unset = UNSET,
     to: datetime.datetime | Unset = UNSET,
     limit: int | Unset = UNSET,
 ) -> Response[EgressFlowLogResponse | Problem]:
     """Search the egress flow log (operator-only).
 
-     Destination addresses and TCP ports tenant guests opened new flows to,
-    newest first. Filter by remote address or CIDR, account, and a
+     Destination addresses and ports tenant guests opened new flows to,
+    and the ones they tried to reach that the egress policy blocked
+    (internal addresses, mail ports, ports outside the plan), newest
+    first. Filter by remote address or CIDR, account, verdict, and a
     [from, to) window of at most the 30-day retention. Defaults to the
     last 24 hours and 200 rows.
 
     Args:
         remote (str | Unset):
         account_id (str | Unset):
+        verdict (ListEgressFlowsVerdict | Unset):
         from_ (datetime.datetime | Unset):
         to (datetime.datetime | Unset):
         limit (int | Unset):
@@ -210,6 +232,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         remote=remote,
         account_id=account_id,
+        verdict=verdict,
         from_=from_,
         to=to,
         limit=limit,
@@ -225,20 +248,24 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     remote: str | Unset = UNSET,
     account_id: str | Unset = UNSET,
+    verdict: ListEgressFlowsVerdict | Unset = UNSET,
     from_: datetime.datetime | Unset = UNSET,
     to: datetime.datetime | Unset = UNSET,
     limit: int | Unset = UNSET,
 ) -> EgressFlowLogResponse | Problem | None:
     """Search the egress flow log (operator-only).
 
-     Destination addresses and TCP ports tenant guests opened new flows to,
-    newest first. Filter by remote address or CIDR, account, and a
+     Destination addresses and ports tenant guests opened new flows to,
+    and the ones they tried to reach that the egress policy blocked
+    (internal addresses, mail ports, ports outside the plan), newest
+    first. Filter by remote address or CIDR, account, verdict, and a
     [from, to) window of at most the 30-day retention. Defaults to the
     last 24 hours and 200 rows.
 
     Args:
         remote (str | Unset):
         account_id (str | Unset):
+        verdict (ListEgressFlowsVerdict | Unset):
         from_ (datetime.datetime | Unset):
         to (datetime.datetime | Unset):
         limit (int | Unset):
@@ -256,6 +283,7 @@ async def asyncio(
             client=client,
             remote=remote,
             account_id=account_id,
+            verdict=verdict,
             from_=from_,
             to=to,
             limit=limit,

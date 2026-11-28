@@ -140,11 +140,11 @@ func TestSec11a_CrossRendererTripleAgreement(t *testing.T) {
 	// assertion anchors on the SMTP-specific needle (not the
 	// bare `tcp dport` substring) so a future legitimate v6
 	// port rule does not false-positive.
-	if !strings.Contains(perNetnsV4, smtpDenyNeedle) {
-		t.Errorf("per-netns v4 argv missing SMTP deny %q", smtpDenyNeedle)
+	if !strings.Contains(perNetnsV4, smtpDenyNeedleNetns) {
+		t.Errorf("per-netns v4 argv missing SMTP deny %q", smtpDenyNeedleNetns)
 	}
-	if strings.Contains(perNetnsV6, smtpDenyNeedle) {
-		t.Errorf("per-netns v6 argv emitted SMTP deny %q — SMTP deny must be v4-only per spec §11 + ADR-023", smtpDenyNeedle)
+	if strings.Contains(perNetnsV6, smtpDenyNeedleNetns) {
+		t.Errorf("per-netns v6 argv emitted SMTP deny %q — SMTP deny must be v4-only per spec §11 + ADR-023", smtpDenyNeedleNetns)
 	}
 	if !strings.Contains(hostRender, smtpDenyNeedle) {
 		t.Errorf("host render missing SMTP deny %q", smtpDenyNeedle)
