@@ -10429,6 +10429,11 @@ const (
 	// requests a second. The rest of the rule's inspect_body_bytes is still
 	// sampled off-path and reported.
 	EdgeWAFMaxInlineBodyBytes = 2 << 10
+	// EdgeWAFMaxInlineBodyFields is how many JSON leaf values or form fields
+	// of that prefix a warn or block rule scores in-path. CRS runs each
+	// body rule once per parsed field, so the cost grows with fields, not
+	// bytes; the rest of the prefix is sampled off-path and reported.
+	EdgeWAFMaxInlineBodyFields = 16
 	// EdgeWAFInlineAccountSharePercent is the share of the node's check
 	// slots (at least one) an account's waiting checks are served first
 	// for (ADR-831 amendment 16). An account may use every free slot, but a
