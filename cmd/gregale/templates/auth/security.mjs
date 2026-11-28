@@ -7,10 +7,14 @@ import { normalizePhone } from './sms.mjs'
 // front records, per user, the network the tokens went to (an IPv4 address
 // or IPv6 /64) and the kind of device (its user agent without version
 // numbers), as digests only. Two things read them:
-//  - trusted networks: a password sign-in from a network the account used
-//    in the last limits.trustedNetworkDays passes even while the account's
-//    failure budget is spent (attempts.mjs), so a stranger guessing from
-//    elsewhere cannot lock the owner out;
+//  - trusted networks: a password sign-in, or a message request, from a
+//    network the account used in the last limits.trustedNetworkDays passes
+//    even while the account's failure or message budget is spent
+//    (attempts.mjs, sends.mjs), so a stranger cannot lock the owner out. A
+//    network more than limits.trustedNetworkMaxAccounts accounts signed in
+//    from in that time (an app's own server, a shared egress) is trusted
+//    for none of them, and a sign-in only a redirect showed (an email link
+//    scanner may follow one) records the network without trusting it;
 //  - new-device alerts: a sign-in from both a network and a device kind the
 //    account has not used in limits.newDeviceDays emails the person, when
 //    the app sends email and the owner has not turned alerts off. A first
@@ -60,39 +64,54 @@ export function sessionFromLocation(location) {
 }
 
 const networkKey = (userId, address) => budgetKey('sign-in-network', userId, addressBucket(address))
+const networkOnly = address => budgetKey('sign-in-network', addressBucket(address))
 const deviceKey = (userId, userAgent) => budgetKey('sign-in-device', userId, deviceKind(userAgent))
 
 export function createSignInSecurity({ pool, mailer = null, alerts = true, app, templates = () => loadEmailTemplates(pool), log = console.error, now = () => new Date() }) {
   return {
-    // trusted reports whether an account a password sign-in names (as
-    // signInSubject writes it) signed in from this network recently.
-    // GoTrue finds the account as it does for a password sign-in: by
+    // trusted reports whether an account a password sign-in or message
+    // names (as signInSubject writes it: email:, phone:, or user: for the
+    // signed-in user) signed in from this network recently, by a sign-in
+    // the front saw hand over its tokens, from a network few accounts
+    // share. GoTrue finds the account as it does for a password sign-in: by
     // lowercased email among users who are not SSO users, or by phone.
     async trusted(subject, address) {
-      const [kind, value] = [subject.slice(0, subject.indexOf(':')), subject.slice(subject.indexOf(':') + 1)]
-      const { rows } = kind === 'email'
-        ? await pool.query('SELECT id FROM auth.users WHERE lower(email) = $1 AND is_sso_user = false LIMIT 10', [goLower(value)])
-        : await pool.query('SELECT id FROM auth.users WHERE phone = $1 LIMIT 10', [normalizePhone(value)])
-      if (rows.length === 0) return false
+      const at = subject.indexOf(':'), kind = subject.slice(0, at), value = subject.slice(at + 1)
+      let ids
+      if (kind === 'user') ids = uuid.test(value) ? [value.toLowerCase()] : []
+      else {
+        const { rows } = kind === 'email'
+          ? await pool.query('SELECT id FROM auth.users WHERE lower(email) = $1 AND is_sso_user = false LIMIT 10', [goLower(value)])
+          : await pool.query('SELECT id FROM auth.users WHERE phone = $1 LIMIT 10', [normalizePhone(value)])
+        ids = rows.map(row => String(row.id))
+      }
+      if (ids.length === 0) return false
       const { rowCount } = await pool.query(`SELECT 1 FROM gregale_auth.sign_in_seen
-        WHERE key = ANY($1) AND last_seen > now() - make_interval(days => $2) LIMIT 1`, [rows.map(row => networkKey(String(row.id), address)), limits.trustedNetworkDays])
+        WHERE key = ANY($1) AND trusted AND last_seen > now() - make_interval(days => $2)
+          AND (SELECT count(DISTINCT user_id) FROM gregale_auth.sign_in_seen
+            WHERE network = $3 AND last_seen > now() - make_interval(days => $2)) <= $4
+        LIMIT 1`, [ids.map(id => networkKey(id, address)), limits.trustedNetworkDays, networkOnly(address), limits.trustedNetworkMaxAccounts])
       return rowCount > 0
     },
     // record notes a sign-in, refreshing each record at most once per
     // limits.signInSeenRefreshSeconds, and sends the new-device alert when
-    // alert is set (not for a refreshed session).
-    async record({ userId, email, address, userAgent, alert = true }) {
+    // alert is set (not for a refreshed session). trust is false for a
+    // sign-in only a redirect showed.
+    async record({ userId, email, address, userAgent, alert = true, trust = true }) {
       const network = networkKey(userId, address), device = deviceKey(userId, userAgent)
       const { rows: [seen] } = await pool.query(`SELECT
           coalesce(bool_or(last_seen > now() - make_interval(days => $4)), false) AS known,
           coalesce(bool_or(key = $2 AND last_seen > now() - make_interval(days => $4)), false) AS network_seen,
           coalesce(bool_or(key = $3 AND last_seen > now() - make_interval(days => $4)), false) AS device_seen,
-          coalesce(bool_or(key = $2 AND last_seen > now() - make_interval(secs => $5)), false)
+          coalesce(bool_or(key = $2 AND last_seen > now() - make_interval(secs => $5) AND (trusted OR NOT $6)), false)
             AND coalesce(bool_or(key = $3 AND last_seen > now() - make_interval(secs => $5)), false) AS fresh
-        FROM gregale_auth.sign_in_seen WHERE user_id = $1`, [userId, network, device, limits.newDeviceDays, limits.signInSeenRefreshSeconds])
+        FROM gregale_auth.sign_in_seen WHERE user_id = $1`, [userId, network, device, limits.newDeviceDays, limits.signInSeenRefreshSeconds, trust])
       if (!seen.fresh) {
-        await pool.query(`INSERT INTO gregale_auth.sign_in_seen AS s (key, user_id) VALUES ($1, $3), ($2, $3)
-          ON CONFLICT (key) DO UPDATE SET last_seen = now() WHERE s.last_seen < now() - make_interval(secs => $4)`, [network, device, userId, limits.signInSeenRefreshSeconds])
+        // A record is refreshed hourly, or at once when a trusted sign-in
+        // follows one only a redirect showed; trust is never taken back.
+        await pool.query(`INSERT INTO gregale_auth.sign_in_seen AS s (key, user_id, network, trusted) VALUES ($1, $3, $5, $6), ($2, $3, NULL, false)
+          ON CONFLICT (key) DO UPDATE SET last_seen = now(), trusted = s.trusted OR EXCLUDED.trusted
+          WHERE s.last_seen < now() - make_interval(secs => $4) OR (EXCLUDED.trusted AND NOT s.trusted)`, [network, device, userId, limits.signInSeenRefreshSeconds, networkOnly(address), trust])
       }
       if (!alert || !alerts || !mailer || !email || !seen.known || seen.network_seen || seen.device_seen) return false
       const at = now()

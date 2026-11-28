@@ -186,7 +186,9 @@ treat it like the user's own) and:
   service-account secrets or invitations, role changes, or changes to the
   organization's second-factor rule, identity providers or domains (use the
   admin key for those, so they are recorded as yours). It may remove
-  members and revoke invitations, including as team actions;
+  members and revoke invitations, including as team actions; those, like
+  every organization change it makes, carry `impersonated_by` with your
+  admin key's ID in the organization's audit log and team action history;
 - appears to the user on their account page as opened by support.
 
 Only users with a confirmed email address can be opened: GoTrue has no
@@ -499,13 +501,20 @@ attempts are not counted, so hammering a held address does not spend the
 account's budget.
 
 Someone who spends an account's budget from many addresses cannot lock its
-owner out: past that budget, a password sign-in still goes ahead from a
-network (an IPv4 address or IPv6 /64) the account signed in from in the
-last 30 days, or, when the app uses [CAPTCHA](#captcha), from anywhere with
-a solved CAPTCHA, which GoTrue checks on every password sign-in. Other
-networks wait for the window to end; magic links, codes, providers and
-passkeys keep working. Signing in clears the address's count but not the
-account's, so it does not hand the guesser a fresh budget. Failed
+owner out on a network they use: past that budget, a password sign-in
+still goes ahead from a network (an IPv4 address or IPv6 /64) the account
+signed in from in the last 30 days, or, when the app uses
+[CAPTCHA](#captcha), from anywhere with a solved CAPTCHA, which GoTrue
+checks on every password sign-in. Without CAPTCHA, the owner on a network
+they have not used (travelling, a new provider) waits for the window to
+end like everyone else, so turn CAPTCHA on if that matters; magic links,
+codes, providers and passkeys keep working meanwhile. A network counts as
+trusted only once a client used a session there (a sign-in only an email
+link's redirect showed is not enough, since link scanners follow those),
+and never when more than 20 accounts signed in from it in those 30 days,
+such as your own server signing users in. Signing in clears the address's
+count but not the account's, so it does not hand the guesser a fresh
+budget. Failed
 service-account secrets are counted the same way, per client address.
 Counts are kept as digests, never as addresses or numbers, and are deleted
 a day after their window.
@@ -519,8 +528,8 @@ each request that may send one, in its database:
 
 | Budget | Default an hour | Change it with |
 | --- | --- | --- |
-| Messages to one email address, phone number or (for re-authentication and SMS challenges) user | 5 | `--messages-per-recipient` (1-50) |
-| Messages one network asks for | 30 | `--messages-per-network` (1-1000) |
+| Messages to one email address, phone number or (for re-authentication and SMS challenges) user | 5 | `--messages-per-recipient` (1-50, or `default`) |
+| Messages one network asks for | off | `--messages-per-network` (1-1000, or `off`) |
 
 ```sh
 gregale auth config shop-auth --messages-per-recipient 3 --messages-per-network 100
@@ -529,7 +538,12 @@ gregale auth config shop-auth --messages-per-recipient 3 --messages-per-network 
 A spent budget answers `429` with `code` `too_many_messages`, `scope`
 (`recipient` or `network`), the limit, the count, `Retry-After` and this
 page's address, before GoTrue sends anything. A request GoTrue refuses is
-not counted. `default` returns a budget to its default.
+not counted. So that a stranger asking for someone's links cannot keep them
+from signing in, a request from a network that account trusts (see above)
+passes a spent recipient budget. The network budget is off by default
+because an app that sends sign-in emails from its own server asks from one
+network for all its users; turn it on only if your users call the Auth app
+from their own browsers or apps.
 
 ### New-device alerts
 
@@ -537,7 +551,11 @@ When the app has an [email provider](#email), a sign-in from both a network
 and a device the account has not used in 90 days emails the person, naming
 the browser and system, the network and the time, so they can reset their
 password if it was not them. A first sign-in, or the first after 90 days
-away, sends nothing. Refreshing a session never alerts. Change the wording
+away, sends nothing. Refreshing a session never alerts. The device is what
+the client says it is, so someone who copies the person's browser and
+system from a new network gets no alert; the alert is a signal, not a
+guarantee. Without an email provider, `gregale auth config` shows alerts as
+on but none are sent. Change the wording
 with the `new_device` email; turn alerts off with:
 
 ```sh
@@ -1429,9 +1447,11 @@ reported as `email_exists`.
 - Failed sign-in and second-step budgets count an IPv6 client by its /64.
 - An account trusts the networks it signed in from in the last 30 days
   (see [Wrong passwords and codes](#wrong-passwords-and-codes)).
-- One recipient gets at most 5 sign-in messages an hour, and one network
-  asks for at most 30, unless you change them (at most 50 and 1,000;
-  `429 too_many_messages`).
+- One recipient gets at most 5 sign-in messages an hour unless you change
+  it (at most 50); a network limit (at most 1,000) is off unless you set
+  one (`429 too_many_messages`).
+- A network more than 20 accounts signed in from in 30 days is trusted for
+  none of them.
 - `/settings/v1/admin-keys/<ID>` answers 60 lookups an hour per client
   address.
 - The dashboard page reaches the Auth app at its canonical address. If you

@@ -177,9 +177,11 @@ function tokenReply(res, status, payload, headers = {}) {
 
 export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz, ui, realtime, admin, settings, smsCountries = null, scim, oauth = null, serviceAccounts = null, attempts = null, adminKeys = [], signIns = null, sends = null, captcha = false } = {}) {
   // signedIn records a session GoTrue handed this client (security.mjs); a
-  // refreshed session alerts no one.
-  const signedIn = (req, session, alert) => {
-    if (signIns && session) signIns.record({ ...session, address: clientAddress(req), userAgent: req.headers['user-agent'], alert }).catch(logFailure('sign_in_record_failed'))
+  // refreshed session alerts no one, and one only a redirect showed (an
+  // email link scanner may follow it) trusts no network until the client
+  // uses it.
+  const signedIn = (req, session, alert, trust = true) => {
+    if (signIns && session) signIns.record({ ...session, address: clientAddress(req), userAgent: req.headers['user-agent'], alert, trust }).catch(logFailure('sign_in_record_failed'))
   }
   return http.createServer((req, res) => {
     // A third-party OAuth client's token is good here only for userinfo.
@@ -385,7 +387,7 @@ async function forwardSend({ req, res, path, upstreamPort, body, oauth, signedIn
 function upstreamRequest(req, res, path, upstreamPort, headers, { oauth = null, observe = null, signedIn = null } = {}) {
   const upstream = http.request({ host: gotrue.host, port: upstreamPort, method: req.method, path, headers }, response => {
     const responseHeaders = forwardHeaders(response.headers)
-    if (signedIn && typeof responseHeaders.location === 'string' && responseHeaders.location.includes('access_token=')) signedIn(req, sessionFromLocation(responseHeaders.location), true)
+    if (signedIn && typeof responseHeaders.location === 'string' && responseHeaders.location.includes('access_token=')) signedIn(req, sessionFromLocation(responseHeaders.location), true, false)
     if (oauth && responseHeaders.location) responseHeaders.location = oauth.location(responseHeaders.location)
     if (observe) return observed(response, res, responseHeaders, observe)
     const details = oauth && req.method === 'GET' && response.statusCode === 200 ? authorizationDetails.exec(path.split('?')[0]) : null
@@ -524,12 +526,12 @@ export function start(env = process.env) {
     resource: id => authorizationResource(pool, id),
     clientCredentials: config.serviceAccounts,
   } : null
+  const signIns = createSignInSecurity({ pool, mailer, alerts: config.security.newDeviceAlerts, app: config.app })
   const server = createServer({ authz, ui, realtime, admin, // Admin keys are not listed in the public settings; the CLI asks
     // /settings/v1/admin-keys/<ID> for each key it finds among the secrets.
     settings: config.settings, adminKeys: adminKeySummary(adminKeys), smsCountries: config.smsCountries, scim, oauth, serviceAccounts, attempts,
     // Trusted networks and new-device alerts, and message budgets.
-    signIns: createSignInSecurity({ pool, mailer, alerts: config.security.newDeviceAlerts, app: config.app }),
-    sends: createSends({ attempts, pool, budgets: messageBudgets(config.security) }), captcha: config.captcha !== null })
+    signIns, sends: createSends({ attempts, pool, budgets: messageBudgets(config.security), trusted: signIns.trusted }), captcha: config.captcha !== null })
   // Lifecycle events publish after requests that may change users, and
   // once at startup for anything recorded while the app was parked.
   const lifecycle = lifecycleConfig(env)

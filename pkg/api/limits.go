@@ -18472,6 +18472,10 @@ const (
 	// sign-ins pass even while their account-wide failure budget is spent,
 	// so a stranger guessing from elsewhere cannot lock them out.
 	AuthTrustedNetworkDays = 30
+	// AuthTrustedNetworkMaxAccounts: a network more accounts than this
+	// signed in from in AuthTrustedNetworkDays (an app's own server, a shared
+	// egress) is trusted for none of them.
+	AuthTrustedNetworkMaxAccounts = 20
 	// AuthNewDeviceDays is how long an Auth app remembers the networks and
 	// device kinds a user signed in from; a sign-in from both a network and a
 	// device kind unseen that long emails the user (new-device alerts).
@@ -18479,16 +18483,17 @@ const (
 	// refreshed, so frequent token refreshes do not each write.
 	AuthNewDeviceDays            = 90
 	AuthSignInSeenRefreshSeconds = 3600
-	// AuthMessagesPerRecipientDefault and AuthMessagesPerNetworkDefault bound
-	// the sign-in codes, magic links, password resets and confirmations an
-	// Auth app sends in AuthMessageWindowSeconds to one email address or
-	// phone number, and at the request of one network, unless the owner sets
-	// AUTH_MESSAGES_PER_RECIPIENT or AUTH_MESSAGES_PER_NETWORK, up to
-	// AuthMessagesPerRecipientMax and AuthMessagesPerNetworkMax. Each message
-	// costs the owner money and may land in a stranger's inbox.
+	// AuthMessagesPerRecipientDefault bounds the sign-in codes, magic links,
+	// password resets and confirmations an Auth app sends in
+	// AuthMessageWindowSeconds to one email address or phone number, unless
+	// the owner sets AUTH_MESSAGES_PER_RECIPIENT, up to
+	// AuthMessagesPerRecipientMax. AUTH_MESSAGES_PER_NETWORK, off by default
+	// because an app sending from its own server asks from one network for
+	// all its users, bounds those one network asks for, up to
+	// AuthMessagesPerNetworkMax. Each message costs the owner money and may
+	// land in a stranger's inbox.
 	AuthMessagesPerRecipientDefault = 5
 	AuthMessagesPerRecipientMax     = 50
-	AuthMessagesPerNetworkDefault   = 30
 	AuthMessagesPerNetworkMax       = 1000
 	AuthMessageWindowSeconds        = 3600
 	// AuthAnonymousRetentionMaxDays bounds how long idle anonymous users may

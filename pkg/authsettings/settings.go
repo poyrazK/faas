@@ -204,9 +204,10 @@ type Change struct {
 	// network and a device it has not used recently; on by default, sent
 	// only when the app has an email provider.
 	NewDeviceAlerts *bool
-	// MessagesPerRecipient and MessagesPerNetwork bound the sign-in codes,
-	// links, resets and confirmations sent an hour to one address or number
-	// and at one network's request; 0 returns to the default.
+	// MessagesPerRecipient bounds the sign-in codes, links, resets and
+	// confirmations sent an hour to one address or number (0 returns to the
+	// default); MessagesPerNetwork bounds those one network asks for (0
+	// turns the limit off, as it is by default).
 	MessagesPerRecipient *int
 	MessagesPerNetwork   *int
 }
@@ -444,16 +445,16 @@ func (c Change) Secrets() (map[string]string, []string, error) {
 		set[secretNewDeviceAlerts] = flag(*c.NewDeviceAlerts)
 	}
 	for _, limit := range []struct {
-		count        *int
-		max          int
-		secret, name string
-	}{{c.MessagesPerRecipient, api.AuthMessagesPerRecipientMax, secretMessagesPerTo, "messages per recipient"}, {c.MessagesPerNetwork, api.AuthMessagesPerNetworkMax, secretMessagesPerNet, "messages per network"}} {
+		count              *int
+		max                int
+		secret, name, zero string
+	}{{c.MessagesPerRecipient, api.AuthMessagesPerRecipientMax, secretMessagesPerTo, "messages per recipient", "the default"}, {c.MessagesPerNetwork, api.AuthMessagesPerNetworkMax, secretMessagesPerNet, "messages per network", "no limit"}} {
 		switch {
 		case limit.count == nil:
 		case *limit.count == 0:
 			unset = append(unset, limit.secret)
 		case *limit.count < 0 || *limit.count > limit.max:
-			return nil, nil, fmt.Errorf("%s must be 1 to %d an hour, or 0 for the default; got %d", limit.name, limit.max, *limit.count)
+			return nil, nil, fmt.Errorf("%s must be 1 to %d an hour, or 0 for %s; got %d", limit.name, limit.max, limit.zero, *limit.count)
 		default:
 			set[limit.secret] = strconv.Itoa(*limit.count)
 		}

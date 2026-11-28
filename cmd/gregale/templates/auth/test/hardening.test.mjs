@@ -73,6 +73,7 @@ test('names what a request may send and to whom, as GoTrue reads it', () => {
   assert.deepEqual(sendRoute('PUT', '/user?x=1'), { kind: 'body' })
   assert.deepEqual(sendRoute('GET', '/reauthenticate'), { kind: 'reauthenticate' })
   assert.deepEqual(sendRoute('POST', `/factors/${factor.toUpperCase()}/challenge`), { kind: 'challenge', factor })
+  assert.equal(sendRoute('POST', `/factors/${'-'.repeat(36)}/challenge`), null)
   assert.equal(sendRoute('POST', '/token?grant_type=password'), null)
   assert.equal(sendRoute('GET', '/user'), null)
   assert.deepEqual(bodyRecipients(Buffer.from('{"EMAIL":" Ann@Example.com "}')), ['email:ann@example.com'])
@@ -83,7 +84,8 @@ test('names what a request may send and to whom, as GoTrue reads it', () => {
 })
 
 test('reads message limits and alert settings with bounds', () => {
-  assert.deepEqual(securityConfig({}), { newDeviceAlerts: true, messagesPerRecipient: limits.messagesPerRecipientDefault, messagesPerNetwork: limits.messagesPerNetworkDefault })
+  assert.deepEqual(securityConfig({}), { newDeviceAlerts: true, messagesPerRecipient: limits.messagesPerRecipientDefault, messagesPerNetwork: null })
+  assert.equal(messageBudgets(securityConfig({})).network, null, 'the network budget is off unless set')
   assert.deepEqual(securityConfig({ AUTH_NEW_DEVICE_ALERTS: '0', AUTH_MESSAGES_PER_RECIPIENT: '3', AUTH_MESSAGES_PER_NETWORK: '100' }), { newDeviceAlerts: false, messagesPerRecipient: 3, messagesPerNetwork: 100 })
   for (const env of [{ AUTH_NEW_DEVICE_ALERTS: 'yes' }, { AUTH_MESSAGES_PER_RECIPIENT: '0' }, { AUTH_MESSAGES_PER_RECIPIENT: String(limits.messagesPerRecipientMax + 1) }, { AUTH_MESSAGES_PER_NETWORK: '1e3' }]) {
     assert.throws(() => securityConfig(env), JSON.stringify(env))
@@ -121,6 +123,17 @@ test('a phone factor challenge counts against its user; an authenticator challen
   assert.equal((await sends.take([`user:${user}`], '203.0.113.7')).refused.name, 'recipient')
 })
 
+test('a spent recipient budget still lets the account\'s trusted network through', async () => {
+  const attempts = memoryAttempts()
+  const trusted = async (recipient, address) => recipient === 'email:ann@example.com' && address === '198.51.100.9'
+  const sends = createSends({ attempts, pool: null, budgets: messageBudgets({ messagesPerRecipient: 1 }), trusted })
+  assert.deepEqual((await sends.take(['email:ann@example.com'], '203.0.113.1')).taken.map(entry => entry.name), ['recipient'], 'no network budget unless set')
+  assert.equal((await sends.take(['email:ann@example.com'], '203.0.113.2')).refused.name, 'recipient')
+  assert.equal((await sends.take(['email:ann@example.com'], '198.51.100.9')).refused, undefined)
+  assert.equal((await sends.take(['email:bob@example.com'], '198.51.100.9')).refused, undefined)
+  assert.equal((await sends.take(['email:bob@example.com'], '198.51.100.9')).refused.name, 'recipient')
+})
+
 test('reads who signed in from a token answer or a session redirect', () => {
   assert.deepEqual(sessionFromAnswer({ access_token: 't', user: { id: user.toUpperCase(), email: 'a@example.com' } }), { userId: user, email: 'a@example.com' })
   assert.equal(sessionFromAnswer({ user: { id: user } }), null)
@@ -135,21 +148,31 @@ test('reads who signed in from a token answer or a session redirect', () => {
 })
 
 // memorySeen stands in for gregale_auth.sign_in_seen and auth.users.
-function memorySeen() {
+function memorySeen(users = { 'ann@example.com': user }) {
   const rows = new Map(), queries = []
-  const age = (key, seconds) => rows.has(key.toString('hex')) && rows.get(key.toString('hex')).at > Date.now() - seconds * 1000
+  const recent = (row, seconds) => row.at > Date.now() - seconds * 1000
   return {
     rows, queries,
     async query(sql, args) {
       queries.push(sql)
-      if (sql.includes('FROM auth.users')) return { rows: args[0] === 'ann@example.com' ? [{ id: user }] : [] }
-      if (sql.includes('key = ANY($1)')) return { rowCount: args[0].some(key => age(key, args[1] * 86400)) ? 1 : 0, rows: [] }
+      if (sql.includes('FROM auth.users')) return { rows: users[args[0]] ? [{ id: users[args[0]] }] : [] }
+      if (sql.includes('key = ANY($1)')) {
+        const accounts = new Set([...rows.values()].filter(row => row.network?.equals(args[2]) && recent(row, args[1] * 86400)).map(row => row.user))
+        const hit = args[0].some(key => { const row = rows.get(key.toString('hex')); return row?.trusted && recent(row, args[1] * 86400) })
+        return { rowCount: hit && accounts.size <= args[3] ? 1 : 0, rows: [] }
+      }
       if (sql.startsWith('SELECT')) {
         const mine = [...rows.values()].filter(row => row.user === args[0])
-        const recent = (key, seconds) => mine.some(row => row.key.equals(key) && row.at > Date.now() - seconds * 1000)
-        return { rows: [{ known: mine.some(row => row.at > Date.now() - args[3] * 86400000), network_seen: recent(args[1], args[3] * 86400), device_seen: recent(args[2], args[3] * 86400), fresh: recent(args[1], args[4]) && recent(args[2], args[4]) }] }
+        const has = (key, seconds, extra = () => true) => mine.some(row => row.key.equals(key) && recent(row, seconds) && extra(row))
+        return { rows: [{ known: mine.some(row => recent(row, args[3] * 86400)), network_seen: has(args[1], args[3] * 86400), device_seen: has(args[2], args[3] * 86400),
+          fresh: has(args[1], args[4], row => row.trusted || !args[5]) && has(args[2], args[4]) }] }
       }
-      if (sql.startsWith('INSERT')) for (const key of [args[0], args[1]]) rows.set(key.toString('hex'), { key, user: args[2], at: Date.now() })
+      if (sql.startsWith('INSERT')) {
+        for (const [key, network, trusted] of [[args[0], args[4], args[5]], [args[1], null, false]]) {
+          const old = rows.get(key.toString('hex'))
+          rows.set(key.toString('hex'), { key, user: args[2], network, trusted: Boolean(old?.trusted || trusted), at: Date.now() })
+        }
+      }
       return { rows: [] }
     },
   }
@@ -180,8 +203,23 @@ test('a sign-in from a new network and a new device emails the person, once ther
   await security.record(laptop)
   assert.equal(pool.queries.filter(sql => sql.startsWith('INSERT')).length, inserts, 'a fresh record is not written again')
   assert.equal(await security.trusted('email:ann@example.com', '203.0.113.7'), true)
+  assert.equal(await security.trusted(`user:${user}`, '203.0.113.7'), true)
   assert.equal(await security.trusted('email:ann@example.com', '203.0.113.99'), false)
   assert.equal(await security.trusted('email:nobody@example.com', '203.0.113.7'), false)
+})
+
+test('a redirect alone, or a network many accounts share, grants no trust', async () => {
+  const users = Object.fromEntries(Array.from({ length: limits.trustedNetworkMaxAccounts + 1 }, (_, i) => [`u${i}@example.com`, `11111111-2222-4333-8444-${String(i).padStart(12, '0')}`]))
+  const pool = memorySeen(users)
+  const security = createSignInSecurity({ pool, app: 'Shop', templates: async () => ({}) })
+  const first = { userId: users['u0@example.com'], email: 'u0@example.com', address: '203.0.113.7', userAgent: 'UA' }
+  await security.record({ ...first, trust: false })
+  assert.equal(await security.trusted('email:u0@example.com', '203.0.113.7'), false, 'a link scanner may have followed the redirect')
+  await security.record(first)
+  assert.equal(await security.trusted('email:u0@example.com', '203.0.113.7'), true, 'the client used the session')
+  for (const [email, userId] of Object.entries(users)) await security.record({ userId, email, address: '192.0.2.10', userAgent: 'node' })
+  assert.equal(await security.trusted('email:u0@example.com', '192.0.2.10'), false, 'an app server many accounts sign in through')
+  assert.equal(await security.trusted('email:u0@example.com', '203.0.113.7'), true)
 })
 
 test('a spent account budget holds strangers but not a trusted network or a CAPTCHA', async t => {
@@ -217,7 +255,7 @@ test('records sign-ins from token answers and session redirects, alerting except
   await post(base, '/token?grant_type=pkce', { refresh_token: 'r' })
   await fetch(`${base}/auth/v1/verify?token=x&type=magiclink`, { redirect: 'manual', headers: { 'X-Real-IP': '198.51.100.9', 'User-Agent': 'UA' } })
   await new Promise(resolve => setImmediate(resolve))
-  assert.deepEqual(recorded.map(entry => [entry.userId, entry.alert]), [[user, false], [user, true], [user, true]])
+  assert.deepEqual(recorded.map(entry => [entry.userId, entry.alert, entry.trust]), [[user, false, true], [user, true, true], [user, true, false]])
   assert.equal(recorded[2].address, '198.51.100.9')
   assert.equal(recorded[2].email, 'ann@example.com')
 })
@@ -226,7 +264,7 @@ test('an impersonated session may remove team access but not grant it', async ()
   const org = '22222222-3333-4444-8555-666666666666'
   const run = async () => { throw new Error('must not reach SQL') }
   for (const action of ['invite', 'set_role']) {
-    await assert.rejects(routeTeam({ run, method: 'POST', parts: ['orgs', org, 'team-actions'], body: { action }, impersonated: true }), { status: 403, code: 'impersonation_restricted' })
+    await assert.rejects(routeTeam({ run, method: 'POST', parts: ['orgs', org, 'team-actions'], body: { action }, impersonator: 'admin:0A1B2C3D' }), { status: 403, code: 'impersonation_restricted' })
   }
-  await assert.rejects(routeTeam({ run, method: 'POST', parts: ['orgs', org, 'team-actions'], body: { action: 'remove_member' }, impersonated: true }), { code: 'invalid_team_action' })
+  await assert.rejects(routeTeam({ run, method: 'POST', parts: ['orgs', org, 'team-actions'], body: { action: 'remove_member' }, impersonator: 'admin:0A1B2C3D' }), { code: 'invalid_team_action' })
 })

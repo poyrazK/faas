@@ -136,7 +136,13 @@ digests, refreshed at most hourly (`AuthSignInSeenRefreshSeconds`) and
 pruned after `AuthNewDeviceDays`. Past the account budget, a password
 sign-in goes ahead from a network the account used within
 `AuthTrustedNetworkDays`, or anywhere when CAPTCHA is on, since GoTrue
-verifies it on every password sign-in. A sign-in from both a network and a
+verifies it on every password sign-in. A network grants trust only after a
+token grant there (a session redirect alone, which a mail scanner may
+follow, records it untrusted), and never while more than
+`AuthTrustedNetworkMaxAccounts` accounts signed in from it in that window
+(an SSR app's server); the row keeps the network's own digest for that
+count. Without CAPTCHA, an owner on an unused network still waits out the
+window. A sign-in from both a network and a
 device kind unseen for `AuthNewDeviceDays`, by a user with other records,
 sends the `new_device` email when a provider is set and
 `AUTH_NEW_DEVICE_ALERTS` is not `0` (refreshes never alert; one email per
@@ -144,10 +150,12 @@ device kind and day). Requests that may send a message (`/otp`,
 `/magiclink`, `/signup`, `/recover`, `/resend`, `PUT /user`, `GET
 /reauthenticate`, a phone factor's challenge) spend per-recipient and
 per-network budgets in `attempt_budgets` (`AuthMessagesPerRecipientDefault`,
-`AuthMessagesPerNetworkDefault`, owner-tunable up to the `*Max` limits with
-`AUTH_MESSAGES_PER_RECIPIENT` and `AUTH_MESSAGES_PER_NETWORK`), refused with
-`429 too_many_messages` before GoTrue sends and given back when GoTrue
-refuses. A weekly workflow (`gotrue-release-watch.yml`) opens an issue when
+owner-tunable up to the `*Max` limits with
+`AUTH_MESSAGES_PER_RECIPIENT` and `AUTH_MESSAGES_PER_NETWORK`; the network
+budget is off unless set, since an SSR app asks from one network for all
+its users), refused with `429 too_many_messages` before GoTrue sends and
+given back when GoTrue refuses; a network the recipient's account trusts
+passes a spent recipient budget. A weekly workflow (`gotrue-release-watch.yml`) opens an issue when
 upstream supabase/auth releases past the pinned version; the pin moves only
 by hand. Other sign-in methods keep working while a password budget is
 spent. Owners tune GoTrue's own limits with `GOTRUE_RATE_LIMIT_*`
@@ -486,7 +494,10 @@ roles, or changing the organization's second-factor rule, identity
 providers or domains, is refused the same way; the operator does those with
 the admin key. Team actions are refused by the team route, which reads the
 body: an impersonated session (its verified token's `act` claim) may remove
-members and revoke invitations but not invite or set roles. The check reads the path as the
+members and revoke invitations but not invite or set roles. Those, like any
+organization change from such a session, record `impersonated_by` (the
+operator's admin key) in the team action's result and, through
+`record_org_event` (sql/0025), in the organization audit log. The check reads the path as the
 routers do (repeated and trailing slashes collapse), and the `/authz/v1`
 router refuses a path with an empty segment, so no spelling of a refused
 path reaches its handler. Admin keys now carry their IDs so the record names the key

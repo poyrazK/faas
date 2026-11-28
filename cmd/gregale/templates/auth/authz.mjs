@@ -184,7 +184,7 @@ async function routeOrganization({ run, rows, services, invitations, claims }, o
   }
   if (parts[2] === 'team' || parts[2] === 'team-actions') {
     if (services.teamEnabled !== true) throw new HTTPError(404, 'not_found')
-    return routeTeam({ run, method, parts, body, invitations, query: services.query, impersonated: typeof claims.act?.sub === 'string' })
+    return routeTeam({ run, method, parts, body, invitations, query: services.query, impersonator: claims.act?.sub ?? null })
   }
   if (parts[2] === 'domains' || parts[2] === 'sso') {
     // Domains come with self-service SSO, or alone with AUTH_ORG_DOMAINS.

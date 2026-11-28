@@ -436,7 +436,7 @@ type authPublicSettings struct {
 	Security *struct {
 		NewDeviceAlerts      bool `json:"new_device_alerts"`
 		MessagesPerRecipient int  `json:"messages_per_recipient"`
-		MessagesPerNetwork   int  `json:"messages_per_network"`
+		MessagesPerNetwork   *int `json:"messages_per_network"`
 		TrustedNetworkDays   int  `json:"trusted_network_days"`
 	} `json:"security"`
 	Sessions struct {

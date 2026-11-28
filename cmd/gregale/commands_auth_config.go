@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--mfa-phone on|off] [--recovery-codes on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE] [--events on|off] [--passkeys on|off] [--passkey-rp-id DOMAIN|none] [--brand-name NAME] [--brand-color #RRGGBB] [--brand-logo-url URL] [--captcha turnstile|hcaptcha|off --captcha-site-key KEY --captcha-secret-stdin] [--activity-retention DAYS|forever] [--sms twilio|twilio_verify|messagebird|textlocal|vonage|off --sms-account ID --sms-sender SENDER --sms-secret-stdin] [--sms-countries CODES|all] [--sso on|off] [--anonymous on|off] [--anonymous-retention DAYS|forever] [--identity-linking on|off] [--self-deletion on|off] [--org-claims on|off] [--signup-domains DOMAINS|any] [--blocked-domains DOMAINS|none] [--block-disposable on|off] [--signup-access open|invite|waitlist] [--impersonation on|off] [--web3 ethereum,solana|off] [--session-max-age DURATION|off] [--session-idle DURATION|off] [--single-session on|off] [--org-domains on|off] [--service-accounts on|off] [--new-device-alerts on|off] [--messages-per-recipient N|default] [--messages-per-network N|default] [--oauth-server on|off] [--oauth-registration on|off] [--org-sso on|off]"
+	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--mfa-phone on|off] [--recovery-codes on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE] [--events on|off] [--passkeys on|off] [--passkey-rp-id DOMAIN|none] [--brand-name NAME] [--brand-color #RRGGBB] [--brand-logo-url URL] [--captcha turnstile|hcaptcha|off --captcha-site-key KEY --captcha-secret-stdin] [--activity-retention DAYS|forever] [--sms twilio|twilio_verify|messagebird|textlocal|vonage|off --sms-account ID --sms-sender SENDER --sms-secret-stdin] [--sms-countries CODES|all] [--sso on|off] [--anonymous on|off] [--anonymous-retention DAYS|forever] [--identity-linking on|off] [--self-deletion on|off] [--org-claims on|off] [--signup-domains DOMAINS|any] [--blocked-domains DOMAINS|none] [--block-disposable on|off] [--signup-access open|invite|waitlist] [--impersonation on|off] [--web3 ethereum,solana|off] [--session-max-age DURATION|off] [--session-idle DURATION|off] [--single-session on|off] [--org-domains on|off] [--service-accounts on|off] [--new-device-alerts on|off] [--messages-per-recipient N|default] [--messages-per-network N|off] [--oauth-server on|off] [--oauth-registration on|off] [--org-sso on|off]"
 	authProvidersUsage = "usage: gregale auth providers list NAME | gregale auth providers enable NAME PROVIDER --client-id ID [--client-secret-stdin] [--url URL] | gregale auth providers disable NAME PROVIDER"
 )
 
@@ -79,7 +79,7 @@ func cmdAuthConfig(args []string) int {
 	serviceAccounts := fs.String("service-accounts", "", "on or off: let organizations make service accounts that get tokens with the client-credentials grant")
 	newDeviceAlerts := fs.String("new-device-alerts", "", "on or off: email people when their account signs in from a new network and device (needs an email provider)")
 	messagesPerRecipient := fs.String("messages-per-recipient", "", fmt.Sprintf("sign-in codes, links and resets one address or number may be sent an hour (1-%d), or default (%d)", api.AuthMessagesPerRecipientMax, api.AuthMessagesPerRecipientDefault))
-	messagesPerNetwork := fs.String("messages-per-network", "", fmt.Sprintf("messages one network may ask for an hour (1-%d), or default (%d)", api.AuthMessagesPerNetworkMax, api.AuthMessagesPerNetworkDefault))
+	messagesPerNetwork := fs.String("messages-per-network", "", fmt.Sprintf("messages one network may ask for an hour (1-%d), or off (the default; an app that sends from its own server asks from one network)", api.AuthMessagesPerNetworkMax))
 	sms := authSMSFlags{
 		provider:  fs.String("sms", "", "phone sign-in by text message through your own SMS account: twilio, twilio_verify, messagebird, textlocal, vonage, or off"),
 		account:   fs.String("sms-account", "", "Twilio account SID or Vonage API key"),
@@ -171,7 +171,7 @@ func cmdAuthConfig(args []string) int {
 		if !given[name] {
 			continue
 		}
-		count, err := parseMessageLimit(name, *target.value)
+		count, err := parseMessageLimit(name, *target.value, map[string]string{"messages-per-recipient": "default", "messages-per-network": "off"}[name])
 		if err != nil {
 			return printErr("Invalid Auth settings", err)
 		}
@@ -412,14 +412,15 @@ func parseRetentionDays(name, value string) (int, error) {
 	return n, nil
 }
 
-// parseMessageLimit reads an hourly message limit, or default (0).
-func parseMessageLimit(name, value string) (int, error) {
-	if value == "default" {
+// parseMessageLimit reads an hourly message limit, or the word (default
+// or off) that removes it (0).
+func parseMessageLimit(name, value, word string) (int, error) {
+	if value == word {
 		return 0, nil
 	}
 	n, err := strconv.Atoi(value)
 	if err != nil || n < 1 {
-		return 0, fmt.Errorf("--%s must be a number of messages an hour or default", name)
+		return 0, fmt.Errorf("--%s must be a number of messages an hour or %s", name, word)
 	}
 	return n, nil
 }
@@ -764,10 +765,17 @@ func authSecuritySummary(settings authPublicSettings) string {
 		return "not reported by this Auth app version"
 	}
 	alerts := "new-device alerts off"
-	if s.NewDeviceAlerts {
+	switch {
+	case s.NewDeviceAlerts && settings.Email.Configured:
 		alerts = "new-device alerts on"
+	case s.NewDeviceAlerts:
+		alerts = "new-device alerts on (none sent until an email provider is set)"
 	}
-	return fmt.Sprintf("%s; at most %d messages an hour per recipient and %d per network", alerts, s.MessagesPerRecipient, s.MessagesPerNetwork)
+	network := "no network limit"
+	if s.MessagesPerNetwork != nil {
+		network = fmt.Sprintf("%d per network", *s.MessagesPerNetwork)
+	}
+	return fmt.Sprintf("%s; at most %d messages an hour per recipient, %s", alerts, s.MessagesPerRecipient, network)
 }
 
 // authServiceAccountsSummary says whether organizations may make service

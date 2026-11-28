@@ -8,8 +8,12 @@ import { normalizePhone } from './sms.mjs'
 // so a snapshot restore resets them. The front counts each request that may
 // send one in the database instead: per recipient (an email address or
 // phone number, or the signed-in user for a re-authentication code or a
-// phone second-factor challenge) and per network (an IPv4 address or IPv6
-// /64), in limits.messageWindowSeconds. A request is counted before GoTrue
+// phone second-factor challenge) and, when the owner sets it, per network
+// (an IPv4 address or IPv6 /64), in limits.messageWindowSeconds. A spent
+// recipient budget still lets through a request from a network the account
+// signed in from recently (security.mjs), so a stranger asking for the
+// person's links from elsewhere cannot keep them from signing in. A
+// request is counted before GoTrue
 // sees it, so a parallel burst cannot all pass, and given back when GoTrue
 // refuses it (an error status): then nothing was sent, and a token whose
 // user GoTrue does not accept spends nobody's budget.
@@ -18,7 +22,8 @@ import { normalizePhone } from './sms.mjs'
 export function messageBudgets(security) {
   return {
     recipient: { limit: security?.messagesPerRecipient ?? limits.messagesPerRecipientDefault, seconds: limits.messageWindowSeconds },
-    network: { limit: security?.messagesPerNetwork ?? limits.messagesPerNetworkDefault, seconds: limits.messageWindowSeconds },
+    // Off unless the owner sets it (securityConfig).
+    network: security?.messagesPerNetwork ? { limit: security.messagesPerNetwork, seconds: limits.messageWindowSeconds } : null,
   }
 }
 
@@ -36,7 +41,7 @@ export function sendRoute(method, path) {
   const route = path.split('?')[0].replace(/\/+$/, '')
   if (bodyRoutes.has(`${method} ${route}`)) return { kind: 'body' }
   if (method === 'GET' && route === '/reauthenticate') return { kind: 'reauthenticate' }
-  const challenge = method === 'POST' && /^\/factors\/([0-9a-fA-F-]{36})\/challenge$/.exec(route)
+  const challenge = method === 'POST' && /^\/factors\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/challenge$/i.exec(route)
   return challenge ? { kind: 'challenge', factor: challenge[1].toLowerCase() } : null
 }
 
@@ -65,7 +70,7 @@ export function bodyRecipients(raw) {
 // request, or, when that overspent a budget, the budget's name, the count
 // before this request and the seconds until it reopens; a refused request
 // gives back what it counted, so refusals do not prolong a wait.
-export function createSends({ attempts, pool, budgets }) {
+export function createSends({ attempts, pool, budgets, trusted = null }) {
   return {
     // recipients lists who a request may send to: from its body, or the
     // signed-in user for a re-authentication or a phone factor's challenge.
@@ -79,13 +84,13 @@ export function createSends({ attempts, pool, budgets }) {
     },
     async take(recipients, address) {
       if (recipients.length === 0) return { taken: [] }
-      const entries = [{ name: 'network', key: budgetKey('message-network', addressBucket(address)), budget: budgets.network },
-        ...recipients.map(recipient => ({ name: 'recipient', key: budgetKey('message-recipient', recipient), budget: budgets.recipient }))]
+      const entries = [...(budgets.network ? [{ name: 'network', key: budgetKey('message-network', addressBucket(address)), budget: budgets.network }] : []),
+        ...recipients.map(recipient => ({ name: 'recipient', recipient, key: budgetKey('message-recipient', recipient), budget: budgets.recipient }))]
       const taken = []
       for (const entry of entries) {
         const { count, wait } = await attempts.take(entry)
         taken.push(entry)
-        if (wait > 0) {
+        if (wait > 0 && !(entry.recipient && trusted && await trusted(entry.recipient, address))) {
           await attempts.release(taken)
           return { refused: { name: entry.name, budget: entry.budget, count: count - 1, wait } }
         }
