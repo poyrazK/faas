@@ -409,6 +409,24 @@ func TestFreezeIdleFreezesAppsWithTheAppsSwitch(t *testing.T) {
 	}
 }
 
+// A managed cache never freezes: a frozen VM parks by destroy, which would
+// drop the cache's data, so the reaper parks it and captures its memory.
+func TestFreezeIdleRefusesManagedCaches(t *testing.T) {
+	f := newFrozenFixture(t, true, state.AppTypeApp)
+	if _, err := f.store.CreateManagedValkeyCache(t.Context(), state.ManagedValkeyCache{
+		AppID: f.app.ID, AccountID: f.app.AccountID, MemoryMB: 64, EvictionPolicy: "allkeys-lru",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f.e.EnableFrozenTier()
+	f.e.EnableFrozenTierApps()
+	handled, err := f.e.FreezeIdle(t.Context(), f.ins.ID, 150)
+	if err != nil || handled || f.vmm.freezes != 0 || f.state(t) != state.StateRunning {
+		t.Fatalf("FreezeIdle on a managed cache = %v, %v, freezes %d, state %s; want refused and running",
+			handled, err, f.vmm.freezes, f.state(t))
+	}
+}
+
 // A session pinned to a frozen VM thaws that VM even when another frozen VM
 // of the deployment would come first.
 func TestFrozenCandidatesPreferTheSessionInstance(t *testing.T) {

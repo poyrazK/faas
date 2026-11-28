@@ -90,6 +90,14 @@ func (e *Engine) freezeRefusal(ctx context.Context, ins state.Instance, early bo
 	if app.Status != state.AppActive || !e.frozenTierAllows(app, ins.Mode, e.privateNetworkProjection(ctx, app).NetworkID) {
 		return "ineligible", nil
 	}
+	// A frozen VM leaves by destroy (parkFrozenLocked), and the next wake
+	// restores the deployment's snapshot. A managed cache's memory is its
+	// data, so it parks instead, which captures it (keepsMemoryAtPark).
+	// Freezing one emptied it on prod: SET, freeze, FrozenTTL park, wake,
+	// every key gone (redis hunt 2026-11-28).
+	if e.keepsMemoryAtPark(ctx, app.ID) {
+		return "managed_cache", nil
+	}
 	// An early freeze (ADR-20261021215353) stops timers before the idle
 	// timeout, which only between_requests workloads have agreed to.
 	if early && api.EffectivePause(app.Manifest.Pause, app.Type == state.AppTypeFunction) != api.PauseBetweenRequests {
