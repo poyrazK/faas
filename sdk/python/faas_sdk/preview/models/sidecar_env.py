@@ -11,7 +11,7 @@ T = TypeVar("T", bound="SidecarEnv")
 
 @_attrs_define
 class SidecarEnv:
-    """Plaintext env map (sealed at rest). Keys `^[A-Z][A-Z0-9_]*$`; per-value byte cap = plan EnvValueMaxBytes."""
+    """Plaintext env map (sealed at rest). Keys `^[A-Za-z][A-Za-z0-9_]*$`; per-value byte cap = plan EnvValueMaxBytes."""
 
     additional_properties: dict[str, str] = _attrs_field(init=False, factory=dict)
 

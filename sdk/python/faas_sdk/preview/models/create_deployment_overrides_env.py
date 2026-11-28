@@ -11,7 +11,7 @@ T = TypeVar("T", bound="CreateDeploymentOverridesEnv")
 
 @_attrs_define
 class CreateDeploymentOverridesEnv:
-    """Plaintext env map applied at boot. Keys: `^[A-Z][A-Z0-9_]*$`. Per-value byte cap = plan EnvValueMaxBytes."""
+    """Plaintext env map applied at boot. Keys: `^[A-Za-z][A-Za-z0-9_]*$`. Per-value byte cap = plan EnvValueMaxBytes."""
 
     additional_properties: dict[str, str] = _attrs_field(init=False, factory=dict)
 

@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ConsumerSignupPlan } from './ConsumerSignupPlan.js';
+import type { MCPContractChangelogEntry } from './MCPContractChangelogEntry.js';
 import type { MCPListingInstall } from './MCPListingInstall.js';
 import type { MCPListingTool } from './MCPListingTool.js';
 /**
@@ -31,5 +32,9 @@ export type PublicMCPListingResponse = {
    * Open customers, when the seller shows usage.
    */
   customers?: number;
+  /**
+   * Tool contract changes shipped since the listing was published, newest first.
+   */
+  changelog?: Array<MCPContractChangelogEntry>;
 };
 

@@ -55,7 +55,7 @@ class Sidecar:
     - `cmd` is the argv (image's ENTRYPOINT unchanged; CMD
       overridden). Every element non-empty.
     - `env` is plaintext on the wire, sealed at rest. Keys
-      per `^[A-Z][A-Z0-9_]*$`; per-value byte cap = plan
+      per `^[A-Za-z][A-Za-z0-9_]*$`; per-value byte cap = plan
       `EnvValueMaxBytes`. Plaintext values NEVER appear in
       any log, audit, or error.
     - `env_secrets` is a per-sidecar positive allowlist, for example
@@ -105,7 +105,8 @@ class Sidecar:
     cmd: list[str] | Unset = UNSET
     """Argv. Image's ENTRYPOINT unchanged; CMD overridden. Every element non-empty."""
     env: SidecarEnv | Unset = UNSET
-    """Plaintext env map (sealed at rest). Keys `^[A-Z][A-Z0-9_]*$`; per-value byte cap = plan EnvValueMaxBytes."""
+    """Plaintext env map (sealed at rest). Keys `^[A-Za-z][A-Za-z0-9_]*$`; per-value byte cap = plan
+    EnvValueMaxBytes."""
     env_secrets: SidecarEnvSecrets | Unset = UNSET
     """Per-sidecar positive allowlist of same-named app secrets, resolved in the deployment scope. Values refresh
     on restart by default; long-running sidecars can additionally opt into runtime projection and signal delivery

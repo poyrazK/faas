@@ -12,11 +12,11 @@ import type { WorkloadDependency } from './WorkloadDependency.js';
  *
  * - `entrypoint` replaces the OCI image's ENTRYPOINT/CMD argv at exec time.
  * - `cmd` is appended to `entrypoint` (mirrors the OCI runtime contract).
- * - `env` is plaintext; env-var keys must match `^[A-Z][A-Z0-9_]*$`; per-value
+ * - `env` is plaintext; env-var keys must match `^[A-Za-z][A-Za-z0-9_]*$`; per-value
  * byte cap = plan `EnvValueMaxBytes`.
  * - `env_secrets` carries `secret:NAME` REFS — the runtime resolver
  * strips the prefix and looks up `NAME` against the existing `app_secrets`
- * table. The ref name must match `^[A-Z][A-Z0-9_]*$`.
+ * table. The ref name must match `^[A-Za-z][A-Za-z0-9_]*$`.
  * - `env` + `env_secrets` share the plan `EnvVarsMax` quota — no bypass by
  * mixing the two surfaces.
  * - `port` is per-deployment (1..65535; 0 = absent / fall back to image default).
@@ -37,7 +37,7 @@ export type CreateDeploymentOverrides = {
    */
   cmd?: Array<string>;
   /**
-   * Plaintext env map applied at boot. Keys: `^[A-Z][A-Z0-9_]*$`. Per-value byte cap = plan EnvValueMaxBytes.
+   * Plaintext env map applied at boot. Keys: `^[A-Za-z][A-Za-z0-9_]*$`. Per-value byte cap = plan EnvValueMaxBytes.
    */
   env?: Record<string, string>;
   /**

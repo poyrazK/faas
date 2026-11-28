@@ -36,7 +36,7 @@ import type { WorkloadDependency } from './WorkloadDependency.js';
  * - `cmd` is the argv (image's ENTRYPOINT unchanged; CMD
  * overridden). Every element non-empty.
  * - `env` is plaintext on the wire, sealed at rest. Keys
- * per `^[A-Z][A-Z0-9_]*$`; per-value byte cap = plan
+ * per `^[A-Za-z][A-Za-z0-9_]*$`; per-value byte cap = plan
  * `EnvValueMaxBytes`. Plaintext values NEVER appear in
  * any log, audit, or error.
  * - `env_secrets` is a per-sidecar positive allowlist, for example
@@ -94,7 +94,7 @@ export type Sidecar = {
    */
   cmd?: Array<string>;
   /**
-   * Plaintext env map (sealed at rest). Keys `^[A-Z][A-Z0-9_]*$`; per-value byte cap = plan EnvValueMaxBytes.
+   * Plaintext env map (sealed at rest). Keys `^[A-Za-z][A-Za-z0-9_]*$`; per-value byte cap = plan EnvValueMaxBytes.
    */
   env?: Record<string, string>;
   /**
