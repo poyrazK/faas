@@ -28,7 +28,7 @@ var generatedSpecs = sync.OnceValue(func() []Spec {
 	}
 	var out []Spec
 	for _, capability := range products.Capabilities {
-		if claimed[capability.ID] || capability.AlwaysOn {
+		if claimed[capability.ID] || capability.AlwaysOn || capability.InheritsFlag {
 			continue
 		}
 		consumers := append([]string{"apid"}, capability.Consumers...)

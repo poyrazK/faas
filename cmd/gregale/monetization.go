@@ -68,14 +68,14 @@ var monetizationVerbs = map[string][]string{
 		"billing-policy-delete", "overdue-holds", "credits", "credit-grant", "credit-void", "spend-cap", "spend-cap-set",
 		"spend-cap-delete"},
 	"account": {"billing-connection", "billing-run", "invoices"},
-	// Seller stats and the listing are API monetization surfaces
-	// (ADR-20261126082046, ADR-20261126175800).
-	"mcp": {"stats", "listing"},
+	// Seller stats, the listing and its tool contract are API monetization
+	// surfaces (ADR-20261126082046, ADR-20261126175800, ADR-20261127191645).
+	"mcp": {"stats", "listing", "contract"},
 }
 
 // monetizationFlags are monetization flags of released verbs, keyed by
 // "command verb".
-var monetizationFlags = map[string][]string{"consumers create": {"trial-days"}}
+var monetizationFlags = map[string][]string{"consumers create": {"trial-days"}, "mcp deploy": {"allow-breaking", "reason"}}
 
 // hiddenMonetizationFlagText replaces released flag descriptions that name
 // monetization while it is hidden, keyed by "command verb --flag".
