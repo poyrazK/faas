@@ -598,6 +598,7 @@ var ApplyDeployLifecycleToCreateRequest = applyDeployLifecycleToCreateRequest
 var ApplyDevManifestDefaults = applyDevManifestDefaults
 var ApplyJSONFlag = applyJSONFlag
 var ApplyMCPGatewayPolicy = applyMCPGatewayPolicy
+var SyncExternalOAuthGatewayPolicy = syncExternalOAuthGatewayPolicy
 var ApplyMCPTasksStatusChecks = applyMCPTasksStatusChecks
 var ApplyRolloutFlag = applyRolloutFlag
 var SafeFlagName = safeFlagName

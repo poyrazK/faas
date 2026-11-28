@@ -27,6 +27,24 @@ func mcpVerificationCredential(mode string) string {
 	}
 }
 
+// syncExternalOAuthGatewayPolicy stores an external-oauth server's gateway
+// policy after a successful deploy, so Gregale also checks its tokens and
+// knows who calls it: OAuth callers then become customers and are metered
+// (ADR-20261124094745). The server keeps checking tokens itself, so a
+// failure only warns; `gregale mcp policy` retries it.
+func syncExternalOAuthGatewayPolicy(ctx context.Context, c *Client, path, slug string, cfg mcphosting.Config) {
+	if cfg.Auth.Mode != mcphosting.AuthExternalOAuth {
+		return
+	}
+	rule, err := applyMCPGatewayPolicy(ctx, c, slug, cfg, []string{"RS256", "ES256"})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: Gregale does not check this server's tokens (%v); callers are served but cannot become customers. "+
+			"Fix it, then run `gregale mcp policy --path %s --name %s`\n", err, path, slug)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "Gateway checks OAuth tokens for %s (edge rule %s)\n", slug, rule.ID)
+}
+
 // requireMCPGatewayPolicy refuses to deploy an api-key or oauth-proxy server
 // until its gateway policy is stored and matches the source: in these modes
 // the server itself admits every request, so without the policy it would

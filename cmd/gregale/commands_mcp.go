@@ -1089,7 +1089,11 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	if o.publicationID != "" {
 		return finishPrivateMCPDeploy(verificationCtx, c, o, cfg, candidate.ID, pinReceipt)
 	}
-	return finishMCPDeployWithSmoke(verificationCtx, c, o.slug, candidate.ID, cfg, token, roles, audit, smoke, pinReceipt)
+	code = finishMCPDeployWithSmoke(verificationCtx, c, o.slug, candidate.ID, cfg, token, roles, audit, smoke, pinReceipt)
+	if code == 0 {
+		syncExternalOAuthGatewayPolicy(ctx, c, o.path, o.slug, cfg)
+	}
+	return code
 }
 
 func validateMCPDeploySecretsFile(path string) error {

@@ -15,6 +15,20 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// seedMCPOAuthGatewayRule stores the jwt rule `gregale mcp server deploy`
+// adds for an external-oauth server, which OAuth consumers need.
+func seedMCPOAuthGatewayRule(t *testing.T, e apidserver.TestEnv, appID string) {
+	t.Helper()
+	_, err := (*e.Store()).CreateEdgeRuleIfUnderQuota(t.Context(), state.CreateEdgeRuleParams{
+		AccountID: e.Acct().ID, AppID: appID, MatchHost: "search.gregale.app", MatchPath: "/**", Enabled: true, Kind: state.EdgeRuleKindJWT,
+		Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindJWT, JWT: &state.EdgeRuleJWTAction{Issuer: "https://login.example",
+			JWKSURL: "https://login.example/jwks", MCP: &api.MCPResourcePolicy{Resource: "https://search.gregale.app/mcp"}}},
+	}, api.MustLimitsFor(api.PlanScale))
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 // adr: 20261124094745 — a free plan whose rate cards charge nothing is
 // joined without a card, and with OAuth consumers on, a verified OAuth caller
 // becomes a consumer on it once, however often it calls.
@@ -71,6 +85,13 @@ func TestConsumerSignupFreePlanAndOAuthConsumers(t *testing.T) {
 		}
 	}
 	settings.FreePlanID, settings.OAuthConsumers = free, true
+	// Until the gateway checks the server's OAuth tokens, nobody could
+	// become a customer: refused.
+	if res := e.Do(t, http.MethodPut, "/v1/apps/search/consumer-signup", settings, nil); res.Code != http.StatusConflict ||
+		!strings.Contains(res.Body.String(), "gregale mcp policy") {
+		t.Fatalf("oauth consumers without a gateway rule: %d %s", res.Code, res.Body)
+	}
+	seedMCPOAuthGatewayRule(t, e, appID)
 	var set api.ConsumerSignupSettingsResponse
 	decode(t, e.Do(t, http.MethodPut, "/v1/apps/search/consumer-signup", settings, nil), http.StatusOK, &set)
 	if set.FreePlanID != free || !set.OAuthConsumers {
@@ -213,6 +234,7 @@ func TestConsumerSignupFreePlanOnlyNeedsNoStripe(t *testing.T) {
 		return p.ID
 	}
 	free, pro := plan("free", 0), plan("pro", 50)
+	seedMCPOAuthGatewayRule(t, e, appID)
 	put := func(plans ...string) *httptest.ResponseRecorder {
 		return e.Do(t, http.MethodPut, "/v1/apps/search/consumer-signup", api.PutConsumerSignupRequest{DisplayName: "Search tools",
 			PlanIDs: plans, FreePlanID: free, OAuthConsumers: true, AccountTools: true}, nil)
