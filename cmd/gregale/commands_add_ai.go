@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -257,15 +258,17 @@ type addAIPlan struct {
 // sets its SDK settings. A rerun reuses the AI integration of the same name.
 func (p addAIPlan) apply(ctx context.Context, client *api.Client) (addAIResult, error) {
 	result := addAIResult{App: p.app, Provider: p.provider, IntegrationID: p.integrationID}
-	if result.IntegrationID == "" {
-		offers, err := client.ListOutboundIntegrationOffers(ctx)
-		if err != nil {
-			return result, fmt.Errorf("list integrations: %w", err)
-		}
-		for _, offer := range offers.Items {
-			if offer.Name == p.name && offer.AIProvider == p.provider {
-				result.IntegrationID = offer.ID
-			}
+	offers, err := client.ListOutboundIntegrationOffers(ctx)
+	if err != nil {
+		return result, fmt.Errorf("list integrations: %w", err)
+	}
+	// A reused integration whose key was never stored (an earlier run failed
+	// after creating it) takes the key like a new one. An --integration ID
+	// the list lacks is taken to have one.
+	credentialConfigured := true
+	for _, offer := range offers.Items {
+		if (result.IntegrationID == "" && offer.Name == p.name && offer.AIProvider == p.provider) || offer.ID == p.integrationID {
+			result.IntegrationID, credentialConfigured = offer.ID, offer.CredentialConfigured
 		}
 	}
 	if result.IntegrationID == "" {
@@ -279,7 +282,7 @@ func (p addAIPlan) apply(ctx context.Context, client *api.Client) (addAIResult, 
 		result.IntegrationID, result.IntegrationCreated = created.ID, true
 	}
 	switch {
-	case p.key != "" && (result.IntegrationCreated || p.keyExplicit):
+	case p.key != "" && (result.IntegrationCreated || p.keyExplicit || !credentialConfigured):
 		if err := client.PutOutboundCredential(ctx, result.IntegrationID, p.key); err != nil {
 			return result, fmt.Errorf("store the provider key: %w", err)
 		}
@@ -287,22 +290,22 @@ func (p addAIPlan) apply(ctx context.Context, client *api.Client) (addAIResult, 
 	case p.key != "":
 		result.KeyKept = true
 	}
+	keepBaseURL := false
+	if p.setEnv {
+		keep, err := addAIKeepsBaseURL(ctx, client, p, result.IntegrationID)
+		if err != nil {
+			return result, err
+		}
+		keepBaseURL = keep
+	}
 	if _, err := client.BindOutboundIntegration(ctx, p.app, result.IntegrationID); err != nil {
 		return result, fmt.Errorf("bind the integration to %s: %w", p.app, err)
 	}
 	if p.setEnv {
 		result.Env = addAIEnv(p.provider, result.IntegrationID)
-		// GREGALE_AI_BASE_URL names one integration; an app that already has
-		// it keeps it, so binding a second provider does not move the first
-		// one's calls (prod hunt 2026-11-28). Each provider's own
-		// GREGALE_AI_<PROVIDER>_BASE_URL is always set.
-		if existing, err := client.ListSecretsWithScope(ctx, p.app, p.scope); err == nil {
-			for _, secret := range existing.Secrets {
-				if secret.Key == "GREGALE_AI_BASE_URL" {
-					delete(result.Env, "GREGALE_AI_BASE_URL")
-					result.BaseURLKept = true
-				}
-			}
+		if keepBaseURL {
+			delete(result.Env, "GREGALE_AI_BASE_URL")
+			result.BaseURLKept = true
 		}
 		for _, key := range sortedKeys(result.Env) {
 			if err := client.SetSecretWithScope(ctx, p.app, key, result.Env[key], p.scope); err != nil {
@@ -311,6 +314,30 @@ func (p addAIPlan) apply(ctx context.Context, client *api.Client) (addAIResult, 
 		}
 	}
 	return result, nil
+}
+
+// addAIKeepsBaseURL reports whether the app keeps its GREGALE_AI_BASE_URL.
+// It names one integration: an app that has it and is still bound to
+// another provider's AI integration keeps it, so binding a second provider
+// does not move the first one's calls (prod hunt 2026-11-28). With no such
+// binding (the same provider again, or the integration it named was
+// removed) it is pointed at this integration. Each provider's own
+// GREGALE_AI_<PROVIDER>_BASE_URL is always set.
+func addAIKeepsBaseURL(ctx context.Context, client *api.Client, p addAIPlan, integrationID string) (bool, error) {
+	existing, err := client.ListSecretsWithScope(ctx, p.app, p.scope)
+	if err != nil {
+		return false, fmt.Errorf("list %s settings: %w", p.app, err)
+	}
+	if !slices.ContainsFunc(existing.Secrets, func(s api.AppSecretResponse) bool { return s.Key == "GREGALE_AI_BASE_URL" }) {
+		return false, nil
+	}
+	bindings, err := client.ListOutboundAppBindings(ctx, p.app)
+	if err != nil {
+		return false, fmt.Errorf("list %s integrations: %w", p.app, err)
+	}
+	return slices.ContainsFunc(bindings.Items, func(b api.OutboundAppBinding) bool {
+		return b.Integration.ID != integrationID && b.Integration.AIProvider != "" && b.Integration.AIProvider != p.provider
+	}), nil
 }
 
 // addAIPlaceholderKey stands in for the provider key in the app: the

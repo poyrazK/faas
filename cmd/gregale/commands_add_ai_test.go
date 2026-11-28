@@ -18,11 +18,12 @@ import (
 // fakeAddAIAPI is an in-memory apid for the routes `gregale add ai` uses
 // (ADR 20261027132936). It records every mutating call with its body.
 type fakeAddAIAPI struct {
-	mu      sync.Mutex
-	offers  []api.OutboundIntegrationOffer
-	secrets []string
-	calls   []string
-	bodies  []map[string]any
+	mu       sync.Mutex
+	offers   []api.OutboundIntegrationOffer
+	secrets  []string
+	bindings []api.OutboundAppBinding
+	calls    []string
+	bodies   []map[string]any
 }
 
 func (f *fakeAddAIAPI) serve(t *testing.T) {
@@ -46,6 +47,8 @@ func (f *fakeAddAIAPI) serve(t *testing.T) {
 				list.Secrets = append(list.Secrets, api.AppSecretResponse{Key: key})
 			}
 			_ = json.NewEncoder(w).Encode(list)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/shop/outbound-bindings":
+			_ = json.NewEncoder(w).Encode(api.OutboundAppBindingList{Items: f.bindings})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/outbound/integrations":
 			_ = json.NewEncoder(w).Encode(api.OutboundIntegrationOffer{ID: "int-1", Name: "openai", AIProvider: "openai"})
 		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/v1/apps/shop/outbound-bindings/"):
@@ -87,7 +90,7 @@ func TestCmdAddAICreatesBindsAndPointsTheSDK(t *testing.T) {
 }
 
 func TestCmdAddAIReusesTheIntegrationOfTheSameName(t *testing.T) {
-	f := &fakeAddAIAPI{offers: []api.OutboundIntegrationOffer{{ID: "int-9", Name: "anthropic", AIProvider: "anthropic"}}}
+	f := &fakeAddAIAPI{offers: []api.OutboundIntegrationOffer{{ID: "int-9", Name: "anthropic", AIProvider: "anthropic", CredentialConfigured: true}}}
 	f.serve(t)
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
 	_ = captureAddDatadogStdout(t)
@@ -113,11 +116,28 @@ func TestCmdAddAIReusesTheIntegrationOfTheSameName(t *testing.T) {
 	}
 }
 
+// Review of #8198: a reused integration whose key was never stored (an
+// earlier run failed after creating it) takes the key from the usual variable.
+func TestCmdAddAIStoresTheKeyOfAnIntegrationWithoutOne(t *testing.T) {
+	f := &fakeAddAIAPI{offers: []api.OutboundIntegrationOffer{{ID: "int-9", Name: "anthropic", AIProvider: "anthropic"}}}
+	f.serve(t)
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+	_ = captureAddDatadogStdout(t)
+
+	if code := main.CmdAdd([]string{"ai", "--app", "shop", "--provider", "anthropic", "--no-env"}); code != 0 {
+		t.Fatalf("add ai = %d, want 0", code)
+	}
+	if got := strings.Join(f.calls, ","); got != "PUT /v1/outbound/integrations/int-9/credential,PUT /v1/apps/shop/outbound-bindings/int-9" {
+		t.Fatalf("calls = %s; want the missing key stored", got)
+	}
+}
+
 // Prod hunt 2026-11-28: binding a second provider moved the app's
 // GREGALE_AI_BASE_URL off the first one; an existing one is kept and each
 // provider has its own variable.
 func TestCmdAddAIKeepsAnExistingBaseURL(t *testing.T) {
-	f := &fakeAddAIAPI{secrets: []string{"GREGALE_AI_BASE_URL", "OPENAI_BASE_URL"}}
+	f := &fakeAddAIAPI{secrets: []string{"GREGALE_AI_BASE_URL", "OPENAI_BASE_URL"},
+		bindings: []api.OutboundAppBinding{{Integration: api.OutboundIntegrationOffer{ID: "int-0", AIProvider: "openai"}}}}
 	f.serve(t)
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
 	out := captureAddDatadogStdout(t)
@@ -168,5 +188,23 @@ func TestCmdAddAIRefusesNonProductionScope(t *testing.T) {
 	}
 	if len(f.calls) != 0 {
 		t.Fatalf("calls = %v; want nothing changed", f.calls)
+	}
+}
+
+// Review of #8198: GREGALE_AI_BASE_URL is kept only while the app is bound to
+// another provider's AI integration; otherwise (the integration it named was
+// removed, or the same provider again) it moves to the new integration.
+func TestCmdAddAIRepointsABaseURLNoOtherProviderUses(t *testing.T) {
+	f := &fakeAddAIAPI{secrets: []string{"GREGALE_AI_BASE_URL"},
+		bindings: []api.OutboundAppBinding{{Integration: api.OutboundIntegrationOffer{ID: "int-old", AIProvider: "openai"}}}}
+	f.serve(t)
+	t.Setenv("OPENAI_API_KEY", "sk-test")
+	_ = captureAddDatadogStdout(t)
+
+	if code := main.CmdAdd([]string{"ai", "--app", "shop", "--provider", "openai"}); code != 0 {
+		t.Fatalf("add ai = %d, want 0", code)
+	}
+	if got := strings.Join(f.calls, ","); !strings.Contains(got, "/secrets/GREGALE_AI_BASE_URL") {
+		t.Fatalf("calls = %s; want GREGALE_AI_BASE_URL pointed at the new integration", got)
 	}
 }
