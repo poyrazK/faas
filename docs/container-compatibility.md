@@ -49,8 +49,8 @@ findings, and nothing is uploaded; warnings are printed and the deploy goes on.
 `--boot-env-file FILE` passes variables the app needs to start to the local
 container only; set them on the app with `gregale env` or `gregale secrets` for
 the deployment. A worker or job (`--execution-mode`, or `gregale.yaml`) is
-checked without HTTP, as described below. `--boot` is refused for
-`--healthcheck-grpc` deploys and with `--create-only`.
+checked without HTTP, and a `--healthcheck-grpc` deploy with gRPC health, as
+described below. `--boot` is refused with `--create-only`.
 Pressing Ctrl-C during the check stops the deploy.
 
 ## Boot the image locally before deploying
@@ -95,6 +95,17 @@ sends that app's host too. Without it, a 400 is only a warning, because an app
 that allow-lists its host names (Django `ALLOWED_HOSTS`, Rails `config.hosts`)
 refuses the local address. Without a health path, any answer on `/` counts, as
 it does for readiness by connection.
+
+A gRPC service that deploys with `--healthcheck-grpc` is checked the same way
+with `--boot --healthcheck-grpc [--healthcheck-grpc-service NAME]`: the boot
+calls the standard `grpc.health.v1.Health/Check` over plaintext gRPC on
+`$PORT`, as Gregale's readiness probe does, and passes once it answers
+`SERVING`. It fails with `boot_grpc_health_missing` when the server does not
+implement the health service, `boot_grpc_service_unknown` when the health
+server does not know the service name, and `boot_grpc_health_failed` when it
+answers but never `SERVING` within the startup window. A server that serves
+only TLS is reported too: Gregale terminates TLS at its edge and probes the
+app in plaintext.
 
 An image with a `HEALTHCHECK` also gets it run by Docker, every second, with the
 retries scaled so the failure budget (retries × interval) stays the image's:

@@ -26,6 +26,7 @@ var routes = []string{
 	"/v1/apps/{}/consumer-signups",
 	"/v1/apps/{}/mcp-stats",
 	"/v1/apps/{}/mcp-listing",
+	"/v1/apps/{}/mcp-contract",
 	"/v1/apps/{}/consumers/{}/usage/quote",
 	"/v1/apps/{}/monetization-funnel",
 	"/v1/apps/{}/consumers/{}/billing-progress",
@@ -86,6 +87,7 @@ var WebhookEvents = []string{
 	"consumer.signed_up",
 	"consumer.plan_changed",
 	"consumer.closed",
+	"mcp.contract.changed",
 	"platform_tenant.statement.finalized",
 }
 
@@ -97,6 +99,7 @@ var Schemas = []string{
 	"APIConsumerSignedUpWebhookPayload",
 	"APIConsumerPlanChangedWebhookPayload",
 	"APIConsumerClosedWebhookPayload",
+	"MCPContractChangedWebhookPayload",
 	"PlatformTenantStatementFinalizedWebhookPayload",
 }
 
