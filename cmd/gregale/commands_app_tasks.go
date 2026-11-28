@@ -3,7 +3,7 @@ package main
 // App task history (ADR-230).
 //
 //	gregale app tasks [list] <app> [--limit N] [--offset N]
-//	gregale app tasks show <app> <task-id>
+//	gregale app tasks show <app> <task-id> [--follow]
 //	gregale app tasks cancel <app> <task-id>
 //
 // `app exec --detach`, release commands and binding probes leave task receipts
@@ -13,8 +13,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"os"
+	"os/signal"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -24,7 +27,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const appTasksUsage = "usage: gregale app tasks [list] <app> [--limit N] [--offset N]\n       gregale app tasks show <app> <task-id>\n       gregale app tasks cancel <app> <task-id>"
+const appTasksUsage = "usage: gregale app tasks [list] <app> [--limit N] [--offset N]\n       gregale app tasks show <app> <task-id> [--follow] [--poll-interval D] [--wait-timeout D]\n       gregale app tasks cancel <app> <task-id>"
 
 func cmdAppTasks(slug string, args []string) int {
 	verb := "list"
@@ -87,9 +90,21 @@ func cmdAppTasksList(slug string, args []string) int {
 }
 
 func cmdAppTaskShow(slug string, args []string) int {
-	slug, id, ok := appTaskIDArg(slug, args, "show")
+	fs := newFlagSet("app-tasks-show", flag.ContinueOnError)
+	follow := fs.Bool("follow", false, "wait for the task to finish, then print its result")
+	pollInterval := fs.Duration("poll-interval", executionPollIntervalDefault, "status polling interval with --follow")
+	waitTimeout := fs.Duration("wait-timeout", appTaskWaitTimeoutDefault, "how long --follow waits")
+	flags, positionals := splitArgsForFlags(args, "follow")
+	if err := fs.Parse(flags); err != nil {
+		PrintUsage(osStderr, appTasksUsage, "apps")
+		return 1
+	}
+	slug, id, ok := appTaskIDArg(slug, positionals, "show")
 	if !ok {
 		return 1
+	}
+	if *follow && (*pollInterval <= 0 || *waitTimeout <= 0) {
+		return printErr("Invalid --follow timing", fmt.Errorf("--poll-interval and --wait-timeout must be positive"))
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -99,11 +114,61 @@ func cmdAppTaskShow(slug string, args []string) int {
 	if err != nil {
 		return printErr("Could not load app task", err)
 	}
+	if *follow {
+		return followAppTask(client, slug, task, *pollInterval, *waitTimeout)
+	}
 	if jsonOutput {
 		return jsonOut(writeJSON(task))
 	}
 	renderAppTaskDetails(task)
 	return 0
+}
+
+// followAppTask polls a task until it finishes, reporting each status change
+// on stderr, then prints its result the way attached app exec does and exits
+// with the task's exit code. Interrupting stops following; the task keeps
+// running. Output is read when the task finishes: the runtime returns it
+// whole, not line by line.
+func followAppTask(client *Client, slug string, task api.AppTaskResponse, pollInterval, waitTimeout time.Duration) int {
+	interrupt, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	ctx, cancel := context.WithTimeout(interrupt, waitTimeout)
+	defer cancel()
+	last := task.Status
+	if !jsonOutput && !task.Status.Terminal() {
+		_, _ = fmt.Fprintf(osStderr, "Task %s is %s; waiting for it to finish (Ctrl-C stops following, not the task)\n", task.ID, task.Status)
+	}
+	for !task.Status.Terminal() {
+		select {
+		case <-ctx.Done():
+			hint := fmt.Sprintf("gregale app tasks show %s %s --follow", quoteCLIArg(slug), task.ID)
+			if errors.Is(interrupt.Err(), context.Canceled) {
+				PrintWarn(osStderr, "stopped following task %s (status=%s); it keeps running. Resume with %s", task.ID, task.Status, hint)
+				return 130
+			}
+			return printErr("Stopped following; the task is still "+string(task.Status), fmt.Errorf("waited %s; resume with %s", waitTimeout, hint))
+		case <-time.After(pollInterval):
+		}
+		next, err := client.GetAppTask(ctx, slug, task.ID)
+		if err != nil {
+			if ctx.Err() != nil {
+				continue
+			}
+			return printErr("Could not load app task", err)
+		}
+		task = next
+		if task.Status != last && !jsonOutput && !task.Status.Terminal() {
+			_, _ = fmt.Fprintf(osStderr, "Task %s is %s\n", task.ID, task.Status)
+		}
+		last = task.Status
+	}
+	if jsonOutput {
+		if err := writeJSON(task); err != nil {
+			return jsonOut(err)
+		}
+		return appTaskExitCode(task)
+	}
+	return renderAppTaskTerminal(task)
 }
 
 func cmdAppTaskCancel(slug string, args []string) int {

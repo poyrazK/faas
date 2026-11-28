@@ -1976,7 +1976,11 @@ var cliCommands = []cliCommand{
 					{Name: "limit", Short: "tasks per page (1..200, default 20)", Value: "N"},
 					{Name: "offset", Short: "tasks to skip", Value: "N"},
 				}},
-				{Name: "show", Short: "Show one task's status, exit code and output tail", Positionals: []string{"<task-id>"}},
+				{Name: "show", Short: "Show one task's status, exit code and output tail", Positionals: []string{"<task-id>"}, Flags: []cliFlag{
+					{Name: "follow", Bool: true, Short: "wait for the task to finish, then print its result"},
+					{Name: "poll-interval", Short: "status polling interval with --follow", Value: "D"},
+					{Name: "wait-timeout", Short: "how long --follow waits", Value: "D"},
+				}},
 				{Name: "cancel", Short: "Cancel a queued or running task", Positionals: []string{"<task-id>"}},
 			}},
 			{Name: "security", Short: "Show posture or configure deploy enforcement", Flags: []cliFlag{

@@ -131,3 +131,51 @@ func TestCmdAppTasksShowInLinkedCheckoutTakesTheTaskID(t *testing.T) {
 		t.Fatalf("requests = %v, want the linked app's task", paths)
 	}
 }
+
+// --follow polls a detached task until it finishes, reports the status
+// change, then prints the result and exits with the task's exit code.
+func TestCmdAppTasksShowFollowWaitsForTheResult(t *testing.T) {
+	running := strings.Replace(appTaskFinishedReceipt, `"status":"failed"`, `"status":"running"`, 1)
+	polls := 0
+	appTasksTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/apps/my-app/tasks/2bdd4251-f567-4a48-9f66-a155bbfa7751" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		polls++
+		if polls < 3 {
+			_, _ = w.Write([]byte(running))
+			return
+		}
+		_, _ = w.Write([]byte(appTaskFinishedReceipt))
+	})
+	out, errOut, restore := main.SwapIO(t)
+	defer restore()
+
+	code := main.CmdAppTasks("my-app", []string{"show", "2bdd4251-f567-4a48-9f66-a155bbfa7751", "--follow", "--poll-interval", "1ms"})
+	if code != 2 {
+		t.Fatalf("exit = %d, want the task's exit code 2; stderr = %s", code, errOut())
+	}
+	if polls != 3 {
+		t.Fatalf("polls = %d, want 3", polls)
+	}
+	if !strings.Contains(out.String(), "applied 3") || !strings.Contains(errOut(), "boom") || !strings.Contains(errOut(), "is running; waiting") {
+		t.Fatalf("stdout = %q stderr = %q", out.String(), errOut())
+	}
+}
+
+func TestCmdAppTasksShowFollowTimesOutWithResumeHint(t *testing.T) {
+	running := strings.Replace(appTaskFinishedReceipt, `"status":"failed"`, `"status":"queued"`, 1)
+	appTasksTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(running))
+	})
+	_, errOut, restore := main.SwapIO(t)
+	defer restore()
+
+	code := main.CmdAppTasks("my-app", []string{"show", "2bdd4251-f567-4a48-9f66-a155bbfa7751", "--follow", "--poll-interval", "1ms", "--wait-timeout", "20ms"})
+	if code == 0 {
+		t.Fatal("a follow that timed out exited 0")
+	}
+	if !strings.Contains(errOut(), "show my-app 2bdd4251-f567-4a48-9f66-a155bbfa7751 --follow") {
+		t.Fatalf("stderr should say how to resume: %q", errOut())
+	}
+}
