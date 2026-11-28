@@ -141,8 +141,14 @@ token grant there (a session redirect alone, which a mail scanner may
 follow, records it untrusted), and never while more than
 `AuthTrustedNetworkMaxAccounts` accounts signed in from it in that window
 (an SSR app's server); the row keeps the network's own digest for that
-count. A refresh trusts only a network already recorded for the account
-(a stolen refresh token gains nothing) but may alert; a redirect-only
+count. A refresh trusts only a network the account is trusted on, or one
+where a redirect handed the same device kind a session, and otherwise
+writes nothing (a stolen refresh token gains nothing) but may alert;
+sign-ins from server user agents (HTTP libraries, none) are not recorded;
+a success gives back its account-budget count; user-keyed message budgets
+(re-authentication, phone challenges, email/phone change) are checked
+before and counted after GoTrue accepts; an alert is sent before records
+are written and gives its day marker back if the send fails; a redirect-only
 sign-in neither alerts nor counts as seen; impersonated tokens (`act`) are
 not recorded; one alert per device kind and day is claimed in
 `attempt_budgets`. The CAPTCHA exception, and a trusted network's pass of

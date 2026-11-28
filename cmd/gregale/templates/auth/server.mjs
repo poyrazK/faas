@@ -13,7 +13,7 @@ import { createWorkflowStarter, workflowsConfig } from './workflows.mjs'
 import { createEventPublisher, lifecycleConfig, publishesAfter, setLifecycleEvents } from './events.mjs'
 import { createAnonymousPruner, createAttemptPruner, createAuditPruner, createOrgAuditPruner, createSignInSeenPruner, createUnusedClientPruner } from './retention.mjs'
 import { addressBucket, budgetKey, budgets, createAttempts, goQueryValue, guardedPath, outcome, passwordEntries, secondStepEntries, signInSubject } from './attempts.mjs'
-import { createSignInSecurity, sessionFromAnswer, sessionFromLocation } from './security.mjs'
+import { createSignInSecurity, serverAgent, sessionFromAnswer, sessionFromLocation } from './security.mjs'
 import { createSends, messageBudgets, sendRoute } from './sends.mjs'
 import { bodyAllowed, smsSendPath } from './sms.mjs'
 import { createScimHandler } from './scim.mjs'
@@ -182,7 +182,7 @@ export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bo
   // neither alerts nor trusts its network, and a refreshed one trusts only
   // a network its account was already seen on (record's trust).
   const signedIn = (req, session, { alert = true, trust = true } = {}) => {
-    if (signIns && session) signIns.record({ ...session, address: clientAddress(req), userAgent: req.headers['user-agent'], alert, trust }).catch(logFailure('sign_in_record_failed'))
+    if (signIns && session && !serverAgent(req.headers['user-agent'])) signIns.record({ ...session, address: clientAddress(req), userAgent: req.headers['user-agent'], alert, trust }).catch(logFailure('sign_in_record_failed'))
   }
   return http.createServer((req, res) => {
     // A third-party OAuth client's token is good here only for userinfo.
@@ -342,7 +342,12 @@ async function guardAttempt({ req, res, path, upstreamPort, body, oauth, attempt
   const observe = async (status, answer) => {
     const result = entries.length ? outcome(kind, status, answer) : null
     try {
-      if (result === 'success') await attempts.clear(entries.filter(entry => entry.budget !== budgets.passwordAccount))
+      // A success clears the address's budget and gives back what it
+      // counted against the account's, whose failures stay.
+      if (result === 'success') {
+        await attempts.clear(entries.filter(entry => entry.budget !== budgets.passwordAccount))
+        await attempts.release(entries.filter(entry => entry.budget === budgets.passwordAccount))
+      }
       else if (result !== 'failure' && entries.length) await attempts.release(entries)
     } catch (err) {
       logFailure('attempt_budget_failed')(err)
@@ -357,7 +362,7 @@ async function guardAttempt({ req, res, path, upstreamPort, body, oauth, attempt
 // refusal shows was not spent is given back.
 async function forwardSend({ req, res, path, upstreamPort, body, oauth, signedIn, send, sends, smsCountries, bearer }) {
   if (smsCountries && !bodyAllowed(body, smsCountries)) return problem(res, 422, 'sms_country_not_allowed')
-  let taken = []
+  let taken = [], settle = []
   if (send) {
     let recipients
     try {
@@ -371,9 +376,10 @@ async function forwardSend({ req, res, path, upstreamPort, body, oauth, signedIn
       const result = await sends.take(recipients, clientAddress(req))
       if (result.refused) {
         const { name, budget, count, wait } = result.refused
-        return limited(res, 'too_many_messages', budget, count, wait, { scope: name })
+        return limited(res, 'too_many_messages', budget, count, wait, { error_code: 'too_many_messages', scope: name })
       }
       taken = result.taken
+      settle = result.settle
     } catch (err) {
       logFailure('message_budget_failed')(err)
       return problem(res, 503, 'auth_unavailable')
@@ -385,6 +391,7 @@ async function forwardSend({ req, res, path, upstreamPort, body, oauth, signedIn
   // A sign-up that signs the person in at once hands over a session.
   const observe = async (status, answer) => {
     if (status >= 400) await giveBack()
+    else if (settle.length) await sends.settle(settle).catch(logFailure('message_budget_failed'))
     if (status === 200) signedIn(req, sessionFromAnswer(answer))
   }
   upstreamRequest(req, res, path, upstreamPort, { ...headers, 'content-length': String(body.length) }, { oauth, observe, signedIn, onError: giveBack }).end(body)

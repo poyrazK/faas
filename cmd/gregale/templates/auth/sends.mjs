@@ -17,8 +17,10 @@ import { normalizePhone } from './sms.mjs'
 // without end. A
 // request is counted before GoTrue
 // sees it, so a parallel burst cannot all pass, and given back when GoTrue
-// refuses it (an error status): then nothing was sent, and a token whose
-// user GoTrue does not accept spends nobody's budget.
+// refuses it (an error status) or never answers: then nothing was sent. A
+// signed-in user's budget is keyed by a token the front has not verified,
+// so it is only checked before and counted once GoTrue accepted the
+// request: a forged token spends nobody's budget.
 
 // messageBudgets are the budgets for the owner's settings (securityConfig).
 export function messageBudgets(security) {
@@ -41,6 +43,9 @@ const bodyRoutes = new Set(['POST /otp', 'POST /magiclink', 'POST /signup', 'POS
 export function sendRoute(method, path) {
   // GoTrue's router serves a path with trailing slashes as the path.
   const route = path.split('?')[0].replace(/\/+$/, '')
+  // An email or phone change also mails the current address or number,
+  // so it counts against the signed-in user too.
+  if (method === 'PUT' && route === '/user') return { kind: 'body', user: true }
   if (bodyRoutes.has(`${method} ${route}`)) return { kind: 'body' }
   if (method === 'GET' && route === '/reauthenticate') return { kind: 'reauthenticate' }
   const challenge = method === 'POST' && /^\/factors\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/challenge$/i.exec(route)
@@ -77,17 +82,26 @@ export function createSends({ attempts, pool, budgets, trusted = null }) {
     // recipients lists who a request may send to: from its body, or the
     // signed-in user for a re-authentication or a phone factor's challenge.
     async recipients(route, body, claims) {
-      if (route.kind === 'body') return bodyRecipients(body)
-      const user = typeof claims?.sub === 'string' ? claims.sub.toLowerCase() : null
+      const user = typeof claims?.sub === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(claims.sub) ? claims.sub.toLowerCase() : null
+      if (route.kind === 'body') {
+        const named = bodyRecipients(body)
+        return route.user && user && named.length ? [...named, `user:${user}`] : named
+      }
       if (!user) return []
       if (route.kind === 'reauthenticate') return [`user:${user}`]
       const { rows: [factor] } = await pool.query('SELECT factor_type FROM auth.mfa_factors WHERE id = $1 AND user_id = $2', [route.factor, user])
       return factor?.factor_type === 'phone' ? [`user:${user}`] : []
     },
     async take(recipients, address) {
-      if (recipients.length === 0) return { taken: [] }
+      if (recipients.length === 0) return { taken: [], settle: [] }
+      const entry = recipient => ({ name: 'recipient', recipient, key: budgetKey('message-recipient', recipient), budget: budgets.recipient })
+      const settle = recipients.filter(recipient => recipient.startsWith('user:')).map(entry)
+      for (const pending of settle) {
+        const wait = await attempts.check([pending])
+        if (wait > 0) return { refused: { name: 'recipient', budget: pending.budget, count: pending.budget.limit, wait } }
+      }
       const entries = [...(budgets.network ? [{ name: 'network', key: budgetKey('message-network', addressBucket(address)), budget: budgets.network }] : []),
-        ...recipients.map(recipient => ({ name: 'recipient', recipient, key: budgetKey('message-recipient', recipient), budget: budgets.recipient }))]
+        ...recipients.filter(recipient => !recipient.startsWith('user:')).map(entry)]
       const taken = []
       try {
         for (const entry of entries) {
@@ -105,8 +119,10 @@ export function createSends({ attempts, pool, budgets, trusted = null }) {
         if (taken.length) await attempts.release(taken).catch(() => {})
         throw err
       }
-      return { taken }
+      return { taken, settle }
     },
     release: taken => taken.length ? attempts.release(taken) : Promise.resolve(),
+    // settle counts a signed-in user's budget once GoTrue accepted the request.
+    settle: pending => pending.length ? attempts.fail(pending) : Promise.resolve(),
   }
 }

@@ -5,7 +5,7 @@ import { once } from 'node:events'
 import { createServer } from '../server.mjs'
 import { budgets } from '../attempts.mjs'
 import { limits, securityConfig } from '../config.mjs'
-import { createSignInSecurity, deviceKind, deviceLabel, sessionFromAnswer, sessionFromLocation } from '../security.mjs'
+import { createSignInSecurity, deviceKind, deviceLabel, serverAgent, sessionFromAnswer, sessionFromLocation } from '../security.mjs'
 import { bodyRecipients, createSends, messageBudgets, sendRoute } from '../sends.mjs'
 import { routeTeam } from '../team.mjs'
 
@@ -22,6 +22,8 @@ function memoryAttempts() {
     counts,
     async reserve(entries) { let wait = 0; for (const entry of entries) if (bump(entry) > entry.budget.limit) wait = entry.budget.seconds; return wait },
     async take(entry) { const count = bump(entry); return { count, wait: count > entry.budget.limit ? entry.budget.seconds : 0 } },
+    async check(entries) { return entries.some(entry => (counts.get(id(entry.key)) ?? 0) >= entry.budget.limit) ? entries[0].budget.seconds : 0 },
+    async fail(entries) { for (const entry of entries) bump(entry) },
     async release(entries) { for (const { key } of entries) counts.set(id(key), Math.max(0, (counts.get(id(key)) ?? 0) - 1)) },
     async clear(entries) { for (const { key } of entries) counts.delete(id(key)) },
   }
@@ -71,7 +73,7 @@ const post = (base, path, body, address = '203.0.113.7', headers = {}) => fetch(
 test('names what a request may send and to whom, as GoTrue reads it', () => {
   assert.deepEqual(sendRoute('POST', '/otp'), { kind: 'body' })
   assert.deepEqual(sendRoute('POST', '/recover/'), { kind: 'body' })
-  assert.deepEqual(sendRoute('PUT', '/user?x=1'), { kind: 'body' })
+  assert.deepEqual(sendRoute('PUT', '/user?x=1'), { kind: 'body', user: true })
   assert.deepEqual(sendRoute('GET', '/reauthenticate'), { kind: 'reauthenticate' })
   assert.deepEqual(sendRoute('POST', `/factors/${factor.toUpperCase()}/challenge`), { kind: 'challenge', factor })
   assert.equal(sendRoute('POST', `/factors/${'-'.repeat(36)}/challenge`), null)
@@ -101,7 +103,7 @@ test('message budgets hold one recipient and one network, and refusals give back
   assert.equal((await post(base, '/otp/', { Email: 'ANN@example.com' })).status, 200)
   const held = await post(base, '/magiclink', { email: 'ann@example.com' })
   assert.equal(held.status, 429)
-  assert.deepEqual(await held.json(), { status: 429, code: 'too_many_messages', scope: 'recipient', limit: 2, observed: 2, window_seconds: limits.messageWindowSeconds, retry_after: limits.messageWindowSeconds, docs_url: 'https://gregale.dev/docs/application-auth#current-limits' })
+  assert.deepEqual(await held.json(), { status: 429, code: 'too_many_messages', error_code: 'too_many_messages', scope: 'recipient', limit: 2, observed: 2, window_seconds: limits.messageWindowSeconds, retry_after: limits.messageWindowSeconds, docs_url: 'https://gregale.dev/docs/application-auth#current-limits' })
   // GoTrue refusing a request gives its count back.
   assert.equal((await post(base, '/otp', { email: 'refuse@example.com' })).status, 422)
   assert.equal((await post(base, '/otp', { email: 'bob@example.com' })).status, 200)
@@ -120,8 +122,14 @@ test('a phone factor challenge counts against its user; an authenticator challen
   assert.deepEqual(await sends.recipients({ kind: 'challenge', factor }, Buffer.alloc(0), { sub: user }), [`user:${user}`])
   assert.deepEqual(await sends.recipients({ kind: 'challenge', factor: user }, Buffer.alloc(0), { sub: user }), [])
   assert.deepEqual(await sends.recipients({ kind: 'reauthenticate' }, Buffer.alloc(0), null), [])
-  assert.equal((await sends.take([`user:${user}`], '203.0.113.7')).refused, undefined)
+  // A user's budget is counted only once GoTrue accepted the request.
+  const first = await sends.take([`user:${user}`], '203.0.113.7')
+  assert.equal(first.refused, undefined)
+  assert.equal((await sends.take([`user:${user}`], '203.0.113.7')).refused, undefined, 'not counted before GoTrue answers')
+  await sends.settle(first.settle)
   assert.equal((await sends.take([`user:${user}`], '203.0.113.7')).refused.name, 'recipient')
+  assert.deepEqual(await sends.recipients({ kind: 'body', user: true }, Buffer.from('{"email":"new@example.com"}'), { sub: user }), ['email:new@example.com', `user:${user}`])
+  assert.deepEqual(await sends.recipients({ kind: 'body', user: true }, Buffer.from('{"password":"x"}'), { sub: user }), [])
 })
 
 test('a spent recipient budget still lets the account\'s trusted network through', async () => {
@@ -168,9 +176,10 @@ function memorySeen(users = { 'ann@example.com': user }) {
         const mine = [...rows.values()].filter(row => row.user === args[0])
         const has = (key, seconds, trusted = false) => mine.some(row => row.key.equals(key) && recent(row, seconds) && (row.trusted || !trusted))
         const days = args[3] * 86400
-        return { rows: [{ known: mine.some(row => row.trusted && recent(row, days)), network_seen: has(args[1], days, true), device_seen: has(args[2], days, true), network_recorded: has(args[1], days),
+        return { rows: [{ known: mine.some(row => row.trusted && recent(row, days)), network_seen: has(args[1], days, true), device_seen: has(args[2], days, true), network_recorded: has(args[1], days), device_recorded: has(args[2], days),
           fresh_trusted: has(args[1], args[4], true) && has(args[2], args[4], true), fresh: has(args[1], args[4]) && has(args[2], args[4]) }] }
       }
+      if (sql.startsWith('DELETE FROM gregale_auth.attempt_budgets')) { markers.delete(args[0].toString('hex')); return { rows: [] } }
       if (sql.includes('INSERT INTO gregale_auth.attempt_budgets')) {
         const fresh = !markers.has(args[0].toString('hex'))
         markers.add(args[0].toString('hex'))
@@ -231,6 +240,53 @@ test('a refresh trusts only a network the account was already seen on', async ()
   await security.record({ ...home, address: '198.51.100.70', trust: false })
   await security.record({ ...home, address: '198.51.100.70', trust: 'known' })
   assert.equal(await security.trusted('email:ann@example.com', '198.51.100.70'), true, 'a session the browser got by redirect and then used')
+})
+
+test('two refreshes from a new network still grant no trust', async () => {
+  const pool = memorySeen()
+  const security = createSignInSecurity({ pool, app: 'Shop', templates: async () => ({}) })
+  const home = { userId: user, email: 'ann@example.com', address: '203.0.113.7', userAgent: 'Firefox (Mac)' }
+  await security.record(home)
+  for (let i = 0; i < 2; i++) await security.record({ ...home, address: '198.51.100.66', userAgent: 'curl/8', trust: 'known' })
+  assert.equal(await security.trusted('email:ann@example.com', '198.51.100.66'), false)
+})
+
+test('a failed alert leaves the day open for the next sign-in', async () => {
+  const pool = memorySeen()
+  let failing = true
+  const sent = []
+  const mailer = { send: async (message, key) => { if (failing) throw new Error('timeout'); sent.push(key) } }
+  const security = createSignInSecurity({ pool, mailer, app: 'Shop', templates: async () => ({}), log: () => {} })
+  const home = { userId: user, email: 'ann@example.com', address: '203.0.113.7', userAgent: 'Firefox (Mac)' }
+  await security.record(home)
+  await assert.rejects(security.record({ ...home, address: '198.51.100.1', userAgent: 'Lynx' }), /timeout/)
+  failing = false
+  assert.equal(await security.record({ ...home, address: '198.51.100.2', userAgent: 'Lynx' }), true)
+  assert.equal(sent.length, 1)
+})
+
+test('sign-ins an app server completes are not the person\'s device', async t => {
+  assert.ok(serverAgent(''))
+  assert.ok(serverAgent('node'))
+  assert.ok(serverAgent('undici'))
+  assert.ok(serverAgent('python-requests/2.31'))
+  assert.ok(serverAgent('Go-http-client/1.1'))
+  assert.ok(!serverAgent('Mozilla/5.0 (iPhone) Safari/604.1'))
+  assert.ok(!serverAgent('okhttp/4.12.0 MyApp'))
+  const recorded = []
+  const { base } = await harness(t, { signIns: { trusted: async () => false, record: async entry => { recorded.push(entry) } } })
+  await post(base, '/token?grant_type=pkce', { refresh_token: 'r' }, '203.0.113.7', { 'User-Agent': 'node' })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(recorded.length, 0)
+})
+
+test('a correct password does not spend the account\'s failure budget', async t => {
+  const attempts = memoryAttempts()
+  const { base } = await harness(t, { attempts })
+  for (let i = 0; i < limits.passwordFailuresPerAccount + 5; i++) {
+    assert.equal((await post(base, '/token?grant_type=password', { email: 'ann@example.com', password: 'right' }, `192.0.2.${i}`)).status, 200)
+  }
+  assert.deepEqual([...attempts.counts.values()].filter(Boolean), [])
 })
 
 test('a redirect alone, or a network many accounts share, grants no trust', async () => {
