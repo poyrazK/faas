@@ -109,7 +109,7 @@ export function createSends({ attempts, pool, budgets, trusted = null }) {
       if (recipients.length === 0) return { taken: [] }
       const entries = [...(budgets.network ? [{ name: 'network', key: budgetKey('message-network', addressBucket(address)), budget: budgets.network }] : []),
         ...recipients.map(recipient => ({ name: 'recipient', recipient, key: budgetKey('message-recipient', inbox(recipient)), budget: budgets.recipient }))]
-      const taken = []
+      const taken = [], passed = []
       try {
         for (const entry of entries) {
           const { count, wait } = await attempts.take(entry)
@@ -120,14 +120,17 @@ export function createSends({ attempts, pool, budgets, trusted = null }) {
           const passes = entry.recipient && trusted && count <= entry.budget.limit * limits.trustedBudgetMultiplier && await trusted(entry.recipient, address)
           if (!passes) {
             await attempts.release(taken)
-            return { refused: { name: entry.name, budget: entry.budget, count: count - 1, wait } }
+            return { refused: { name: entry.name, key: entry.key, recipient: entry.recipient ?? null, budget: entry.budget, count: count - 1, wait } }
           }
+          passed.push(entry.recipient)
         }
       } catch (err) {
         if (taken.length) await attempts.release(taken).catch(() => {})
         throw err
       }
-      return { taken }
+      // passes lists the recipients a trusted network passed, for the
+      // caller to record once the request goes ahead.
+      return { taken, passes: passed }
     },
     release: taken => taken.length ? attempts.release(taken) : Promise.resolve(),
   }

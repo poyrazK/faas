@@ -87,9 +87,9 @@ test('names what a request may send and to whom, as GoTrue reads it', () => {
 })
 
 test('reads message limits and alert settings with bounds', () => {
-  assert.deepEqual(securityConfig({}), { newDeviceAlerts: true, messagesPerRecipient: limits.messagesPerRecipientDefault, messagesPerNetwork: null })
+  assert.deepEqual(securityConfig({}), { newDeviceAlerts: true, messagesPerRecipient: limits.messagesPerRecipientDefault, messagesPerNetwork: null, logDays: limits.securityLogDaysDefault })
   assert.equal(messageBudgets(securityConfig({})).network, null, 'the network budget is off unless set')
-  assert.deepEqual(securityConfig({ AUTH_NEW_DEVICE_ALERTS: '0', AUTH_MESSAGES_PER_RECIPIENT: '3', AUTH_MESSAGES_PER_NETWORK: '100' }), { newDeviceAlerts: false, messagesPerRecipient: 3, messagesPerNetwork: 100 })
+  assert.deepEqual(securityConfig({ AUTH_NEW_DEVICE_ALERTS: '0', AUTH_MESSAGES_PER_RECIPIENT: '3', AUTH_MESSAGES_PER_NETWORK: '100' }), { newDeviceAlerts: false, messagesPerRecipient: 3, messagesPerNetwork: 100, logDays: limits.securityLogDaysDefault })
   for (const env of [{ AUTH_NEW_DEVICE_ALERTS: 'yes' }, { AUTH_MESSAGES_PER_RECIPIENT: '0' }, { AUTH_MESSAGES_PER_RECIPIENT: String(limits.messagesPerRecipientMax + 1) }, { AUTH_MESSAGES_PER_NETWORK: '1e3' }]) {
     assert.throws(() => securityConfig(env), JSON.stringify(env))
   }

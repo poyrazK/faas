@@ -144,6 +144,11 @@ func TestE2E_OrgLifecycle_HappyPath(t *testing.T) {
 		t.Fatalf("created org has wrong shape: %+v", created)
 	}
 	acmeID := created.ID
+	// A new organization starts on Free, which has no member seats and
+	// refuses invitations (ADR-20261127200000); give acme Hobby's seats.
+	if err := store.UpdateOrgPlan(ctx, acmeID, api.PlanHobby); err != nil {
+		t.Fatalf("UpdateOrgPlan acme: %v", err)
+	}
 
 	// 3. List orgs — alice should see personal + acme.
 	raw, status = doReq(t, h, aliceKey, http.MethodGet, "/v1/orgs", nil)

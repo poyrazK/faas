@@ -2,6 +2,7 @@ import { createHash, createPrivateKey, randomBytes, sign, timingSafeEqual } from
 import http from 'node:http'
 import { gotrue, limits } from './config.mjs'
 import { auditColumns, auditPage, auditReply, HTTPError, readJSON, sqlError } from './authz.mjs'
+import { activeHolds, securityEvents } from './securitylog.mjs'
 import { ssoRoute } from './sso.mjs'
 import { oauthRoute } from './oauth.mjs'
 import { emailRoute } from './emails.mjs'
@@ -56,7 +57,7 @@ export function requiredScope(method, parts) {
   if (parts[0] === 'oauth') return 'oauth-clients'
   if (parts[0] === 'service-accounts') return 'service-accounts'
   if (parts[0] === 'emails') return 'emails'
-  if (['users', 'signups', 'activity', 'orgs'].includes(parts[0])) return reads ? 'users:read' : 'users:write'
+  if (['users', 'signups', 'activity', 'security-events', 'orgs'].includes(parts[0])) return reads ? 'users:read' : 'users:write'
   return 'all'
 }
 
@@ -337,11 +338,13 @@ export async function adminRoute({ pool, admin, external, emails = {}, impersona
   if (user && parts.length === 2 && method === 'GET') {
     const response = await admin('GET', `/admin/users/${user}`)
     if (response.status !== 200) throw goTrueError(response)
-    const [organizations, [{ sessions }]] = await Promise.all([
+    // holds are the sign-in protection's holds on the user that still refuse.
+    const [organizations, [{ sessions }], holds] = await Promise.all([
       query('SELECT o.id, o.slug, o.name, m.role FROM gregale_auth.memberships m JOIN gregale_auth.organizations o ON o.id = m.org_id WHERE m.user_id = $1 ORDER BY o.slug LIMIT 500', [user]),
       query('SELECT count(*)::int AS sessions FROM auth.sessions WHERE user_id = $1 AND (not_after IS NULL OR not_after > now())', [user]),
+      activeHolds(query, user),
     ])
-    return [200, { user: userView(response.data), organizations, active_sessions: sessions }]
+    return [200, { user: userView(response.data), organizations, active_sessions: sessions, holds }]
   }
   if (user && parts[2] === 'claims' && parts.length === 3 && method === 'PATCH') {
     const current = await admin('GET', `/admin/users/${user}`)
@@ -372,6 +375,7 @@ export async function adminRoute({ pool, admin, external, emails = {}, impersona
   }
   if (user && parts.length === 2 && method === 'DELETE') return deleteUser({ pool, admin }, user)
   if (path === '/activity' && method === 'GET') return [200, await activity(query, url.searchParams)]
+  if (path === '/security-events' && method === 'GET') return [200, await securityEvents(query, url.searchParams)]
   if (path === '/orgs' && method === 'GET') {
     const { page, perPage, search } = pageParams(url.searchParams)
     const rows = await query(`SELECT o.id, o.slug, o.name, o.created_at, o.mfa_required, (SELECT count(*)::int FROM gregale_auth.memberships m WHERE m.org_id = o.id) AS members, count(*) OVER ()::int AS total

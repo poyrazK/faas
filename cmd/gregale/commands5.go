@@ -1313,13 +1313,22 @@ func cmdPlan(args []string) int {
 	if err != nil {
 		return printErr("Could not fetch account", err)
 	}
+	if org := client.ProjectOrganization(); org != "" {
+		// gregale --org <slug> billing plan: the client sends the change to
+		// the organization, so compare against the organization's plan.
+		current, err := client.GetOrg(context.Background(), org)
+		if err != nil {
+			return printErr("Could not fetch organization", err)
+		}
+		acct.Plan = current.Plan
+	}
 	if acct.Plan != "" && planRank[api.Plan(acct.Plan)] > planRank[target] && !*yes {
 		question := fmt.Sprintf("Downgrade from %s to %s: existing apps may exceed the new plan's limits. Continue?", acct.Plan, target)
 		if code := confirmYesNo(question, "--yes", "the plan downgrade"); code != 0 {
 			return code
 		}
 	}
-	updated, err := client.ChangePlan(context.Background(), string(target))
+	updated, response, err := changePlanFor(client, target)
 	if err != nil {
 		// 402 with a checkout / portal URL is not a failure: the provider
 		// must confirm the paid upgrade, and the URL is where the customer
@@ -1330,7 +1339,7 @@ func cmdPlan(args []string) int {
 			return renderPlanCheckoutHandoff(ae, target)
 		}
 		if errors.As(err, &ae) && ae.Problem.Code == api.CodeBillingSubscriptionEnding && !jsonOutput && acct.Plan != "" {
-			PrintWarn(osStderr, "Keep the subscription first: gregale billing plan %s", acct.Plan)
+			PrintWarn(osStderr, "Keep the subscription first: %s", billingPlanCommand(acct.Plan))
 		}
 		return printErr("Plan change failed", err)
 	}
@@ -1338,8 +1347,9 @@ func cmdPlan(args []string) int {
 		// The account as apid returned it: plan, plus plan_change_status,
 		// requested_plan and effective_at when the change is scheduled or
 		// a scheduled change was undone. Scripts branch on these instead
-		// of the human lines below.
-		return jsonOut(writeJSON(updated))
+		// of the human lines below. Under --org it is the organization's
+		// plan result (org_id, plan, ...), not an account.
+		return jsonOut(writeJSON(response))
 	}
 	if updated.PlanChangeStatus == "scheduled_change_undone" {
 		PrintOK(osStdout, "Kept the %s subscription: its scheduled cancellation or plan change was undone", updated.Plan)
@@ -1361,6 +1371,23 @@ func cmdPlan(args []string) int {
 	}
 	PrintOK(osStdout, "Plan changed to %s", updated.Plan)
 	return 0
+}
+
+// changePlanFor changes the personal account's plan, or under --org the
+// organization's (ADR-20261127200000). It returns the fields the human output
+// reads and the response as apid sent it, for --json.
+func changePlanFor(client *Client, target api.Plan) (api.AccountResponse, any, error) {
+	ctx := context.Background()
+	if org := client.ProjectOrganization(); org != "" {
+		res, err := client.ChangeOrgPlan(ctx, org, target)
+		if err != nil {
+			return api.AccountResponse{}, nil, err
+		}
+		return api.AccountResponse{Plan: string(res.Plan), PlanChangeStatus: res.PlanChangeStatus,
+			RequestedPlan: res.RequestedPlan, EffectiveAt: res.EffectiveAt}, res, nil
+	}
+	res, err := client.ChangePlan(ctx, string(target))
+	return res, res, err
 }
 
 // --- dashboard -------------------------------------------------------------
