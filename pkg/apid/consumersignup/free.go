@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"slices"
 	"time"
@@ -93,27 +94,42 @@ func (s *Service) freePlanProblem(ctx context.Context, app state.App, set state.
 // not check MCP OAuth tokens: only an enabled jwt rule with an MCP OAuth
 // resource policy tells the gateway who calls, so without one callers are
 // served but never become customers or metered (ADR-20261124094745).
+//
+// It applies only when enabled OAuth consumers are being turned on, so a
+// seller whose settings predate the check can still edit or pause them.
 func (s *Service) oauthGatewayProblem(ctx context.Context, app state.App, set state.APIConsumerSignupSettings) *api.Problem {
-	if !set.OAuthConsumers {
+	if !set.OAuthConsumers || !set.Enabled {
 		return nil
+	}
+	if signups, ok := s.Host.Store().(state.APIConsumerSignupStore); ok {
+		prior, err := signups.GetAPIConsumerSignupSettings(ctx, app.AccountID, app.ID)
+		if err == nil && prior.OAuthConsumers && prior.Enabled {
+			return nil
+		}
 	}
 	rules, err := s.Host.Store().ListEdgeRulesForApp(ctx, app.ID)
 	if err != nil {
+		slog.ErrorContext(ctx, "consumer sign-up: list edge rules for the OAuth consumer check", "app_id", app.ID, "err", err)
 		return api.ErrInternal("could not read the app's gateway rules")
 	}
-	if slices.ContainsFunc(rules, mcpOAuthGatewayRule) {
+	now := s.now()
+	if slices.ContainsFunc(rules, func(rule state.EdgeRule) bool { return mcpOAuthGatewayRule(rule, now) }) {
 		return nil
 	}
-	return api.NewProblem(http.StatusConflict, api.CodeValidation, "Gateway does not check this server's tokens",
+	return api.NewProblem(http.StatusConflict, api.CodeMCPGatewayPolicyMissing, "Gateway does not check this server's tokens",
 		"oauth_consumers needs Gregale to check the MCP server's OAuth tokens; deploy it with gregale mcp server deploy, "+
 			"or run gregale mcp policy --path DIR --name "+app.Slug)
 }
 
 // mcpOAuthGatewayRule reports whether rule checks MCP OAuth tokens at the
-// gateway: an enabled jwt rule with an MCP policy that is not consumer keys.
-func mcpOAuthGatewayRule(rule state.EdgeRule) bool {
+// gateway for every endpoint request: an enabled, unexpired jwt rule on /**
+// with no method or header conditions, whose MCP policy is not consumer
+// keys (the shape `gregale mcp policy` stores).
+func mcpOAuthGatewayRule(rule state.EdgeRule, now time.Time) bool {
 	jwt := rule.Action.JWT
-	return rule.Enabled && rule.Kind == state.EdgeRuleKindJWT && jwt != nil && jwt.MCP != nil && !jwt.MCP.ConsumerKey()
+	return rule.Enabled && rule.Kind == state.EdgeRuleKindJWT && jwt != nil && jwt.MCP != nil && !jwt.MCP.ConsumerKey() &&
+		(rule.ExpiresAt == nil || rule.ExpiresAt.After(now)) && rule.MatchPath == "/**" &&
+		len(rule.MatchMethods) == 0 && len(rule.MatchHeaders) == 0
 }
 
 // FreePlanCardProblem refuses a rate card that charges on the app's sign-up

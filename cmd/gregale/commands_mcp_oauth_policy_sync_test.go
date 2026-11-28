@@ -1,11 +1,13 @@
 package main_test
 
 // adr: 20261124094745 — a deployed external-oauth server gets its gateway
-// policy, so its OAuth callers can become customers; other modes and a
-// blocked policy write leave the rules alone.
+// policy, so its OAuth callers can become customers; other modes, a
+// guest-only audit, a deploy token the policy would refuse and a blocked
+// policy write leave the rules alone.
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -16,16 +18,41 @@ import (
 	"github.com/onebox-faas/faas/pkg/mcphosting"
 )
 
+const syncResource = "https://my-mcp.example/mcp"
+
+// unsignedJWT builds a token with header alg and claims; the sync checks
+// claims, never the signature.
+func unsignedJWT(alg string, claims map[string]any) string {
+	enc := func(v any) string { b, _ := json.Marshal(v); return base64.RawURLEncoding.EncodeToString(b) }
+	return enc(map[string]string{"alg": alg, "typ": "JWT"}) + "." + enc(claims) + ".sig"
+}
+
 func TestSyncExternalOAuthGatewayPolicy(t *testing.T) {
-	const resource = "https://my-mcp.example/mcp"
+	good := map[string]any{"iss": "https://issuer.example", "aud": syncResource, "sub": "seller", "exp": 4102444800, "scope": "mcp:tools"}
+	with := func(key string, value any) map[string]any {
+		out := map[string]any{}
+		for k, v := range good {
+			out[k] = v
+		}
+		out[key] = value
+		return out
+	}
 	for name, tc := range map[string]struct {
 		mode      string
+		token     string
+		audit     *main.MCPAccessAuditOptions
 		competing bool
 		writes    int
 	}{
-		"external-oauth":     {mode: mcphosting.AuthExternalOAuth, writes: 2},
-		"open":               {mode: mcphosting.AuthOpen},
-		"competing jwt rule": {mode: mcphosting.AuthExternalOAuth, competing: true},
+		"external-oauth":     {mode: mcphosting.AuthExternalOAuth, token: unsignedJWT("RS256", good), writes: 2},
+		"open":               {mode: mcphosting.AuthOpen, token: unsignedJWT("RS256", good)},
+		"competing jwt rule": {mode: mcphosting.AuthExternalOAuth, token: unsignedJWT("RS256", good), competing: true},
+		"guest-only audit":   {mode: mcphosting.AuthExternalOAuth, token: unsignedJWT("RS256", good), audit: &main.MCPAccessAuditOptions{AuthPlacement: "guest-only"}},
+		"reviewed algorithm": {mode: mcphosting.AuthExternalOAuth, token: unsignedJWT("RS256", good), audit: &main.MCPAccessAuditOptions{AuthPlacement: "gateway", Algorithms: []string{"ES256"}}},
+		"other algorithm":    {mode: mcphosting.AuthExternalOAuth, token: unsignedJWT("PS256", good)},
+		"other audience":     {mode: mcphosting.AuthExternalOAuth, token: unsignedJWT("RS256", with("aud", []string{"https://elsewhere.example"}))},
+		"missing scope":      {mode: mcphosting.AuthExternalOAuth, token: unsignedJWT("RS256", with("scope", "openid"))},
+		"audience list":      {mode: mcphosting.AuthExternalOAuth, token: unsignedJWT("ES256", with("aud", []string{"x", syncResource})), writes: 2},
 	} {
 		t.Run(name, func(t *testing.T) {
 			writes := 0
@@ -55,17 +82,17 @@ func TestSyncExternalOAuthGatewayPolicy(t *testing.T) {
 			}))
 			defer server.Close()
 			cfg := mcphosting.Config{Endpoint: "/mcp", Auth: mcphosting.AuthConfig{Mode: tc.mode, Issuer: "https://issuer.example",
-				JWKSURL: "https://issuer.example/jwks", Resource: resource, ToolScopes: mcphosting.ScopePolicy{}}}
+				JWKSURL: "https://issuer.example/jwks", Resource: syncResource, Scopes: []string{"mcp:tools"}, ToolScopes: mcphosting.ScopePolicy{}}}
 			if tc.mode == mcphosting.AuthOpen {
 				cfg.Auth = mcphosting.AuthConfig{Mode: tc.mode}
 			}
-			main.SyncExternalOAuthGatewayPolicy(context.Background(), main.NewClient(server.URL, "key"), ".", "my-mcp", cfg)
+			main.SyncExternalOAuthGatewayPolicy(context.Background(), main.NewClient(server.URL, "key"), ".", "my-mcp", cfg, tc.token, tc.audit)
 			if writes != tc.writes {
 				t.Fatalf("writes = %d, want %d", writes, tc.writes)
 			}
 			if tc.writes > 0 {
 				var action api.EdgeRuleJWTAction
-				if err := json.Unmarshal(stored, &action); err != nil || action.MCP == nil || action.MCP.Resource != resource || action.Issuer != "https://issuer.example" {
+				if err := json.Unmarshal(stored, &action); err != nil || action.MCP == nil || action.MCP.Resource != syncResource || action.Issuer != "https://issuer.example" {
 					t.Fatalf("stored policy = %s (%v)", stored, err)
 				}
 			}

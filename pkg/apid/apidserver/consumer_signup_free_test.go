@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
@@ -17,15 +18,63 @@ import (
 
 // seedMCPOAuthGatewayRule stores the jwt rule `gregale mcp server deploy`
 // adds for an external-oauth server, which OAuth consumers need.
-func seedMCPOAuthGatewayRule(t *testing.T, e apidserver.TestEnv, appID string) {
+func seedMCPOAuthGatewayRule(t *testing.T, e apidserver.TestEnv, appID string) string {
+	return seedMCPOAuthGatewayRuleExpiring(t, e, appID, nil)
+}
+
+func seedMCPOAuthGatewayRuleExpiring(t *testing.T, e apidserver.TestEnv, appID string, expires *time.Time) string {
 	t.Helper()
-	_, err := (*e.Store()).CreateEdgeRuleIfUnderQuota(t.Context(), state.CreateEdgeRuleParams{
+	rule, err := (*e.Store()).CreateEdgeRuleIfUnderQuota(t.Context(), state.CreateEdgeRuleParams{
 		AccountID: e.Acct().ID, AppID: appID, MatchHost: "search.gregale.app", MatchPath: "/**", Enabled: true, Kind: state.EdgeRuleKindJWT,
 		Action: state.EdgeRuleAction{Kind: state.EdgeRuleKindJWT, JWT: &state.EdgeRuleJWTAction{Issuer: "https://login.example",
 			JWKSURL: "https://login.example/jwks", MCP: &api.MCPResourcePolicy{Resource: "https://search.gregale.app/mcp"}}},
+		ExpiresAt: expires,
 	}, api.MustLimitsFor(api.PlanScale))
 	if err != nil {
 		t.Fatal(err)
+	}
+	return rule.ID
+}
+
+// adr: 20261124094745 — turning OAuth consumers on needs a live MCP OAuth
+// gateway rule; settings already on stay editable without one.
+func TestConsumerSignupOAuthConsumersNeedGatewayRule(t *testing.T) {
+	withBillingKeys(t)
+	e := apidserver.Setup(t, api.PlanHobby)
+	appID := apidserver.MustSeedApp(t, e, "search")
+	var free api.APIConsumerPlanResponse
+	if res := e.Do(t, http.MethodPost, "/v1/apps/search/consumer-plans", api.CreateAPIConsumerPlanRequest{Name: "free", MaxUnitsPerMonth: 100}, nil); res.Code != http.StatusCreated ||
+		json.Unmarshal(res.Body.Bytes(), &free) != nil {
+		t.Fatalf("plan: %d %s", res.Code, res.Body)
+	}
+	if res := e.Do(t, http.MethodPost, "/v1/apps/search/rate-cards", api.CreateAPIConsumerRateCardRequest{Currency: "USD", PlanID: free.ID}, nil); res.Code != http.StatusCreated {
+		t.Fatalf("rate card: %d %s", res.Code, res.Body)
+	}
+	put := func(enabled bool, name string) *httptest.ResponseRecorder {
+		return e.Do(t, http.MethodPut, "/v1/apps/search/consumer-signup", api.PutConsumerSignupRequest{Enabled: &enabled, DisplayName: name,
+			PlanIDs: []string{free.ID}, FreePlanID: free.ID, OAuthConsumers: true}, nil)
+	}
+	past := time.Now().Add(-time.Hour)
+	expired := seedMCPOAuthGatewayRuleExpiring(t, e, appID, &past)
+	if res := put(true, "Search"); res.Code != http.StatusConflict || !strings.Contains(res.Body.String(), api.CodeMCPGatewayPolicyMissing) {
+		t.Fatalf("expired rule only: %d %s", res.Code, res.Body)
+	}
+	// Paused settings call no one, so they need no rule.
+	if res := put(false, "Search"); res.Code != http.StatusOK {
+		t.Fatalf("paused: %d %s", res.Code, res.Body)
+	}
+	live := seedMCPOAuthGatewayRule(t, e, appID)
+	if res := put(true, "Search"); res.Code != http.StatusOK {
+		t.Fatalf("live rule: %d %s", res.Code, res.Body)
+	}
+	// Once on, the settings stay editable if the rule goes away.
+	for _, id := range []string{live, expired} {
+		if err := (*e.Store()).DeleteEdgeRule(t.Context(), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if res := put(true, "Search tools"); res.Code != http.StatusOK {
+		t.Fatalf("editing settings already on: %d %s", res.Code, res.Body)
 	}
 }
 

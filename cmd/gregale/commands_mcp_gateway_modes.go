@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -32,17 +34,83 @@ func mcpVerificationCredential(mode string) string {
 // knows who calls it: OAuth callers then become customers and are metered
 // (ADR-20261124094745). The server keeps checking tokens itself, so a
 // failure only warns; `gregale mcp policy` retries it.
-func syncExternalOAuthGatewayPolicy(ctx context.Context, c *Client, path, slug string, cfg mcphosting.Config) {
+//
+// The policy is stored only when the verified deploy token would pass it
+// (algorithm, issuer, audience, scopes), so it cannot start refusing the
+// server's callers. --access-audit guest-only keeps the gateway out, and a
+// reviewed --access-audit-algorithms list is the one stored.
+func syncExternalOAuthGatewayPolicy(ctx context.Context, c *Client, path, slug string, cfg mcphosting.Config, token string, audit *mcpAccessAuditOptions) {
 	if cfg.Auth.Mode != mcphosting.AuthExternalOAuth {
 		return
 	}
-	rule, err := applyMCPGatewayPolicy(ctx, c, slug, cfg, []string{"RS256", "ES256"})
-	if err != nil {
+	if audit != nil && audit.AuthPlacement == "guest-only" {
+		fmt.Fprintf(os.Stderr, "Gateway leaves token checks to the server (--access-audit guest-only); its OAuth callers cannot become customers\n")
+		return
+	}
+	algorithms := []string{"RS256", "ES256"}
+	if audit != nil && len(audit.Algorithms) != 0 {
+		algorithms = audit.Algorithms
+	}
+	warn := func(err error) {
 		fmt.Fprintf(os.Stderr, "warning: Gregale does not check this server's tokens (%v); callers are served but cannot become customers. "+
 			"Fix it, then run `gregale mcp policy --path %s --name %s`\n", err, path, slug)
+	}
+	if err := mcpTokenFitsGatewayPolicy(token, mcpExpectedGatewayAction(cfg, algorithms, c.BaseURL()), cfg.Auth.Scopes); err != nil {
+		warn(fmt.Errorf("the deploy token would not pass the gateway policy: %w", err))
+		return
+	}
+	rule, err := applyMCPGatewayPolicy(ctx, c, slug, cfg, algorithms)
+	if err != nil {
+		warn(err)
 		return
 	}
 	fmt.Fprintf(os.Stderr, "Gateway checks OAuth tokens for %s (edge rule %s)\n", slug, rule.ID)
+}
+
+// mcpTokenFitsGatewayPolicy reports why token, which the server accepted,
+// would fail the gateway policy's checks: algorithm, issuer, audience,
+// exp/sub and endpoint scopes. The signature is not checked here; the
+// server's acceptance and the gateway's JWKS check cover it.
+func mcpTokenFitsGatewayPolicy(token string, action api.EdgeRuleJWTAction, scopes []string) error {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return errors.New("not a JWT")
+	}
+	var header struct {
+		Alg string `json:"alg"`
+	}
+	var claims struct {
+		Iss   string          `json:"iss"`
+		Sub   string          `json:"sub"`
+		Exp   json.Number     `json:"exp"`
+		Aud   json.RawMessage `json:"aud"`
+		Scope string          `json:"scope"`
+	}
+	for i, out := range []any{&header, &claims} {
+		raw, err := base64.RawURLEncoding.DecodeString(parts[i])
+		if err != nil || json.Unmarshal(raw, out) != nil {
+			return errors.New("not a JWT")
+		}
+	}
+	var audiences []string
+	if json.Unmarshal(claims.Aud, &audiences) != nil {
+		var one string
+		_ = json.Unmarshal(claims.Aud, &one)
+		audiences = []string{one}
+	}
+	switch {
+	case !slices.Contains(action.Algorithms, header.Alg):
+		return fmt.Errorf("it is signed with %s, not one of %s", header.Alg, strings.Join(action.Algorithms, ","))
+	case action.Issuer != "" && claims.Iss != action.Issuer:
+		return fmt.Errorf("its issuer %q is not %q", claims.Iss, action.Issuer)
+	case len(action.Audience) != 0 && !slices.ContainsFunc(audiences, func(a string) bool { return slices.Contains(action.Audience, a) }):
+		return fmt.Errorf("its audience %v is not %v", audiences, action.Audience)
+	case claims.Sub == "" || claims.Exp == "":
+		return errors.New("it has no sub or exp claim")
+	case !api.MCPHasScopes(scopes, strings.Fields(claims.Scope)):
+		return fmt.Errorf("its scope %q lacks %v", claims.Scope, scopes)
+	}
+	return nil
 }
 
 // requireMCPGatewayPolicy refuses to deploy an api-key or oauth-proxy server
