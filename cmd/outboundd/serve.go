@@ -30,12 +30,15 @@ type aiCallDrainer interface {
 // (ADR-20261128150000).
 type cacheSnapshotter interface {
 	WriteCacheSnapshot(dir string, now time.Time) (int, error)
+	DropCaches()
 }
 
 // watchHandoffs starts a successor on each SIGUSR2 until one serves, then
-// calls handedOff and closes the returned channel. The caches are written
-// first, so the successor loads them before it serves; a failed hand-off
-// deletes them and this generation keeps serving.
+// drops this generation's caches, calls handedOff and closes the returned
+// channel. The caches are written once the hand-off's memory check has
+// passed, so their tmpfs file does not use up the headroom it measures, and
+// before the successor starts, so it loads them before it serves. A failed
+// hand-off deletes them and this generation keeps serving.
 func watchHandoffs(ctx context.Context, caches cacheSnapshotter, cacheDir string, log *slog.Logger, handedOff func()) <-chan struct{} {
 	done := make(chan struct{})
 	requests := wire.HandoffRequests(ctx)
@@ -46,16 +49,22 @@ func watchHandoffs(ctx context.Context, caches cacheSnapshotter, cacheDir string
 				return
 			case <-requests:
 			}
-			if n, err := caches.WriteCacheSnapshot(cacheDir, time.Now()); err != nil {
-				log.Warn("outboundd: cache snapshot for the successor failed; it starts with empty caches", "err", err)
-			} else if n > 0 {
-				log.Info("outboundd: wrote caches for the successor", "responses", n)
+			prepare := func() {
+				if n, err := caches.WriteCacheSnapshot(cacheDir, time.Now()); err != nil {
+					log.Warn("outboundd: cache snapshot for the successor failed; it starts with empty caches", "err", err)
+				} else if n > 0 {
+					log.Info("outboundd: wrote caches for the successor", "responses", n)
+				}
 			}
-			if _, err := wire.Handoff(ctx, wire.HandoffOptions{Log: log}); err != nil {
+			if _, err := wire.Handoff(ctx, wire.HandoffOptions{Log: log, Prepare: prepare}); err != nil {
 				outbound.RemoveCacheSnapshot(cacheDir)
 				log.Warn("outboundd: hand-off failed; this generation keeps serving", "err", err)
 				continue
 			}
+			// The successor holds the same entries; keeping a second copy
+			// through a drain of up to 30 minutes would double the unit's
+			// cache memory and could refuse the next hand-off.
+			caches.DropCaches()
 			close(done)
 			handedOff()
 			return

@@ -2,6 +2,7 @@ package apidserver_test
 
 import (
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -84,7 +85,7 @@ func TestCapabilitiesFollowRuntimeGates(t *testing.T) {
 func TestAIAccessTokensFollowThePublicHost(t *testing.T) {
 	for _, on := range []bool{true, false} {
 		var response api.CapabilitiesResponse
-		if err := json.Unmarshal(apidserver.CapabilitiesWithAIAccessTokenHost(on).Body.Bytes(), &response); err != nil {
+		if err := json.Unmarshal(apidserver.CapabilitiesWithAIAccessTokenHost(on, api.PlanScale).Body.Bytes(), &response); err != nil {
 			t.Fatal(err)
 		}
 		found := false
@@ -106,5 +107,27 @@ func TestAIAccessTokensFollowThePublicHost(t *testing.T) {
 		if !found {
 			t.Fatal("ai-access-tokens missing from the capability list")
 		}
+	}
+
+	// A plan that excludes the gateway is told so, not that the host is off.
+	var free api.CapabilitiesResponse
+	if err := json.Unmarshal(apidserver.CapabilitiesWithAIAccessTokenHost(false, api.PlanFree).Body.Bytes(), &free); err != nil {
+		t.Fatal(err)
+	}
+	for _, capability := range free.Capabilities {
+		if capability.Key == "ai-access-tokens" && capability.UnavailableReason != api.CapabilityUnavailableRuntime &&
+			strings.Contains(capability.UnavailableDetail, "public host") {
+			t.Errorf("free plan: reason %q but detail %q blames the host", capability.UnavailableReason, capability.UnavailableDetail)
+		}
+	}
+
+	// Creating a token is refused while the host is off: it would have
+	// nowhere to be used.
+	if recorder, reached := apidserver.CreateAIAccessTokenWithHost(false); reached || recorder.Code != http.StatusForbidden ||
+		!strings.Contains(recorder.Body.String(), "public host") {
+		t.Errorf("host off: create reached %t, status %d, body %s", reached, recorder.Code, recorder.Body.String())
+	}
+	if _, reached := apidserver.CreateAIAccessTokenWithHost(true); !reached {
+		t.Error("host on: create did not reach the handler")
 	}
 }

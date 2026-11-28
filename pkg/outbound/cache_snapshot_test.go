@@ -45,6 +45,11 @@ func TestCacheSnapshotCarriesEntriesToTheNextGeneration(t *testing.T) {
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("snapshot = %v, %v; want a 0600 file (it holds provider responses and the key secret)", info, err)
 	}
+	// A handed-off generation drops its copy while it drains.
+	old.DropCaches()
+	if old.responseCache.has(key) || old.semanticIndex.lru.Len() != 0 || old.semanticIndex.bytes != 0 {
+		t.Fatal("DropCaches left entries in the old generation")
+	}
 
 	next := snapshotTestHandler(t)
 	if n, err := next.LoadCacheSnapshot(dir, now.Add(time.Second)); err != nil || n != 1 {
@@ -120,13 +125,26 @@ func TestCacheSnapshotIgnoresStaleOrForeignSnapshots(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, cacheSnapshotFile)); !os.IsNotExist(err) {
 		t.Fatalf("corrupt snapshot left on disk: %v", err)
 	}
+	// A truncated one (the header promises entries that never follow) too.
+	header := cacheSnapshotHeader{Version: cacheSnapshotVersion, WrittenAt: now, Responses: 3}
+	file, err := os.Create(filepath.Join(dir, cacheSnapshotFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := gob.NewEncoder(file).Encode(&header); err != nil {
+		t.Fatal(err)
+	}
+	_ = file.Close()
+	if n, err := h.LoadCacheSnapshot(dir, now); err == nil || n != 0 {
+		t.Fatalf("truncated snapshot = %d, %v; want an error", n, err)
+	}
 }
 
 func rewriteSnapshotVersion(t *testing.T, dir string, version int) {
 	t.Helper()
 	h := snapshotTestHandler(t)
-	snapshot := cacheSnapshot{Version: version, WrittenAt: time.Now()}
-	snapshot.Secret, snapshot.Responses = h.responseCache.export(time.Now())
+	snapshot := cacheSnapshotHeader{Version: version, WrittenAt: time.Now()}
+	snapshot.Secret, _ = h.responseCache.export(time.Now())
 	file, err := os.Create(filepath.Join(dir, cacheSnapshotFile))
 	if err != nil {
 		t.Fatal(err)

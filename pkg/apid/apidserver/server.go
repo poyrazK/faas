@@ -4537,7 +4537,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/outbound/ai-prompts/{prompt}/evaluations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.CreatePromptEvaluation)))))
 	mux.HandleFunc("GET /v1/outbound/ai-prompts/{prompt}/evaluations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListPromptEvaluations)))))
 	mux.HandleFunc("GET /v1/outbound/ai-prompt-evaluations/{evaluation}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetPromptEvaluation)))))
-	mux.HandleFunc("POST /v1/apps/{slug}/ai-access-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.CreateAccessToken)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/ai-access-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.aiAccessTokenHost(s.outboundAI.CreateAccessToken))))))
 	mux.HandleFunc("GET /v1/apps/{slug}/ai-access-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListAccessTokens)))))
 	// ADR 20261022153155: an app's AI calls by deployment.
 	mux.HandleFunc("GET /v1/apps/{slug}/ai-deployments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListDeployments)))))

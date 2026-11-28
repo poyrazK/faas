@@ -2466,12 +2466,23 @@ func CapabilitiesWithRuntimeGates(appTasks, tcp, udp bool) *httptest.ResponseRec
 	return recorder
 }
 
-// CapabilitiesWithAIAccessTokenHost runs GET /v1/capabilities for a Scale
-// account with the AI gateway's public host on or off.
-func CapabilitiesWithAIAccessTokenHost(enabled bool) *httptest.ResponseRecorder {
+// CapabilitiesWithAIAccessTokenHost runs GET /v1/capabilities for an
+// account on plan with the AI gateway's public host on or off.
+func CapabilitiesWithAIAccessTokenHost(enabled bool, plan api.Plan) *httptest.ResponseRecorder {
 	recorder := httptest.NewRecorder()
-	(&server{}).WithAIAccessTokenHostEnabled(enabled).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanScale})
+	(&server{}).WithAIAccessTokenHostEnabled(enabled).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: plan})
 	return recorder
+}
+
+// CreateAIAccessTokenWithHost runs the token-creation host gate with the AI
+// gateway's public host on or off and reports whether it let the request
+// through to the handler.
+func CreateAIAccessTokenWithHost(enabled bool) (*httptest.ResponseRecorder, bool) {
+	recorder := httptest.NewRecorder()
+	reached := false
+	gate := (&server{}).WithAIAccessTokenHostEnabled(enabled).aiAccessTokenHost(func(http.ResponseWriter, *http.Request, state.Account) { reached = true })
+	gate(recorder, httptest.NewRequest(http.MethodPost, "/v1/apps/a/ai-access-tokens", nil), state.Account{Plan: api.PlanScale})
+	return recorder, reached
 }
 
 func CapabilitiesWithWorkloadVerifier(verifier *workloadidentity.Verifier) *httptest.ResponseRecorder {

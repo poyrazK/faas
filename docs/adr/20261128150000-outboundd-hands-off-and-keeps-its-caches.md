@@ -47,8 +47,14 @@ platform Valkey, and to keep preview deployments outside the gateway.
 3. **The caches cross restarts and hand-offs as one snapshot** in the unit's
    private runtime directory, `/run/faas-outboundd` (tmpfs, mode 0700,
    `RuntimeDirectoryPreserve=restart`, `FAAS_OUTBOUNDD_CACHE_SNAPSHOT_DIR`):
-   - a hand-off writes it before starting the successor, which loads and
-     deletes it before it serves; a failed hand-off deletes it;
+   - a hand-off writes it once the hand-off's cgroup memory check has passed
+     (`wire.HandoffOptions.Prepare`), so the tmpfs file does not use up the
+     headroom the check measures, and before starting the successor, which
+     loads and deletes it before it serves; a failed hand-off deletes it;
+   - once the successor serves, the old generation drops its own caches
+     (`Handler.DropCaches`) rather than hold a second copy through its drain;
+   - the file is a header followed by one gob value per entry, so writing it
+     never buffers a second copy of the whole cache;
    - a plain stop writes it after its drain, and the next start loads it;
    - the snapshot holds the response cache's key secret (keys are HMACs
      under it), its live entries in LRU order and the semantic index entries
@@ -59,6 +65,10 @@ platform Valkey, and to keep preview deployments outside the gateway.
 4. **MemoryMax rises from 256M to 512M**: two generations share the unit's
    cgroup during a hand-off, and the snapshot (at most ~96 MB: 32 MB of
    responses, 64 MB of semantic index) is tmpfs charged to it until loaded.
+5. **AI access tokens follow the public host.** apid lists `ai-access-tokens`
+   as `runtime_unavailable` and refuses creating one while the edge does not
+   serve the AI gateway's public host (`FAAS_AI_ACCESS_TOKEN_HOST_ENABLED`);
+   a plan denial keeps its own reason and detail.
 
 ## Consequences
 

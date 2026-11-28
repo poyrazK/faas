@@ -28,6 +28,8 @@ func (f *fakeGeneration) WriteCacheSnapshot(string, time.Time) (int, error) {
 	return 1, nil
 }
 
+func (f *fakeGeneration) DropCaches() {}
+
 func (f *fakeGeneration) EndAICalls() { f.endOnce.Do(func() { close(f.ended) }) }
 
 // DrainAICalls stands for AI calls that run until ended or the drain ends.

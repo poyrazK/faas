@@ -108,7 +108,7 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 		applyCapabilityRuntimeAvailability(&capabilities.Capabilities[i], available)
 		// Name the host only when it is what is missing; a preview flag that
 		// is off keeps the generic detail.
-		if c := &capabilities.Capabilities[i]; c.Key == "ai-access-tokens" && !c.Enabled && !s.aiAccessTokenHostEnabled {
+		if c := &capabilities.Capabilities[i]; c.Key == "ai-access-tokens" && c.UnavailableReason == api.CapabilityUnavailableRuntime && !s.aiAccessTokenHostEnabled {
 			c.UnavailableDetail = aiAccessTokenHostOffDetail
 		}
 	}

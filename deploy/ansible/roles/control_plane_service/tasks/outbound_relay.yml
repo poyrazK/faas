@@ -6,6 +6,11 @@
 # stays valid for 30 days or more, so this is also its renewal. outboundd
 # refuses to start the relay without the workload-identity JWKS, so the play
 # stops here instead of the daemon crash-looping.
+# The 'restart faas-outboundd' handler runs faas-reload-or-restart, and
+# pki_renew reaches it through this file without the role's main.yml.
+- name: control_plane_service — install the reload-or-restart helper for outboundd
+  ansible.builtin.include_tasks: ../../_shared/tasks/reload_or_restart_helper.yml
+
 - name: control_plane_service — inspect the workload-identity JWKS for the outbound relay (ADR-989)
   ansible.builtin.stat:
     path: "{{ faas_workload_jwks_path }}"
