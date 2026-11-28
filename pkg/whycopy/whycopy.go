@@ -28,6 +28,7 @@ package whycopy
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -76,6 +77,13 @@ const (
 type ProjectServiceModeConflict struct {
 	Service  string
 	Conflict api.ExecutionModeConflict
+}
+
+// SnapshotCaptureTimeout is the observed value for a
+// CodeStageSnapshotPrepareTimeout whose app booted and passed its health
+// check, and whose first snapshot capture then ran out of its budget.
+type SnapshotCaptureTimeout struct {
+	Budget time.Duration
 }
 
 // catalog is the static explanation table. Order does not matter;
@@ -309,6 +317,14 @@ var catalog = map[string]Render{
 		Hint:  "the snapshot_prepare stage exceeded the scheduler's wall-clock ceiling",
 		Why:   "snapshot_prepare boots the generated guest, waits for its handler, and captures the first snapshot; the scheduler deadline elapsed before vmmd completed that sequence",
 		Fix:   "• check `gregale logs <slug>` for how far startup got\n• if your app needs longer to start, raise `startup_deadline_s` in gregale.yaml (or `--startup-deadline-s` on deploy)\n• otherwise retry once in case the node was saturated; include the deployment id in a support report if it repeats",
+		Observed: func(observed any) (why, fix string) {
+			capture, ok := observed.(SnapshotCaptureTimeout)
+			if !ok {
+				return "", ""
+			}
+			return fmt.Sprintf("your app started and passed its health check; saving its first snapshot (its memory and app layer) then took longer than the %s capture budget. This is a platform limit, not your app's startup time", capture.Budget),
+				"• retry the deployment once; include the deployment id in a support report if it repeats\n• a smaller image shortens the capture\n• raising `startup_deadline_s` does not help here: the app had already started"
+		},
 	},
 	api.CodeBeforeCheckpointFailed: {
 		Title: "Before checkpoint callback failed",
@@ -343,6 +359,11 @@ var catalog = map[string]Render{
 		Hint: "your new release failed a required check in gregale.verify.yaml",
 		Why:  "before taking traffic Gregale ran the app's verification contract against the new release; a required check failed or could not run, so the release was not promoted and the previous one keeps serving",
 		Fix:  "• run `gregale deployment <id> --json` and read hosting_receipt.smoke.verification_contract for the failing check\n• fix the app or the check, then deploy again\n• mark a check `advisory: true` to report it without blocking",
+	},
+	api.CodeMCPContractBreaking: {
+		Hint: "your new release breaks the MCP tools your paying customers rely on",
+		Why:  "the MCP server has a published listing, so before taking traffic Gregale compared the new release's tools with the contract the listing promised; a tool was removed or its input narrowed, so the release was not promoted and the previous one keeps serving",
+		Fix:  "• run `gregale deployment <id> --json` and read hosting_receipt.smoke.mcp_contract for the breaking changes\n• keep the old tool or argument working, or make the new argument optional\n• to ship the break on purpose: `gregale mcp server deploy --allow-breaking --reason \"...\"`; customers are told through mcp.contract.changed and the listing's changelog",
 	},
 	api.CodeImageNotFound: {
 		Hint: "the container image you asked for could not be pulled",

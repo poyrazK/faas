@@ -26,3 +26,19 @@ func TestCreateAppTaskRequestResolveRejectsOversizedCommand(t *testing.T) {
 		t.Fatalf("oversized command problem = %+v", problem)
 	}
 }
+
+func TestAppTaskCommandLineQuotesWhatRan(t *testing.T) {
+	for _, tc := range []struct {
+		task AppTaskResponse
+		want string
+	}{
+		{AppTaskResponse{Command: []string{"sh", "-c", "echo a; rm b"}}, `sh -c 'echo a; rm b'`},
+		{AppTaskResponse{Command: []string{"bin/migrate", "--to=head"}}, `bin/migrate --to=head`},
+		{AppTaskResponse{Command: []string{"echo", "it's", ""}}, `echo 'it'"'"'s' ''`},
+		{AppTaskResponse{Command: []string{"echo a; rm b"}, CommandShell: true}, `echo a; rm b`},
+	} {
+		if got := tc.task.CommandLine(); got != tc.want {
+			t.Errorf("CommandLine(%q) = %s, want %s", tc.task.Command, got, tc.want)
+		}
+	}
+}

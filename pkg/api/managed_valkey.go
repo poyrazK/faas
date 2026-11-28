@@ -27,13 +27,6 @@ const (
 	// ManagedValkeyImage only a release after it joined that list.
 	ManagedValkeyImage = "docker.io/valkey/valkey@sha256:9971099af41c36e887aabdfe22b80c0fe45df949163dfc9cb434febc57cfc3fc"
 
-	// managedValkeyImage814 is valkey/valkey:8.1.4-alpine, which caches
-	// created before 8.1.12 keep until their next handoff (`gregale redis
-	// update`, resize or eviction-policy change) moves them. It
-	// stays accepted until no cache deployment runs it (the query is in
-	// ADR-20261116192126).
-	managedValkeyImage814 = "docker.io/valkey/valkey@sha256:e706d1213aaba6896c162bb6a3a9e1894e1a435f28f8f856d14fab2e10aa098b"
-
 	// ManagedValkeyPort is the port a cache listens on at its service address.
 	ManagedValkeyPort = 6379
 
@@ -71,7 +64,7 @@ const (
 // and an eviction-policy change all deploy ManagedValkeyImage. Remove an
 // image only once no cache deployment runs it (the query is in
 // ADR-20261116192126).
-var managedValkeyImages = []string{ManagedValkeyImage, managedValkeyImage814}
+var managedValkeyImages = []string{ManagedValkeyImage}
 
 // ManagedValkeyImages returns a copy of the images a cache may run.
 func ManagedValkeyImages() []string {
@@ -323,6 +316,9 @@ type RedisCache struct {
 	Port           int       `json:"port"`
 	Status         string    `json:"status"`
 	CreatedAt      time.Time `json:"created_at"`
+	// BoundApps are the apps bound to the cache, sorted. Only GET
+	// /v1/redis/{name} fills it.
+	BoundApps []string `json:"bound_apps,omitempty"`
 }
 
 // CreateRedisCacheRequest is POST /v1/redis.

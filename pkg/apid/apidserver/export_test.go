@@ -264,6 +264,7 @@ const RequestAnalyticsRouteMaxLength = requestAnalyticsRouteMaxLength
 const RouteCostByRequestTime = routeCostByRequestTime
 const RouteCostByRequests = routeCostByRequests
 const RuntimeConfigAppNameBlocklist = runtimeConfigAppNameBlocklist
+const RuntimeConfigAppTaskConcurrency = runtimeConfigAppTaskConcurrency
 const RuntimeConfigDataPlacement = runtimeConfigDataPlacement
 const RuntimeConfigDomainDoctor = runtimeConfigDomainDoctor
 const RuntimeConfigDomainDoctorTTL = runtimeConfigDomainDoctorTTL
@@ -2463,6 +2464,14 @@ func CapabilitiesWithInstallationGates(crashSnapshots, forks, profiling bool) *h
 func CapabilitiesWithRuntimeGates(appTasks, tcp, udp bool) *httptest.ResponseRecorder {
 	recorder := httptest.NewRecorder()
 	(&server{}).WithAppTaskAPIEnabled(appTasks).WithListenersEnabled(tcp, udp).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanPro})
+	return recorder
+}
+
+// CapabilitiesWithAppTaskGates runs GET /v1/capabilities for a Pro account
+// with the app-task API and interactive-session gates set.
+func CapabilitiesWithAppTaskGates(appTasks, interactive bool) *httptest.ResponseRecorder {
+	recorder := httptest.NewRecorder()
+	(&server{}).WithAppTaskAPIEnabled(appTasks).WithInteractiveAppTasksEnabled(interactive).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanPro})
 	return recorder
 }
 

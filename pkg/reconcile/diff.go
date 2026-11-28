@@ -301,6 +301,9 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, availa
 	if a.Manifest.DockerfileBuild.SHA256() != w.DockerfileBuild.SHA256() {
 		changed = append(changed, "dockerfile_build")
 	}
+	if a.Manifest.BuildComposeContext != composeBuildContext(w) {
+		changed = append(changed, "build_compose_context")
+	}
 	if a.Manifest.BuildGoCommand != w.GoCommand {
 		changed = append(changed, "go_command")
 	}

@@ -53,6 +53,10 @@ func agentRunConfigFromEnv(getenv func(string) string) sched.AgentRunConfig {
 		}
 		// ADR-20261027090013 §12: warm session snapshots, off unless asked.
 		cfg.SandboxSnapshots = strings.TrimSpace(getenv("FAAS_SCHEDD_SANDBOX_SNAPSHOTS")) == "1"
+		// ADR-20261122132055 §5: the agent-pool nodes that take large shapes.
+		if large := strings.TrimSpace(getenv("FAAS_SCHEDD_SANDBOX_LARGE_NODES")); large != "" {
+			cfg.LargeNodes = strings.Split(large, ",")
+		}
 
 	}
 	return cfg

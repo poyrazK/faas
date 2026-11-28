@@ -50,6 +50,12 @@ func (f *taskFixture) serve(w http.ResponseWriter, r *http.Request) {
 		f.created = append(f.created, req)
 		f.keys = append(f.keys, r.Header.Get("Idempotency-Key"))
 		_ = json.NewEncoder(w).Encode(api.AppTaskResponse{ID: "task-1", AppID: f.base.app.ID, DeploymentID: "dep-1", Status: api.AppTaskStatusQueued, Command: req.Command})
+	case r.URL.Path == "/v1/apps/alpha/tasks" && r.Method == http.MethodGet:
+		exit := 1
+		_ = json.NewEncoder(w).Encode(api.AppTaskListResponse{Tasks: []api.AppTaskResponse{
+			{ID: "task-2", AppID: f.base.app.ID, Kind: api.AppTaskKindRelease, Status: api.AppTaskStatusFailed, ExitCode: &exit, StdoutTail: "secret output", Command: []string{"migrate"}},
+			{ID: "task-other", AppID: "another-app", Status: api.AppTaskStatusSucceeded},
+		}, Limit: 2, NextOffset: 2})
 	case r.URL.Path == "/v1/apps/alpha/tasks/task-1":
 		f.tmu.Lock()
 		defer f.tmu.Unlock()
@@ -139,5 +145,24 @@ func TestCommandRunRedactsCredentialLines(t *testing.T) {
 	stdout := view["stdout_tail"].(string)
 	if strings.Contains(stdout, "sk_live") || !strings.Contains(stdout, "PATH=/usr/bin") || !strings.Contains(stdout, "[redacted: ") || view["redacted_lines"] != 1 || view["exit_code"] != 0 {
 		t.Fatalf("view = %+v", view)
+	}
+}
+
+func TestListCommandRunsOmitsOutputAndOtherApps(t *testing.T) {
+	m, _ := newTaskFixture(t)
+	if _, err := m.listCommandRuns(t.Context(), listCommandRunsArgs{App: "alpha", Limit: 51}); err == nil {
+		t.Fatal("limit 51 accepted")
+	}
+	out, err := m.listCommandRuns(t.Context(), listCommandRunsArgs{App: "alpha", Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := out.(map[string]any)
+	runs := view["runs"].([]map[string]any)
+	if len(runs) != 1 || runs[0]["task_id"] != "task-2" || runs[0]["exit_code"] != 1 || runs[0]["kind"] != api.AppTaskKindRelease || view["next_offset"] != 2 {
+		t.Fatalf("view = %+v", view)
+	}
+	if _, ok := runs[0]["stdout_tail"]; ok {
+		t.Fatal("list must not carry output; gregale_get_command_run redacts it")
 	}
 }

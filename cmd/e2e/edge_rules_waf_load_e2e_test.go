@@ -23,6 +23,10 @@ package e2e_test
 // skipped. FAAS_E2E_WAF_LOAD_STRICT=1 also releases
 // edge_waf_strict_inspection, so the wider in-path rule set of ADR-831
 // amendment 21 is measured instead of the baseline set.
+// FAAS_E2E_WAF_LOAD_BODY=1 sends POSTs with JSON and form bodies instead
+// (wafLoadBodyCorpus) and releases edge_waf_strict_inspection and
+// edge_waf_inline_body, so the in-path check also scores each body's first
+// 2 KiB (ADR-831 amendment 22).
 
 import (
 	"bufio"
@@ -56,6 +60,8 @@ type wafLoadRequest struct {
 	path   string
 	header map[string]string
 	attack bool
+	// body, when set, is POSTed with header's Content-Type.
+	body string
 }
 
 // wafLoadCorpus is header and URI traffic shaped like real requests: browser
@@ -92,6 +98,52 @@ func wafLoadCorpus() (benign, attacks []wafLoadRequest) {
 	return benign, attacks
 }
 
+// wafLoadBodyCorpus is API traffic with bodies: JSON of 10-40 small fields
+// (the cost model's expensive case), a form post, a body past the 2 KiB
+// in-path bound, and attacks that are only in the body.
+func wafLoadBodyCorpus() (benign, attacks []wafLoadRequest) {
+	jsonHeader := map[string]string{
+		"User-Agent":    "Go-http-client/1.1",
+		"Accept":        "application/json",
+		"Content-Type":  "application/json",
+		"Authorization": "Bearer eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyXzQyIn0.dGhpc2lzYXNpZ25hdHVyZQ",
+	}
+	formHeader := map[string]string{
+		"User-Agent":   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+		"Content-Type": "application/x-www-form-urlencoded",
+	}
+	fields := func(n int) string {
+		var b strings.Builder
+		b.WriteString("{")
+		for i := range n {
+			if i > 0 {
+				b.WriteString(",")
+			}
+			fmt.Fprintf(&b, `"field_%d":"value %d for the account"`, i, i)
+		}
+		b.WriteString("}")
+		return b.String()
+	}
+	order := `{"customer":{"id":"cus_42","email":"ada@example.test","name":"Ada Lovelace"},` +
+		`"items":[{"sku":"A-100","qty":2,"price_cents":1299},{"sku":"B-7","qty":1,"price_cents":499}],` +
+		`"shipping":{"line1":"1 Main St","city":"Springfield","postcode":"12345","country":"US"},"note":"leave at the door"}`
+	benign = []wafLoadRequest{
+		{path: "/api/orders", header: jsonHeader, body: order},
+		{path: "/api/events", header: jsonHeader, body: fields(10)},
+		{path: "/api/profile", header: jsonHeader, body: fields(25)},
+		{path: "/api/import", header: jsonHeader, body: fields(40)},
+		{path: "/api/upload", header: jsonHeader, body: `{"name":"report.csv","data":"` + strings.Repeat("a1b2c3d4", 1024) + `"}`},
+		{path: "/login", header: formHeader, body: "username=ada&password=correct+horse+battery+staple&remember=on&next=%2Fdashboard"},
+	}
+	attacks = []wafLoadRequest{
+		{path: "/api/items", header: jsonHeader, body: `{"q":"1' OR 1=1-- ","page":2}`, attack: true},
+		{path: "/api/comments", header: jsonHeader, body: `{"text":"<script>alert(document.cookie)</script>"}`, attack: true},
+		{path: "/api/files", header: jsonHeader, body: `{"path":"../../../etc/passwd"}`, attack: true},
+		{path: "/comment", header: formHeader, body: "text=%3Cscript%3Ealert(1)%3C%2Fscript%3E&post=7", attack: true},
+	}
+	return benign, attacks
+}
+
 func TestEdgeWAFInlineLoad_E2E(t *testing.T) {
 	if os.Getenv("FAAS_E2E_WAF_LOAD") != "1" {
 		t.Skip("set FAAS_E2E_WAF_LOAD=1 to load gatewayd-internal's in-path WAF check")
@@ -114,8 +166,12 @@ func TestEdgeWAFInlineLoad_E2E(t *testing.T) {
 	}
 	h := e2etest.StartWithEnv(t, pool, e2etest.APID|e2etest.Gatewayd, nil)
 	releaseEdgeFeatures(t, pool)
-	strict := os.Getenv("FAAS_E2E_WAF_LOAD_STRICT") == "1"
-	if strict {
+	bodies := os.Getenv("FAAS_E2E_WAF_LOAD_BODY") == "1"
+	strict := os.Getenv("FAAS_E2E_WAF_LOAD_STRICT") == "1" || bodies
+	switch {
+	case bodies:
+		releasePlatformFlags(t, pool, []string{platformflags.EdgeWAFStrictInspection, platformflags.EdgeWAFInlineBody}, "waf load e2e")
+	case strict:
 		releasePlatformFlags(t, pool, []string{platformflags.EdgeWAFStrictInspection}, "waf load e2e")
 	}
 	key := h.SeedAccount(ctx, api.PlanPro)
@@ -129,6 +185,9 @@ func TestEdgeWAFInlineLoad_E2E(t *testing.T) {
 		},
 	}
 	benign, attacks := wafLoadCorpus()
+	if bodies {
+		benign, attacks = wafLoadBodyCorpus()
+	}
 	// The first check compiles the in-path rule set; warm it and the
 	// connection pool up before measuring.
 	got := driveWAFLoad(t, client, h.EdgeURL(), hosts, benign, attacks, 100, 3*time.Second)
@@ -137,8 +196,8 @@ func TestEdgeWAFInlineLoad_E2E(t *testing.T) {
 			mode, got.attacksWarned, got.attacks, got.benignWarned, got.statuses)
 	}
 	gatewayPID := childPID(t, "gatewayd-internal")
-	t.Logf("in-path WAF load: %d apps, WAF mode %s, strict inspection %v, %ds per rate, gatewayd-internal pid %d, test GOMAXPROCS %d",
-		apps, mode, strict, seconds, gatewayPID, runtime.GOMAXPROCS(0))
+	t.Logf("in-path WAF load: %d apps, WAF mode %s, strict inspection %v, bodies %v, %ds per rate, gatewayd-internal pid %d, test GOMAXPROCS %d",
+		apps, mode, strict, bodies, seconds, gatewayPID, runtime.GOMAXPROCS(0))
 	for _, rate := range rates {
 		before, cpuBefore := scrapeWAFInline(t, h), processCPUSeconds(gatewayPID)
 		got := driveWAFLoad(t, client, h.EdgeURL(), hosts, benign, attacks, rate, time.Duration(seconds)*time.Second)
@@ -250,7 +309,11 @@ func driveWAFLoad(t *testing.T, client *http.Client, base string, hosts []string
 }
 
 func sendWAFLoadRequest(client *http.Client, base, host string, req wafLoadRequest, res *wafLoadResult) {
-	r, err := http.NewRequestWithContext(context.Background(), http.MethodGet, base+req.path, nil)
+	method, body := http.MethodGet, io.Reader(nil)
+	if req.body != "" {
+		method, body = http.MethodPost, strings.NewReader(req.body)
+	}
+	r, err := http.NewRequestWithContext(context.Background(), method, base+req.path, body)
 	if err != nil {
 		res.mu.Lock()
 		res.requestsFailed++

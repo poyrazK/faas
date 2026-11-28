@@ -116,3 +116,77 @@ func TestCmdRedisUnbind(t *testing.T) {
 		t.Fatalf("exit = %d %s %s stdout = %q", code, method, path, out.String())
 	}
 }
+
+// TestCmdRedisCLI pins `gregale redis cli`: the command runs as the Redis
+// built-in in a task of the cache's bound app, its reply is printed as is,
+// arguments that look like flags reach Redis, and an app whose runtime
+// predates the built-in is told to redeploy.
+func TestCmdRedisCLI(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		bound      string
+		task       string
+		wantCode   int
+		wantApp    string
+		wantCmd    []string
+		wantStdout string
+		wantStderr string
+	}{
+		{
+			name: "only bound app, flag-like args pass through", args: []string{"sessions", "LRANGE", "q", "0", "-1"}, bound: `["web"]`,
+			task:    `{"id":"t1","status":"succeeded","stdout_tail":"1) \"a\"\n"}`,
+			wantApp: "web", wantCmd: []string{"__gregale_redis_v1__", "sessions.svc.gregale:6379", "LRANGE", "q", "0", "-1"},
+			wantStdout: "1) \"a\"\n",
+		},
+		{
+			name: "--app picks among bound apps", args: []string{"sessions", "--app", "worker", "--", "PING"}, bound: `["web","worker"]`,
+			task:    `{"id":"t1","status":"succeeded","stdout_tail":"PONG\n"}`,
+			wantApp: "worker", wantCmd: []string{"__gregale_redis_v1__", "sessions.svc.gregale:6379", "PING"}, wantStdout: "PONG\n",
+		},
+		{name: "several bound apps need --app", args: []string{"sessions", "PING"}, bound: `["web","worker"]`, wantCode: 1, wantStderr: "pass --app"},
+		{name: "no bound app names bind", args: []string{"sessions", "PING"}, bound: `[]`, wantCode: 1, wantStderr: "gregale redis bind sessions --app APP"},
+		{name: "streaming command refused locally", args: []string{"sessions", "SUBSCRIBE", "c"}, bound: `["web"]`, wantCode: 1, wantStderr: "SUBSCRIBE"},
+		{
+			name: "old runtime is told to redeploy", args: []string{"sessions", "PING"}, bound: `["web"]`,
+			task:    `{"id":"t1","status":"failed","exit_code":127,"failure":{"code":"command_not_found","message":"not found"}}`,
+			wantApp: "web", wantCmd: []string{"__gregale_redis_v1__", "sessions.svc.gregale:6379", "PING"},
+			wantCode: 127, wantStderr: "redeploy it",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotApp string
+			var gotCmd []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/v1/redis/sessions":
+					_, _ = w.Write([]byte(`{"name":"sessions","bound_apps":` + tt.bound + `}`))
+				case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/apps/") && strings.HasSuffix(r.URL.Path, "/tasks"):
+					gotApp = strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/apps/"), "/tasks")
+					var req struct {
+						Command []string `json:"command"`
+					}
+					_ = json.NewDecoder(r.Body).Decode(&req)
+					gotCmd = req.Command
+					_, _ = w.Write([]byte(tt.task))
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "fp_live_test")
+			main.WithCwd(t, t.TempDir())
+			stderr, restore := main.CaptureStderr(t)
+			var out bytes.Buffer
+			code := main.CaptureStdoutSwap(t, &out, func() int { return main.CmdRedis(append([]string{"cli"}, tt.args...)) })
+			restore()
+			if code != tt.wantCode || gotApp != tt.wantApp || strings.Join(gotCmd, " ") != strings.Join(tt.wantCmd, " ") ||
+				out.String() != tt.wantStdout || !strings.Contains(stderr.String(), tt.wantStderr) {
+				t.Fatalf("exit = %d app = %q cmd = %q stdout = %q stderr = %q", code, gotApp, gotCmd, out.String(), stderr.String())
+			}
+		})
+	}
+}

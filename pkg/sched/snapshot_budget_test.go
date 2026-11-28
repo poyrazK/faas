@@ -103,7 +103,7 @@ func TestWatchdogSpares_SnapshotWithinScaledBudget(t *testing.T) {
 // The grace must exceed the longest budget the engine hands out, or the
 // bug returns for exactly the calls most expensive to lose.
 func TestRouterCloseGraceExceedsLongestRPC(t *testing.T) {
-	longest := sched.SnapshotBudgetFor(sched.MaxPlanRAMMB())
+	longest := sched.SnapshotCaptureBudget(sched.MaxPlanRAMMB(), int64(sched.MaxPlanAppLayerMB())<<20)
 	if (*sched.RouterCloseGrace) <= longest {
 		t.Errorf("routerCloseGrace (%s) must exceed the longest per-call budget (%s); "+
 			"a shorter grace cancels in-flight snapshots on any node-change notify", (*sched.RouterCloseGrace), longest)

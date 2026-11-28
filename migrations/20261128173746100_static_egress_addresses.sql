@@ -1,4 +1,4 @@
--- filename: 20261128084247155_static_egress_addresses.sql
+-- filename: 20261128173746100_static_egress_addresses.sql
 -- migration-compat: expand
 
 -- +goose Up

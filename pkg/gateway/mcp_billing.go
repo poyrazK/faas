@@ -83,9 +83,20 @@ func (h *Handler) applyMCPBilling(r *http.Request, app App, p *api.MCPResourcePo
 	label := mcpBillingLabel(p, call)
 	if label == "" {
 		*r = *r.WithContext(context.WithValue(r.Context(), mcpProtocolOverheadKey{}, true))
+		// An MCP OAuth consumer is attributed only here, after the request
+		// path's route label was kept for attributed requests; give its
+		// protocol overhead the same path label a consumer key's carries,
+		// so per-minute route limits and statements see both alike.
+		if current, _ := r.Context().Value(billingRouteKey{}).(string); current == "" && authenticatedFrom(r.Context()).ConsumerID != "" {
+			path := unattributedRouteFrom(r)
+			*r = *withPlanRoute(withBillingRoute(r, h.billingRouteSetFor(app.ID).admit(path)), path)
+		}
 		return
 	}
-	if current, _ := r.Context().Value(billingRouteKey{}).(string); current != "" {
+	// An MCP OAuth caller becomes a consumer only here, in the JWT rule
+	// (attachOAuthConsumer), after the route label was kept for attributed
+	// requests; it is attributed all the same.
+	if current, _ := r.Context().Value(billingRouteKey{}).(string); current != "" || authenticatedFrom(r.Context()).ConsumerID != "" {
 		*r = *withPlanRoute(withBillingRoute(r, h.billingRouteSetFor(app.ID).admit(label)), mcpPlanLabel(call, label))
 		return
 	}

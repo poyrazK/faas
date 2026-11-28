@@ -131,6 +131,11 @@ func cmdWebhooksList(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeNDJSON(out))
 	}
+	if len(out) == 0 {
+		// An empty list printed nothing (prod hunt r63).
+		_, _ = fmt.Fprintf(osStdout, "No webhooks for %s. Add one with `gregale webhook create`.\n", *slug)
+		return 0
+	}
 	for _, w := range out {
 		fmt.Printf("%-32s %-50s %-12s %-12s %s\n",
 			w.ID, truncate(w.TargetURL, 50), w.RetryPolicy, w.DeliveryFormat, enabledStr(w.Enabled))

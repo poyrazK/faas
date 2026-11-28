@@ -221,13 +221,13 @@ func TestRealtimeResponseRefusedByACapEndsTheSession(t *testing.T) {
 			Code string `json:"code"`
 		} `json:"error"`
 	}
-	if json.Unmarshal([]byte(refusal), &event) != nil || event.Type != "error" || event.Error.Code != "outbound_budget_exhausted" {
+	if json.Unmarshal([]byte(refusal), &event) != nil || event.Type != "error" || event.Error.Code != "outbound_ai_reservation_exceeds_budget" {
 		t.Fatalf("refusal = %s", refusal)
 	}
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	_, _, err := conn.ReadMessage()
 	var closeErr *websocket.CloseError
-	if !errors.As(err, &closeErr) || closeErr.Code != websocket.ClosePolicyViolation || closeErr.Text != "outbound_budget_exhausted" {
+	if !errors.As(err, &closeErr) || closeErr.Code != websocket.ClosePolicyViolation || closeErr.Text != "outbound_ai_reservation_exceeds_budget" {
 		t.Fatalf("close = %v", err)
 	}
 	if row, ok := fixture.backend.AIUsageRollup("llm", fixture.token.AppID, "gpt-realtime"); ok {

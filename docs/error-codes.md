@@ -2164,7 +2164,7 @@ See [Errors](errors.md).
 
 ### `outbound_provider_cooldown`
 
-Outbound provider requested a cooldown
+Outbound provider requested a cooldown; The provider is cooling down after failing calls
 
 ### `outbound_provider_cooldown_unavailable`
 
@@ -2179,6 +2179,10 @@ See [Outbound integrations](outbound-integrations.md).
 ### `outbound_qualification_not_authorized`
 
 The qualification probe cannot use this outbound integration
+
+### `outbound_rate_limited`
+
+Outbound integration rate limit reached
 
 ### `outbound_relay_not_supported`
 
@@ -2479,6 +2483,12 @@ See [Registry credentials](registry-credentials.md).
 HTTP 403 Forbidden · Plan doesn't allow private-registry credentials for jobs
 
 See [Registry credentials](registry-credentials.md).
+
+### `plan_limit_app_tasks`
+
+HTTP 429 Too Many Requests · App task limit reached
+
+See [Apps](apps.md#task-history).
 
 ### `plan_limit_apps`
 
@@ -3752,7 +3762,7 @@ Grype found CVEs at or above the plan's severity threshold
 
 ### `stage_snapshot_prepare_timeout`
 
-HTTP 422 Unprocessable Entity · Snapshot prime exceeded the scheduler deadline
+HTTP 422 Unprocessable Entity · Snapshot capture exceeded its budget; Snapshot prime exceeded the scheduler deadline
 
 The snapshot_prepare stage exceeded the scheduler's wall-clock ceiling
 

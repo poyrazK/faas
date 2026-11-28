@@ -939,6 +939,23 @@ it:
 gregale consumers signup-set my-mcp --display-name "Search tools" --plans free,pro --free-plan free --oauth-consumers
 ```
 
+Gregale must check the tokens itself to know who is calling.
+`gregale mcp server deploy` sets that up: it prints `Gateway checks OAuth
+tokens` (with `--json`, a public deploy's `gateway_token_checks.status` is
+`on`, `skipped` with a `reason` under `--access-audit guest-only`, or
+`failed` with a `reason` and `fix_commands`), and `gregale edge rule list my-mcp` shows the `jwt` rule it adds.
+Until the rule exists, turning on `signup-set --oauth-consumers` is refused
+with `409 mcp_gateway_policy_missing`. The deploy adds the rule only when
+its `--token-env` token would pass it (signed RS256 or ES256, or your
+`--access-audit-algorithms`, with the server's issuer, audience and
+scopes), and never with `--access-audit guest-only`. If the deploy warns
+instead, for example because another `jwt` rule covers the server, fix that
+and run, from the server's source directory:
+
+```bash
+gregale mcp policy --path . --name my-mcp
+```
+
 - **Who they are.** A customer is the token's issuer and subject: the same
   person signing in again is the same consumer. The token's `email`, when it
   has one, names the consumer; it is never used to match one.
@@ -1084,6 +1101,73 @@ mcp-publisher publish
 The same document is served at
 `GET /v1/consumer-signup/my-mcp/server.json`.
 
+### MCP tool contract
+
+Publishing a listing also stores the server's full tool catalog as a
+contract. Every production deploy of the app is then checked against it
+before it takes traffic, whether you deploy with `gregale mcp server deploy`,
+`gregale deploy` or a git push:
+
+- Unchanged, added or widened tools ship.
+- Changes that may affect callers, such as a changed description or output
+  schema, ship and are listed in the check.
+- Breaking changes are refused with `mcp_contract_breaking`, and the
+  previous release keeps serving. Removing a tool, adding a required input
+  and narrowing an input's type are all breaking.
+- A candidate whose tools can't be listed is retried while the deploy
+  verifies, then refused.
+
+Tool definitions that MCP clients reject are left out on both sides: publish
+warns about them, and a tool that turns invalid counts as removed.
+
+The baseline is the contract of whichever deploy most recently went live,
+rollbacks included, so a tool you added last week is protected this week and
+a rollback restores the contract it serves. To ship a breaking change on purpose,
+say why first. Your customers see the reason only as a dated entry on the
+listing page:
+
+```bash
+gregale mcp server deploy --name my-mcp --allow-breaking --reason "rename search to web_search"
+# or, before a git push or gregale deploy:
+gregale mcp server contract allow --app my-mcp --reason "rename search to web_search"
+gregale mcp server contract show --app my-mcp
+```
+
+`mcp server deploy --allow-breaking` binds the override to the deploy's
+own deployments, so no other deploy can use it. `contract allow` admits the
+app's next breaking production deploy, whichever path it takes, within an
+hour (up to 24 hours with `--expires`). An app can hold at most five open
+overrides (one bound to a deploy that ended unused stops counting). An
+override also admits a deploy whose tools could not be listed: a bound one
+at once, an unbound one only after the check has kept failing for half of
+its 5-minute retry window. If `--allow-breaking` cannot record its
+override, it cancels that deploy. Creating one is audited, and the check
+that uses it records it.
+`show` lists the baseline's tools, the recent checks with their changes
+(refused ones included), and the open overrides.
+
+A server that checks credentials itself (`external-oauth`) needs a bearer
+token for the check to list its tools: store one as an app secret and
+publish with `--probe-secret <NAME>`; publish refuses without it. Servers
+behind gateway auth need nothing more: the check reaches the candidate
+directly.
+
+When a deploy that changed the contract goes live, the app webhook event
+`mcp.contract.changed` fires. Its payload has the deployment, the verdict,
+both contract digests, whether an override was used, and the changed tool
+names. The listing page and its JSON show the last 20 changes, with no
+schemas and no reasons. A listing published before this check existed is
+not gated until you publish it again. Republishing through the API without
+a `contract` keeps the current one and its probe secret; send
+`"drop_contract": true` to end the check. Two deploys checked against the
+same contract cannot both change it: only the first to go live is
+accepted. A production deploy that goes live without a check (a rollback
+to one made before the listing) resets the baseline to the listing's
+contract. The owner API is
+`GET /v1/apps/my-mcp/mcp-contract` and
+`POST /v1/apps/my-mcp/mcp-contract/overrides`
+([ADR-20261127191645](adr/20261127191645-mcp-tool-contract-gate.md)).
+
 ### Know when customers sign up or change
 
 Subscribe an app webhook to these events to provision accounts, send
@@ -1097,6 +1181,8 @@ welcome mail or update your CRM:
 - `consumer.closed`: a customer closed their account themselves.
 
 Changes you make yourself do not send these events.
+`mcp.contract.changed` (see [MCP tool contract](#mcp-tool-contract)) does
+fire for your own deploys.
 
 ## Customers across several apps
 

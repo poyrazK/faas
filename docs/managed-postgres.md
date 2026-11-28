@@ -1537,6 +1537,13 @@ windows keeps its targets stale. This keeps account-level COGS ceilings effectiv
 per-target usage isolation; the usage collector exposes skipped descendants as
 `included_in_source` rather than as independently metered databases. Providers
 that can meter restores independently may instead declare that capability.
+Neon stops reporting a deleted project at the last hour that closed before the
+deletion. The collector settles that final, partial hour at zero once the
+provider has published the hour for another database on the same backend, or
+three hours after it closed when no other database exists there. Neon bills
+from the same consumption data, so the hour is zero on both sides; the
+correction tail asks again, and a late report replaces the zeros. The collector
+exposes these databases as `settled_unreported`.
 If a create response is lost, branch-name discovery recovers the accepted
 branch without a second POST. Deleting a restore target removes only its
 branch. A source with an active restore descendant can be deleted

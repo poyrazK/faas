@@ -17093,7 +17093,10 @@ FROM locked l WHERE d.id=l.id AND l.lease_token=sqlc.arg(lease_token)::text
     AND l.state IN ('ready','failed','updating') AND l.lease_until>clock_timestamp();
 
 -- name: ReleaseManagedPostgresLifecycleLease :execrows
+-- A release without an error code is the provider still working, not a
+-- failed attempt: it resets the attempt count retry backoff grows with.
 UPDATE managed_postgres_databases SET state=sqlc.arg(next_state)::text,last_error_code=NULLIF(sqlc.arg(error_code)::text,''),
+    attempt_count=CASE WHEN sqlc.arg(error_code)::text='' THEN 0 ELSE attempt_count END,
     lease_token=NULL,lease_until=NULL,retry_at=sqlc.arg(retry_at)::timestamptz,updated_at=sqlc.arg(at)::timestamptz
 WHERE id=sqlc.arg(database_id)::uuid AND lease_token=sqlc.arg(lease_token)::text AND lease_until>sqlc.arg(at)::timestamptz;
 

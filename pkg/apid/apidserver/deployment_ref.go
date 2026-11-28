@@ -78,7 +78,15 @@ func ParseDeploymentRevisionRef(ref string) (int, bool) {
 func (s *server) resolveDeploymentRef(ctx context.Context, appID, ref string) (string, *api.Problem) {
 	revision, ok := ParseDeploymentRevisionRef(ref)
 	if !ok {
-		return ref, nil
+		// Neither a revision nor an id: `rollback --to nope` reached the
+		// uuid column, failed to parse and answered 503 "temporarily
+		// unavailable" (prod hunt r68). It names no deployment, so it gets
+		// the same not-found problem as an unknown id.
+		id := strings.TrimSpace(ref)
+		if !deploymentIDRefPattern.MatchString(id) {
+			return "", api.ErrRollbackTargetNotFound(fmt.Sprintf("%q is not a deployment id or a vN revision; list them with `gregale release list`", ref))
+		}
+		return id, nil
 	}
 	dep, err := s.store.DeploymentByRevision(ctx, appID, revision)
 	if err != nil {

@@ -20,7 +20,9 @@ import (
 // fixture account on that plan, never a person's or a customer's. Like the
 // release-acceptance account, it is created through the state store, as
 // apid creates accounts and keys, by an operator on the control plane, and
-// its keys are short-lived.
+// its keys are short-lived. A paid fixture (Hobby) is complimentary
+// (ADR-20261111140000): it never has a billing identity, and meterd would
+// otherwise count it as a paid subject it never bills.
 const (
 	dispatchJourneyFixture = "journey-fixture"
 	journeyFixtureKeyLabel = "journey-fixture"
@@ -164,7 +166,36 @@ func ensureJourneyFixtureAccount(ctx context.Context, st state.Store, plan api.P
 	if account.Plan != plan {
 		return state.Account{}, fmt.Errorf("%s is on the %s plan, not %s", email, account.Plan, plan)
 	}
+	if err := ensureJourneyFixtureComplimentary(ctx, st, account); err != nil {
+		return state.Account{}, fmt.Errorf("complimentary %s: %w", email, err)
+	}
 	return account, nil
+}
+
+// ensureJourneyFixtureComplimentary grants a paid fixture account its plan
+// as complimentary as apid's operator grant does: the spend cap held at $0
+// and the row. The cap is written first, so a mint that fails between the
+// two writes leaves no row and the next mint writes both again. A grant the
+// account already has, an operator's included, is left as it is. No
+// operator signs this direct write, so the account grants itself.
+func ensureJourneyFixtureComplimentary(ctx context.Context, st state.Store, account state.Account) error {
+	if !account.Plan.IsPaid() {
+		return nil
+	}
+	comps, ok := st.(state.ComplimentaryAccountStore)
+	if !ok {
+		return errors.New("the store cannot record complimentary accounts")
+	}
+	current, err := comps.ComplimentaryAccount(ctx, account.ID)
+	if err != nil || current != nil {
+		return err
+	}
+	zero := int64(0)
+	if err := st.UpdateAccountOverageCapCents(ctx, account.ID, &zero); err != nil {
+		return err
+	}
+	return comps.SetComplimentaryAccount(ctx, state.ComplimentaryAccount{AccountID: account.ID, Plan: account.Plan,
+		Reason: journeyFixtureReason, GrantedBy: account.ID, GrantedAt: time.Now().UTC()})
 }
 
 func cmdJourneyFixtureRevokeToken(args []string) int {
