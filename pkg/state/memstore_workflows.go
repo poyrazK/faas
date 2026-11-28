@@ -323,6 +323,31 @@ func (m *MemStore) workflowDispatchDeadlineLocked(run WorkflowRun) time.Time {
 	return run.UpdatedAt.Add(WorkflowRunStaleAfter)
 }
 
+// workflowRunAppHeldLocked mirrors NextFairDueWorkflowRun's app gate: a
+// deleted app's runs, and runs whose owner is suspended or on an abuse hold,
+// are not dispatched (async assessment 2026-11-28).
+func (m *MemStore) workflowRunAppHeldLocked(appID string) bool {
+	app, ok := m.apps[appID]
+	if !ok {
+		return false
+	}
+	if app.DeletedAt != nil || app.Status == AppDeleted {
+		return true
+	}
+	if app.OrgID != "" {
+		if org, ok := m.orgs[app.OrgID]; ok && org.Status == OrgStatusDeletedPending {
+			return true
+		}
+		if m.invocationOwnerHeldLocked(app.OrgID) {
+			return true
+		}
+	}
+	if account, ok := m.accounts[app.AccountID]; ok && account.Status == AccountDeletedPending {
+		return true
+	}
+	return m.invocationOwnerHeldLocked(app.AccountID)
+}
+
 // ClaimNextDueWorkflowRun mirrors the persisted service order and lease-aware
 // app/tenant dispatch budgets used by PgStore.
 func (m *MemStore) ClaimNextDueWorkflowRun(ctx context.Context) (*WorkflowRun, error) {
@@ -335,6 +360,9 @@ func (m *MemStore) ClaimNextDueWorkflowRun(ctx context.Context) (*WorkflowRun, e
 	var candidates []WorkflowRun
 	counts := m.workflowDispatchOccupancyLocked(now)
 	for _, run := range m.workflowRuns {
+		if m.workflowRunAppHeldLocked(run.AppID) {
+			continue
+		}
 		live := run.Status == WorkflowRunStatusRunning && m.workflowDispatchDeadlineLocked(run).After(now)
 		due := (run.Status == WorkflowRunStatusPending || run.Status == WorkflowRunStatusAwaitingEvent) && !run.ScheduledFor.After(now)
 		if due || (run.Status == WorkflowRunStatusRunning && !live) {

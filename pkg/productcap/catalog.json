@@ -3148,7 +3148,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/faas_openapi_spec",
+      "docs_url": "/docs/jobs",
       "acceptance_test": "pkg/apid/apidserver/handlers_dashboard_jobs_test.go::TestParseAppJobsPath",
       "parent": "workflows-and-jobs",
       "consumers": [
@@ -6575,7 +6575,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/faas_openapi_spec",
+      "docs_url": "/docs/code-workflows",
       "acceptance_test": "pkg/apid/apidserver/handlers_event_workflow_recovery_test.go::TestWorkflowRecoveryJobHTTP",
       "parent": "workflows-and-jobs",
       "consumers": [

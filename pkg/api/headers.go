@@ -96,6 +96,11 @@ const (
 	// InvocationSourceHeader identifies the platform-authored source of a
 	// synthetic invocation; it must not be forwarded from customer requests.
 	InvocationSourceHeader = "X-Faas-Invocation-Source"
+	// InvocationCompletionHeader marks a send() completion delivery and names
+	// the invocation it reports on (ADR-20261112160000). Only the platform
+	// sets it: the public gateway drops a caller's copy, so a handler can
+	// trust it.
+	InvocationCompletionHeader = "X-Gregale-Invocation-Completion"
 	// Invocation attempt metadata is scheduler-authored and transient.
 	InvocationAttemptHeader          = "X-Faas-Invocation-Attempt"
 	InvocationReplayGenerationHeader = "X-Faas-Invocation-Replay-Generation"

@@ -420,6 +420,9 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	}
 	manifestCommitted = true
 	sourceAccepted = true
+	// `gregale deploy` installs its own block with PUT; only the
+	// source-ref path (GitHub pushes, `deploy --ref`) installs it here.
+	s.applyStagedPostgresChanges(context.WithoutCancel(r.Context()), acct, app, stagedManifest.postgresChanges)
 	s.auditSourceRefManifestScaling(r.Context(), acct, app, stagedManifest)
 	s.auditSourceRefDeploy(r, acct, app, res, prev, req, resolvedSHA, access, ann)
 	// Reload the deployment row so the response carries the

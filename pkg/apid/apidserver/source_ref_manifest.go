@@ -67,6 +67,9 @@ type sourceRefManifestStaged struct {
 	lifecycleChanged      bool
 	previousLifecycle     state.AppManifest
 	appliedLifecycle      state.AppManifest
+	// postgresChanges is the validated gregale.yaml postgres_changes block,
+	// installed by handleSourceRefDeploy only after its deployment is queued.
+	postgresChanges *api.PutPostgresChangesRequest
 	// accessRestore is the app's access before the deploy applied its
 	// gregale.yaml access key (ADR-20261124090000 amendment 1).
 	accessRestore *sourceAccessRestore
@@ -444,6 +447,15 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 	}
 	if problem := s.applySourceRefQueueBindings(ctx, acct, app, m.QueueBindings, deploymentScope, &staged); problem != nil {
 		return staged, problem
+	}
+	// Changes sources feed the app-wide queue binding only, so an
+	// environment deploy leaves them to production's manifest.
+	if state.IsProductionScope(deploymentScope) {
+		req, problem := s.stageSourcePostgresChanges(ctx, acct, m.PostgresChanges)
+		if problem != nil {
+			return staged, problem
+		}
+		staged.postgresChanges = req
 	}
 	if len(m.WorkPolicies) > 0 {
 		policyStore, ok := s.store.(state.AppWorkPolicyStore)

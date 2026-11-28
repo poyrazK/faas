@@ -108,3 +108,11 @@ func PlatformFailedBeforeApp(lastError string) bool {
 	}
 	return false
 }
+
+// cronFailureStreakPauses is the cron failure pause rule (ADR-20261115194000,
+// amendment 2026-11-28): the cron's finished runs since its newest success
+// number at least runs, and the oldest of them was scheduled at least span
+// ago. failed is the streak length; oldest is its oldest due time.
+func cronFailureStreakPauses(failed int, oldest *time.Time, runs int, span time.Duration) bool {
+	return failed >= runs && oldest != nil && time.Since(*oldest) >= span
+}

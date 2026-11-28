@@ -427,7 +427,9 @@ synchronous handler.
   `POST /` with the header `X-Gregale-Invocation-Completion: <id>` and the
   body `{invocation_id, app_id, status, outcome, attempts, result | error}`,
   where `status` is `succeeded` or the failure outcome. The completion is an
-  async invocation with its own retries.
+  async invocation with its own retries. Only Gregale sets that header:
+  a public request that carries it has it removed before your function
+  sees the request, so a request with the header is a real completion.
 - `input` and `output` are JSON Schema. The callee checks each call's body
   against its own `input` before the handler runs, and answers 422
   `function_input_invalid` naming the field at fault. Only calls from these

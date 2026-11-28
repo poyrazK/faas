@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -21,7 +22,7 @@ import (
 
 // InvocationCompletionHeader marks a completion invocation and names the
 // invocation it reports on.
-const InvocationCompletionHeader = "X-Gregale-Invocation-Completion"
+const InvocationCompletionHeader = api.InvocationCompletionHeader
 
 // InvocationSend is the send record of one invocation.
 type InvocationSend struct {

@@ -16,6 +16,9 @@ func TestPlatformDeliveryHeadersAreDroppedFromPublicRequests(t *testing.T) {
 		"X-Gregale-Event-Id":              true,
 		"X-Gregale-Event-Subscription-Id": true,
 		"X-Gregale-Operation-Id":          true,
+		// send() completions: a caller must not forge one (2026-11-28).
+		"X-Gregale-Invocation-Completion": true,
+		"x-gregale-invocation-completion": true,
 		"X-Gregale-Trace-Id":              false,
 		"X-Request-Id":                    false,
 		"Content-Type":                    false,

@@ -159,6 +159,20 @@ schedule. The next successful deploy lifts the suspension; a cron you disabled
 yourself stays disabled. Deleting an app suspends its crons with
 `app_deleted`, and restoring the app brings them back.
 
+### Failing crons pause
+
+An HTTP cron that keeps failing is paused with `suspended_reason: failing`
+so it stops running billed failures. It pauses once it has failed at least 10
+times in a row (every run since its last successful one) and the oldest of
+those failures was scheduled at least 24 hours ago. A cron that succeeds even
+once in that time starts counting again. Your account is emailed when a cron
+pauses, and `gregale cron get CRON_ID` shows the reason.
+
+A paused cron does not run or bill. To resume it, fix the cause and then do
+one of these: edit the cron (its schedule, path or `gregale cron update
+CRON_ID --enable`), or deploy the app. Only failures after it resumed count
+toward the next pause. Command crons are not paused this way yet.
+
 ## Run a cron now
 
 ```bash
